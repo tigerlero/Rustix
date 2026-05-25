@@ -1,0 +1,15 @@
+[package]
+name = "rustix-world"
+version = "0.1.0"
+edition = "2021"
+description = "Rustix engine world streaming: chunk management, LOD, persistence"
+
+[dependencies]
+tracing = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+crossbeam = { workspace = true }
+
+rustix-core = { path = "../core" }
+rustix-asset = { path = "../asset" }
+rustix-terrain = { path = "../terrain" }

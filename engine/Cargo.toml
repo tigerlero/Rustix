@@ -1,0 +1,26 @@
+[package]
+name = "rustix-engine"
+version = "0.1.0"
+edition = "2021"
+description = "Rustix engine facade: public API, App builder, Plugin system"
+
+[dependencies]
+tracing = { workspace = true }
+parking_lot = { workspace = true }
+serde = { workspace = true }
+rayon = { workspace = true }
+
+rustix-core = { path = "../crates/core" }
+rustix-platform = { path = "../crates/platform" }
+rustix-render = { path = "../crates/render" }
+rustix-asset = { path = "../crates/asset" }
+rustix-physics = { path = "../crates/physics" }
+rustix-audio = { path = "../crates/audio" }
+rustix-animation = { path = "../crates/animation" }
+rustix-networking = { path = "../crates/networking" }
+rustix-scripting = { path = "../crates/scripting" }
+rustix-ui = { path = "../crates/ui" }
+rustix-ai = { path = "../crates/ai" }
+rustix-terrain = { path = "../crates/terrain" }
+rustix-world = { path = "../crates/world" }
+rustix-editor = { path = "../crates/editor" }

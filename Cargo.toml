@@ -1,0 +1,81 @@
+[workspace]
+resolver = "2"
+members = [
+    "engine",
+    "crates/core",
+    "crates/platform",
+    "crates/render",
+    "crates/asset",
+    "crates/physics",
+    "crates/audio",
+    "crates/animation",
+    "crates/networking",
+    "crates/scripting",
+    "crates/ui",
+    "crates/ai",
+    "crates/terrain",
+    "crates/world",
+    "crates/editor",
+    "apps/runtime",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+# Core
+hecs = { version = "0.11", features = ["serde"] }
+glam = { version = "0.29", features = ["bytemuck", "serde"] }
+rayon = "1.10"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+parking_lot = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bytemuck = { version = "1", features = ["derive"] }
+thiserror = "2"
+toml = "0.8"
+dirs = "6"
+
+# Platform
+winit = { version = "0.30", default-features = false, features = ["wayland", "x11", "rwh_06"] }
+
+# Rendering
+ash = "0.38"
+gpu-allocator = "0.28"
+raw-window-handle = "0.6"
+
+# Assets
+tokio = { version = "1", features = ["full"] }
+notify = "7"
+image = "0.25"
+crossbeam = "0.8"
+
+# UI
+egui = "0.34"
+egui-winit = "0.34"
+rfd = "0.15"
+
+# Asset formats
+gltf = "1.4"
+ron = "0.8"
+
+# Utilities
+cfg-if = "1"
+log = "0.4"
+smallvec = { version = "1", features = ["union"] }
+bitflags = "2"
+tracy-client = "0.17"
+
+[profile.dev]
+opt-level = 1
+debug = 1
+incremental = true
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+debug = false

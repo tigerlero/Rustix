@@ -1,0 +1,22 @@
+[package]
+name = "rustix-render"
+version.workspace = true
+edition.workspace = true
+description = "Rustix engine renderer: Vulkan backend via ash"
+
+[dependencies]
+ash = { workspace = true }
+gpu-allocator = { workspace = true }
+tracing = { workspace = true }
+parking_lot = { workspace = true }
+thiserror = { workspace = true }
+bytemuck = { workspace = true }
+glam = { workspace = true }
+smallvec = { workspace = true }
+cfg-if = { workspace = true }
+raw-window-handle = { workspace = true }
+naga = { version = "23", features = ["spv-out", "glsl-in", "wgsl-in"] }
+hecs = { workspace = true, features = ["serde"] }
+serde = { workspace = true }
+
+rustix-core = { path = "../core" }

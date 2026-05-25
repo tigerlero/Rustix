@@ -1,0 +1,11 @@
+[package]
+name = "rustix-animation"
+version = "0.1.0"
+edition = "2021"
+description = "Rustix engine animation system"
+
+[dependencies]
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
+rustix-core = { path = "../core" }

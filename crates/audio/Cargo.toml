@@ -1,0 +1,19 @@
+[package]
+name = "rustix-audio"
+version.workspace = true
+edition.workspace = true
+description = "Rustix engine audio system"
+
+[dependencies]
+tracing = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+
+rustix-core = { path = "../core" }
+
+# Audio support - optional until system dependencies are available
+rodio = { version = "0.20", default-features = false, optional = true }
+
+[features]
+default = ["audio"]
+audio = ["dep:rodio"]

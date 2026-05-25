@@ -1,0 +1,12 @@
+[package]
+name = "rustix-terrain"
+version = "0.1.0"
+edition = "2021"
+description = "Rustix engine terrain: chunk-based terrain with LOD"
+
+[dependencies]
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
+rustix-core = { path = "../core" }
+rustix-render = { path = "../render" }

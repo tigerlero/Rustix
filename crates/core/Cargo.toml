@@ -1,0 +1,29 @@
+[package]
+name = "rustix-core"
+version = "0.1.0"
+edition = "2021"
+description = "Rustix engine core: ECS, job system, math, memory, config, diagnostics"
+
+[dependencies]
+hecs = { workspace = true }
+glam = { workspace = true }
+rayon = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+parking_lot = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+crossbeam = { workspace = true }
+cfg-if = { workspace = true }
+log = { workspace = true }
+tracy-client = { workspace = true, optional = true }
+toml = "0.8"
+dirs = "6"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[features]
+default = []
+profiling = ["tracy-client"]

@@ -1,0 +1,12 @@
+[package]
+name = "rustix-platform"
+version = "0.1.0"
+edition = "2021"
+description = "Rustix engine platform: windowing, input, OS abstractions"
+
+[dependencies]
+winit = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+cfg-if = { workspace = true }
+raw-window-handle = "0.6"

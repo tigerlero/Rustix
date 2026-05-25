@@ -1,0 +1,12 @@
+[package]
+name = "rustix-networking"
+version.workspace = true
+edition.workspace = true
+description = "Rustix engine networking: MMO-oriented QUIC transport"
+
+[dependencies]
+tracing = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+
+rustix-core = { path = "../core" }

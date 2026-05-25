@@ -1,0 +1,11 @@
+[package]
+name = "rustix-physics"
+version.workspace = true
+edition.workspace = true
+description = "Rustix engine physics: Rapier integration"
+
+[dependencies]
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
+rustix-core = { path = "../core" }

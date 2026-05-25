@@ -1,0 +1,14 @@
+[package]
+name = "rustix-ui"
+version.workspace = true
+edition.workspace = true
+description = "Rustix engine UI: immediate mode game UI framework"
+
+[dependencies]
+ash = { workspace = true }
+gpu-allocator = { workspace = true }
+bytemuck = { workspace = true }
+tracing = { workspace = true }
+glam = { workspace = true }
+
+rustix-render = { path = "../render" }
