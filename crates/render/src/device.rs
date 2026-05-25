@@ -149,9 +149,9 @@ impl GpuDevice {
         };
 
         let graphics_queue =
-            unsafe { logical.get_device_queue(queue_families.graphics.unwrap(), 0) };
+            unsafe { logical.get_device_queue(queue_families.graphics.ok_or_else(|| RenderError::DeviceCreation("no graphics queue".into()))?, 0) };
         let present_queue =
-            unsafe { logical.get_device_queue(queue_families.present.unwrap(), 0) };
+            unsafe { logical.get_device_queue(queue_families.present.ok_or_else(|| RenderError::DeviceCreation("no present queue".into()))?, 0) };
 
         let pc_create_info = vk::PipelineCacheCreateInfo::default();
         let pipeline_cache = unsafe {
@@ -237,7 +237,8 @@ impl GpuDevice {
 fn physical_devices_name(props: &vk::PhysicalDeviceProperties) -> String {
     let name = &props.device_name;
     let end = name.iter().position(|&c| c == 0).unwrap_or(name.len());
-    String::from_utf8_lossy(unsafe { &*(&name[..end] as *const [i8] as *const [u8]) }).to_string()
+    let bytes: Vec<u8> = name[..end].iter().map(|&c| c as u8).collect();
+    String::from_utf8_lossy(&bytes).to_string()
 }
 
 impl Drop for GpuDevice {

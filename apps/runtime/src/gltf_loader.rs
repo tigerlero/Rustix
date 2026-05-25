@@ -1,10 +1,14 @@
-//! glTF mesh loader — parses .gltf/.glb files and extracts vertex data.
-
 use rustix_render::mesh::{Mesh, Vertex};
 use rustix_render::Renderer;
 
-/// Load a mesh from GLB binary data. Returns GPU-ready Mesh.
-pub fn load_glb(renderer: &Renderer, data: &[u8], name: &str) -> Result<Mesh, String> {
+pub struct GlbResult {
+    pub mesh: Mesh,
+    pub base_color: [f32; 3],
+    pub roughness: f32,
+    pub metallic: f32,
+}
+
+pub fn load_glb(renderer: &Renderer, data: &[u8], name: &str) -> Result<GlbResult, String> {
     let (doc, buffers, _images) = gltf::import_slice(data)
         .map_err(|e| format!("glTF parse: {e}"))?;
 
@@ -12,8 +16,23 @@ pub fn load_glb(renderer: &Renderer, data: &[u8], name: &str) -> Result<Mesh, St
     let mut all_indices = Vec::<u16>::new();
     let mut base = 0u32;
 
+    let mut pbr_base = [0.8f32, 0.8, 0.8];
+    let mut pbr_roughness = 0.5f32;
+    let mut pbr_metallic = 0.0f32;
+    let mut material_found = false;
+
     for mesh in doc.meshes() {
         for prim in mesh.primitives() {
+            if !material_found {
+                let mat = prim.material();
+                let pbr = mat.pbr_metallic_roughness();
+                let bc = pbr.base_color_factor();
+                pbr_base = [bc[0], bc[1], bc[2]];
+                pbr_roughness = pbr.roughness_factor();
+                pbr_metallic = pbr.metallic_factor();
+                material_found = true;
+            }
+
             let reader = prim.reader(|buf| Some(&buffers[buf.index()]));
 
             let positions: Vec<[f32; 3]> = reader
@@ -30,8 +49,9 @@ pub fn load_glb(renderer: &Renderer, data: &[u8], name: &str) -> Result<Mesh, St
             };
 
             for i in 0..vertex_count {
+                if vertex_count == 0 { break; }
                 let pos = positions[i];
-                let n = normals[i.min(normals.len() - 1)];
+                let n = if normals.is_empty() { [0.0, 1.0, 0.0] } else { normals[i.min(normals.len() - 1)] };
                 all_verts.push(Vertex { position: pos, normal: n });
             }
 
@@ -45,8 +65,15 @@ pub fn load_glb(renderer: &Renderer, data: &[u8], name: &str) -> Result<Mesh, St
     }
 
     let ibuf = if all_indices.is_empty() { None } else { Some((&all_indices[..], all_indices.len() as u32)) };
-    Mesh::new(renderer, name, bytemuck::cast_slice(&all_verts), all_verts.len() as u32, ibuf)
-        .map_err(|e| format!("mesh upload: {e}"))
+    let mesh = Mesh::new(renderer, name, bytemuck::cast_slice(&all_verts), all_verts.len() as u32, ibuf)
+        .map_err(|e| format!("mesh upload: {e}"))?;
+
+    Ok(GlbResult {
+        mesh,
+        base_color: pbr_base,
+        roughness: pbr_roughness,
+        metallic: pbr_metallic,
+    })
 }
 
 /// Generate a minimal cube in GLB format (valid glTF 2.0 binary).

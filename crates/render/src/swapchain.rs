@@ -63,7 +63,8 @@ impl Swapchain {
             RenderError::SwapchainCreation("no surface".into())
         })?;
 
-        let surface_loader = self.surface_loader.as_ref().unwrap();
+        let surface_loader = self.surface_loader.as_ref()
+            .ok_or_else(|| RenderError::SwapchainCreation("surface loader not initialized".into()))?;
 
         if let (Some(old), Some(ref old_loader)) = (self.swapchain.take(), &self.loader) {
             unsafe { old_loader.destroy_swapchain(old, None); }
@@ -96,7 +97,7 @@ impl Swapchain {
             .map_err(|e| RenderError::SwapchainCreation(format!("present modes: {e}")))?
         };
 
-        let (format, _color_space) = choose_surface_format(&formats);
+        let (format, _color_space) = choose_surface_format(&formats)?;
         let present_mode = choose_present_mode(&present_modes);
         let extent = choose_extent(&capabilities, width, height);
 
@@ -147,26 +148,21 @@ impl Swapchain {
                 .map_err(|e| RenderError::SwapchainCreation(format!("get images: {e}")))?
         };
 
-        let image_views: Vec<vk::ImageView> = images
-            .iter()
-            .map(|&image| {
-                let view_info = vk::ImageViewCreateInfo::default()
-                    .image(image)
-                    .view_type(vk::ImageViewType::TYPE_2D)
-                    .format(format)
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    });
-                unsafe {
-                    device.logical().create_image_view(&view_info, None)
-                        .expect("failed to create image view")
-                }
-            })
-            .collect();
+        let mut image_views = Vec::with_capacity(images.len());
+        for &image in &images {
+            let view_info = vk::ImageViewCreateInfo::default()
+                .image(image)
+                .view_type(vk::ImageViewType::TYPE_2D)
+                .format(format)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0, level_count: 1,
+                    base_array_layer: 0, layer_count: 1,
+                });
+            let view = unsafe { device.logical().create_image_view(&view_info, None) }
+                .map_err(|e| RenderError::DeviceCreation(format!("image view: {e}")))?;
+            image_views.push(view);
+        }
 
         self.loader = Some(loader);
         self.swapchain = Some(swapchain);
@@ -175,6 +171,8 @@ impl Swapchain {
         self.images = images;
         self.image_views = image_views;
         self.image_count = image_count;
+
+        self.create_sync_objects(device)?;
 
         tracing::info!(
             image_count = self.images.len(),
@@ -208,28 +206,25 @@ impl Swapchain {
         self.image_available_semaphores = (0..num_frames)
             .map(|_| unsafe {
                 device.logical().create_semaphore(&semaphore_info, None)
-                    .expect("failed to create semaphore")
+                    .map_err(|e| RenderError::DeviceCreation(format!("semaphore: {e}")))
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
         self.render_finished_semaphores = (0..num_frames)
             .map(|_| unsafe {
                 device.logical().create_semaphore(&semaphore_info, None)
-                    .expect("failed to create semaphore")
+                    .map_err(|e| RenderError::DeviceCreation(format!("semaphore: {e}")))
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(())
     }
 
     pub fn acquire_next_image(&mut self, _device: &GpuDevice, frame_index: usize) -> Result<bool, RenderError> {
         let sem_idx = frame_index % self.image_count as usize;
         let semaphore = self.image_available_semaphores[sem_idx];
+        let loader = self.loader.as_ref().ok_or_else(|| RenderError::SwapchainCreation("loader not initialized".into()))?;
+        let sc = self.swapchain.ok_or_else(|| RenderError::SwapchainCreation("swapchain not initialized".into()))?;
         let result = unsafe {
-            self.loader.as_ref().unwrap().acquire_next_image(
-                self.swapchain.unwrap(),
-                u64::MAX,
-                semaphore,
-                vk::Fence::null(),
-            )
+            loader.acquire_next_image(sc, u64::MAX, semaphore, vk::Fence::null())
         };
         match result {
             Ok((index, _suboptimal)) => {
@@ -246,7 +241,7 @@ impl Swapchain {
         device: &GpuDevice,
         wait_semaphores: &[vk::Semaphore],
     ) -> Result<bool, RenderError> {
-        let swapchain = self.swapchain.unwrap();
+        let swapchain = self.swapchain.ok_or_else(|| RenderError::SwapchainCreation("swapchain not initialized".into()))?;
         let image_index = self.current_image_index as u32;
 
         let swapchains = [swapchain];
@@ -256,11 +251,10 @@ impl Swapchain {
             .swapchains(&swapchains)
             .image_indices(&image_indices);
 
+        let loader = self.loader.as_ref()
+            .ok_or_else(|| RenderError::SwapchainCreation("swapchain loader not initialized".into()))?;
         let result = unsafe {
-            self.loader
-                .as_ref()
-                .unwrap()
-                .queue_present(device.present_queue(), &present_info)
+            loader.queue_present(device.present_queue(), &present_info)
         };
         match result {
             Ok(true) | Ok(false) | Err(vk::Result::SUBOPTIMAL_KHR) => Ok(true),
@@ -312,20 +306,24 @@ impl Swapchain {
     }
 }
 
-fn choose_surface_format(formats: &[vk::SurfaceFormatKHR]) -> (vk::Format, vk::ColorSpaceKHR) {
+fn choose_surface_format(formats: &[vk::SurfaceFormatKHR]) -> Result<(vk::Format, vk::ColorSpaceKHR), RenderError> {
+    if formats.is_empty() {
+        return Err(RenderError::SwapchainCreation("no surface formats available".into()));
+    }
     for fmt in formats {
         if fmt.format == vk::Format::B8G8R8A8_SRGB
             && fmt.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
         {
-            return (fmt.format, fmt.color_space);
+            return Ok((fmt.format, fmt.color_space));
         }
     }
     for fmt in formats {
         if fmt.format == vk::Format::B8G8R8A8_UNORM {
-            return (fmt.format, fmt.color_space);
+            return Ok((fmt.format, fmt.color_space));
         }
     }
-    (formats[0].format, formats[0].color_space)
+    tracing::warn!("preferred surface formats not available, using {:?}", formats[0].format);
+    Ok((formats[0].format, formats[0].color_space))
 }
 
 fn choose_present_mode(modes: &[vk::PresentModeKHR]) -> vk::PresentModeKHR {

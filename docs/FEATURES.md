@@ -260,9 +260,43 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 
 ---
 
-## 6-14. REMAINING SUBSYSTEMS
+## 6. AUDIO SYSTEM (crates/audio)
 
-All crates (`physics`, `audio`, `animation`, `networking`, `scripting`, `ai`, `terrain`, `world`, `editor`) are currently **empty stubs** — they compile with no implementation.
+### 6.1 Audio Decoding
+- [x] Multi-format decoding via `symphonia` (WAV, MP3, OGG/Vorbis, FLAC, AAC)
+- [x] Pure-Rust — no system audio libs required at build time
+- [x] Sample rate and channel detection from codec metadata
+- [x] Raw `f32` PCM sample output for analysis/visualization
+- [x] `SoundInstance` with decoded sample access (`.decoded_samples()`)
+
+### 6.2 Audio Playback
+- [x] Hardware playback via `rodio` (optional, feature-gated: `audio-playback`)
+- [x] `AudioEngine::new()` always succeeds — graceful fallback if no device
+- [x] `is_playback_available()` runtime check
+- [x] Play/stop/pause/volume per `SoundInstance`
+- [x] Looping support
+- [x] Master volume control
+- [ ] Spatial audio (distance attenuation, HRTF panning)
+- [ ] Audio effects (reverb, EQ, compression)
+- [ ] Streaming for long files
+
+### 6.3 ECS Components
+- [ ] `AudioSource` as `hecs::Component` (position, min/max distance, rolloff)
+- [ ] `AudioListener` as `hecs::Component` (position, forward, up)
+- [ ] `SoundPlayer` as `hecs::Component` (path, volume, looping)
+- [ ] Automatic cleanup of finished instances
+
+### 6.4 Editor Integration
+- [x] Sound effects assets in `assets/sounds/` (click, beep, whoosh, thump)
+- [ ] Audio file preview in Asset Browser
+- [ ] Waveform visualization
+- [ ] Audio source gizmos in 3D viewport
+
+---
+
+## 7-14. REMAINING SUBSYSTEMS
+
+Remaining crates (`physics`, `animation`, `networking`, `scripting`, `ai`, `terrain`, `world`, `editor`) are stubs with no implementation.
 
 ---
 

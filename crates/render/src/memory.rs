@@ -112,8 +112,8 @@ impl GpuBuffer {
             )?;
         }
 
-        let mapped_ptr = if allocation.mapped_ptr().is_some() {
-            Some(allocation.mapped_ptr().unwrap().as_ptr() as *mut u8)
+        let mapped_ptr = if let Some(ptr) = allocation.mapped_ptr() {
+            Some(ptr.as_ptr() as *mut u8)
         } else {
             None
         };
@@ -140,7 +140,10 @@ impl GpuBuffer {
         let ptr = self
             .mapped_ptr
             .expect("attempted to write to unmapped GPU buffer");
-        assert!(offset + data.len() as u64 <= self.size);
+        if offset + data.len() as u64 > self.size {
+            tracing::error!("GPU buffer write overflow: offset={offset} len={} size={}", data.len(), self.size);
+            return;
+        }
         unsafe {
             std::ptr::copy_nonoverlapping(data.as_ptr(), ptr.add(offset as usize), data.len());
         }
@@ -156,7 +159,10 @@ impl GpuBuffer {
         let ptr = self
             .mapped_ptr
             .expect("attempted to read from unmapped GPU buffer");
-        assert!(dst.len() as u64 <= self.size);
+        if dst.len() as u64 > self.size {
+            tracing::error!("GPU buffer read overflow: len={} size={}", dst.len(), self.size);
+            return;
+        }
         unsafe {
             std::ptr::copy_nonoverlapping(ptr, dst.as_mut_ptr(), dst.len());
         }
@@ -215,8 +221,9 @@ impl StagingBufferPool {
     pub fn upload<T: Sized>(
         &mut self,
         data: &[T],
-    ) -> (*const u8, vk::Buffer, u64) {
-        let buf = self.buffer.as_ref().unwrap();
+    ) -> Result<(*const u8, vk::Buffer, u64), RenderError> {
+        let buf = self.buffer.as_ref()
+            .ok_or_else(|| RenderError::DeviceCreation("staging pool not initialized".into()))?;
         let byte_size = (data.len() * std::mem::size_of::<T>()) as u64;
 
         if self.cursor + byte_size > buf.size {
@@ -224,8 +231,10 @@ impl StagingBufferPool {
         }
 
         let offset = self.cursor;
+        let mapped = buf.mapped_ptr
+            .ok_or_else(|| RenderError::DeviceCreation("staging buffer not mapped".into()))?;
         unsafe {
-            let dst = buf.mapped_ptr.unwrap().add(offset as usize);
+            let dst = mapped.add(offset as usize);
             std::ptr::copy_nonoverlapping(
                 data.as_ptr() as *const u8,
                 dst,
@@ -234,7 +243,7 @@ impl StagingBufferPool {
         }
         self.cursor = offset + byte_size;
 
-        (buf.mapped_ptr.unwrap(), buf.buffer, offset)
+        Ok((mapped, buf.buffer, offset))
     }
 
     pub fn upload_to_device(
@@ -256,7 +265,7 @@ impl StagingBufferPool {
                     src_data.len(),
                 );
             }
-            self.upload(&aligned)
+            self.upload(&aligned)?
         };
 
         let alloc_info = vk::CommandBufferAllocateInfo::default()
@@ -270,7 +279,7 @@ impl StagingBufferPool {
                 .allocate_command_buffers(&alloc_info)?
                 .into_iter()
                 .next()
-                .unwrap()
+                .ok_or_else(|| RenderError::DeviceCreation("no command buffer allocated".into()))?
         };
 
         let begin_info = vk::CommandBufferBeginInfo::default()

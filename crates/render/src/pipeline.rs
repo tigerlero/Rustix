@@ -5,8 +5,9 @@ use crate::shader::ShaderModule;
 use crate::swapchain::Swapchain;
 use crate::RenderError;
 
-pub const PUSH_CONSTANT_SIZE: u32 = 112; // Mat4(64) + light_dir(16) + light_color(16) + material(16)
-pub const PUSH_CONSTANT_SIZE_2D: u32 = 64; // Mat4 only (model matrix)
+pub const PUSH_CONSTANT_SIZE: u32 = 128; // Mat4(64) + dir_light(16) + dir_color(16) + base_color(16) + rough_metal(16)
+pub const UBO_SCENE_SIZE: u64 = 368; // view_proj(64)+cam(16)+count(4)+pad(12)+8*PointLight(256)+fog(16)
+pub const PUSH_CONSTANT_SIZE_2D: u32 = 64;
 
 pub struct GraphicsPipeline {
     pub pipeline: vk::Pipeline,
@@ -66,7 +67,8 @@ impl GraphicsPipeline {
         let dy = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dyns);
 
         let cfs = [swapchain.format()];
-        let mut dr = vk::PipelineRenderingCreateInfoKHR::default().color_attachment_formats(&cfs).depth_attachment_format(vk::Format::D32_SFLOAT);
+        let depth_fmt = vk::Format::D32_SFLOAT; // D32 is widely supported; fallback to D24 if needed
+        let mut dr = vk::PipelineRenderingCreateInfoKHR::default().color_attachment_formats(&cfs).depth_attachment_format(depth_fmt);
 
         let ci = vk::GraphicsPipelineCreateInfo::default()
             .stages(&stages).vertex_input_state(&vi).input_assembly_state(&ia)
@@ -78,7 +80,7 @@ impl GraphicsPipeline {
         let pipeline = unsafe {
             device.logical().create_graphics_pipelines(device.pipeline_cache(), &[ci], None)
                 .map_err(|(_, e)| RenderError::PipelineCreation(format!("pipeline: {e}")))?
-                .remove(0)
+                .into_iter().next().ok_or_else(|| RenderError::PipelineCreation("no pipeline created".into()))?
         };
 
         tracing::info!("graphics pipeline created (UBO + push constants + depth + culling)");
@@ -191,7 +193,7 @@ impl GraphicsPipeline2D {
         let pipeline = unsafe {
             device.logical().create_graphics_pipelines(device.pipeline_cache(), &[ci], None)
                 .map_err(|(_, e)| RenderError::PipelineCreation(format!("2d pipeline: {e}")))?
-                .remove(0)
+                .into_iter().next().ok_or_else(|| RenderError::PipelineCreation("no 2d pipeline created".into()))?
         };
 
         tracing::info!("2D graphics pipeline created (UBO + sampler + alpha blend)");

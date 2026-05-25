@@ -582,59 +582,81 @@ pub struct RayHit {
 
 ## 6. Audio Subsystem Interface
 
-### 6.1 Audio Plugin (crates/audio/src/lib.rs)
+### 6.1 Audio Engine (crates/audio/src/lib.rs)
 
 ```rust
-pub struct AudioPlugin;
+pub struct AudioEngine {
+    // rodio::OutputStream + handle (when audio-playback feature enabled)
+    master_volume: f32,
+    playback_available: bool,
+}
 
-impl Plugin for AudioPlugin { /* ... */ }
-
-pub struct AudioConfig {
-    pub sample_rate: u32,
-    pub output_device: Option<String>,
-    pub buffer_size: u32,
-    pub max_sources: u32,
-    pub master_volume: f32,
+impl AudioEngine {
+    pub fn new() -> Result<Self, AudioError>;  // Always succeeds, falls back gracefully
+    pub fn play_sound(&self, path: &Path, volume: f32, looping: bool) -> Result<SoundInstance, AudioError>;
+    pub fn play_sound_file(&self, path: &Path) -> Result<SoundInstance, AudioError>;
+    pub fn update(&mut self);
+    pub fn set_master_volume(&mut self, volume: f32);
+    pub fn master_volume(&self) -> f32;
+    pub fn is_playback_available(&self) -> bool;
 }
 ```
 
-### 6.2 Audio Components (crates/audio/src/components.rs)
+### 6.2 Sound Instance
 
 ```rust
-#[derive(Component)]
-pub struct AudioSource {
-    pub clip: Handle<AudioClip>,
-    pub volume: f32,
-    pub pitch: f32,
-    pub looping: bool,
-    pub spatial: bool,
-    pub state: AudioState,
+pub struct SoundInstance {
+    decoded: Vec<f32>,     // Raw interleaved PCM samples (always available)
+    sample_rate: u32,
+    channels: u16,
 }
 
-pub enum AudioState {
-    Playing,
-    Paused,
-    Stopped,
-}
-
-#[derive(Component)]
-pub struct AudioListener {
-    pub gain: f32,
-}
-
-#[derive(Component)]
-pub struct AudioEmitter {
-    pub inner_radius: f32,
-    pub outer_radius: f32,
-    pub attenuation: AttenuationCurve,
-}
-
-pub enum AttenuationCurve {
-    Inverse { rolloff: f32 },
-    Linear { min_dist: f32, max_dist: f32 },
-    Custom(Vec<(f32, f32)>),  // (distance, gain) pairs
+impl SoundInstance {
+    pub fn set_volume(&self, volume: f32);
+    pub fn stop(&self);
+    pub fn pause(&self);
+    pub fn play(&self);
+    pub fn is_playing(&self) -> bool;
+    pub fn decoded_samples(&self) -> &[f32];  // For waveform visualization
+    pub fn sample_rate(&self) -> u32;
+    pub fn channels(&self) -> u16;
 }
 ```
+
+### 6.3 Audio Decoding
+
+```rust
+fn decode_audio(path: &Path) -> Result<(Vec<f32>, u32, u16), AudioError>;
+// Uses symphonia (pure Rust) — supports WAV, MP3, OGG/Vorbis, FLAC, AAC
+// Returns (interleaved f32 samples, sample_rate, channel_count)
+```
+
+### 6.4 ECS Components (Planned)
+
+```rust
+pub struct AudioListener { pub position: Vec3, pub forward: Vec3, pub up: Vec3 }
+pub struct AudioSource { pub position: Vec3, pub min_distance: f32, pub max_distance: f32, pub rolloff: f32 }
+pub struct SoundPlayer { pub sound_path: PathBuf, pub volume: f32, pub looping: bool, pub spatial_blend: f32 }
+```
+
+### 6.5 Error Handling
+
+```rust
+pub enum AudioError {
+    PlaybackNotEnabled,       // audio-playback feature not active
+    Io(std::io::Error),        // file read errors
+    Decode(String),             // symphonia decode errors
+}
+```
+
+### 6.6 Feature Flags
+
+| Feature | Default | Requires |
+|---------|---------|----------|
+| `audio-playback` | off | rodio (+ libasound2-dev on Linux) |
+
+Without `audio-playback`: full decode + sample access, no hardware output.
+With `audio-playback`: hardware playback via rodio/cpal, graceful fallback if no device.
 
 ---
 

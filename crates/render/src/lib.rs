@@ -7,6 +7,7 @@ pub mod pipeline;
 pub mod memory;
 pub mod mesh;
 pub mod components;
+pub mod graph;
 
 // Re-export commonly used component types
 pub use components::{Sprite, SpriteRenderer, DirectionalLight, PointLight, SpotLight};

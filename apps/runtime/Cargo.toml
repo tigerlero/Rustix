@@ -18,6 +18,7 @@ rustix-core = { path = "../../crates/core" }
 rustix-platform = { path = "../../crates/platform" }
 rustix-render = { path = "../../crates/render" }
 rustix-ui = { path = "../../crates/ui" }
+rustix-audio = { path = "../../crates/audio" }
 gltf = { workspace = true }
 rfd = { workspace = true }
 serde = { workspace = true }

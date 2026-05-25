@@ -1,0 +1,162 @@
+use std::fs;
+use std::path::Path;
+use super::scene::SceneData;
+
+const PROJECT_FILE: &str = "project.rustixproj";
+const RECENT_FILE: &str = "recent_projects.json";
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum AppScreen {
+    Startup,
+    Editor,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum ConfirmTarget {
+    None,
+    BackToHub,
+    Exit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectType {
+    Dim2,
+    Dim3,
+}
+
+impl Default for ProjectType {
+    fn default() -> Self { ProjectType::Dim3 }
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct ProjectEntry {
+    pub name: String,
+    pub path: String,
+    pub last_opened: String,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct RecentProjectList {
+    pub projects: Vec<ProjectEntry>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct ProjectInfo {
+    pub name: String,
+    pub description: String,
+    pub created: String,
+    pub last_opened: String,
+    pub default_scene: String,
+    pub scenes: Vec<String>,
+    pub settings: ProjectSettings,
+    #[serde(default)]
+    pub scene: SceneData,
+}
+
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ProjectSettings {
+    pub resolution_width: u32,
+    pub resolution_height: u32,
+    pub enable_vsync: bool,
+    pub target_fps: u32,
+    #[serde(default)]
+    pub project_type: ProjectType,
+}
+
+impl Default for ProjectSettings {
+    fn default() -> Self {
+        Self { resolution_width: 1600, resolution_height: 900, enable_vsync: true, target_fps: 60, project_type: ProjectType::Dim3 }
+    }
+}
+
+pub fn project_name_from_path(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| path.to_string())
+}
+
+pub fn create_project_file(dir: &Path, project_type: ProjectType) -> Option<ProjectInfo> {
+    fs::create_dir_all(dir).ok()?;
+    let now = chrono_now();
+    let mut settings = ProjectSettings::default();
+    settings.project_type = project_type;
+    let info = ProjectInfo {
+        name: dir.file_name()?.to_string_lossy().to_string(),
+        description: String::new(),
+        created: now.clone(),
+        last_opened: now,
+        default_scene: String::new(),
+        scenes: Vec::new(),
+        settings,
+        scene: SceneData::default(),
+    };
+    write_project_file(dir, &info)?;
+    tracing::info!("created project: {} at {} (type: {:?})", info.name, dir.display(), project_type);
+    Some(info)
+}
+
+pub fn write_project_file(dir: &Path, info: &ProjectInfo) -> Option<()> {
+    let path = dir.join(PROJECT_FILE);
+    let json = serde_json::to_string_pretty(info).ok()?;
+    fs::write(&path, &json).ok()?;
+    Some(())
+}
+
+pub fn load_project_file(dir: &Path) -> Option<ProjectInfo> {
+    let path = dir.join(PROJECT_FILE);
+    let json = fs::read_to_string(&path).ok()?;
+    let mut info: ProjectInfo = serde_json::from_str(&json).ok()?;
+    info.last_opened = chrono_now();
+    write_project_file(dir, &info)?;
+    tracing::info!("loaded project: {} from {}", info.name, dir.display());
+    Some(info)
+}
+
+pub fn chrono_now() -> String {
+    use std::time::SystemTime;
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| format!("{}", d.as_secs()))
+        .unwrap_or_else(|_| "0".into())
+}
+
+pub fn recent_projects_path() -> std::path::PathBuf {
+    dirs::config_dir()
+        .map(|d| d.join("rustix").join(RECENT_FILE))
+        .unwrap_or_else(|| std::path::PathBuf::from(RECENT_FILE))
+}
+
+pub fn load_recent_projects() -> Vec<ProjectEntry> {
+    let path = recent_projects_path();
+    let json = match fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    serde_json::from_str::<RecentProjectList>(&json)
+        .map(|list| list.projects)
+        .unwrap_or_default()
+}
+
+pub fn save_recent_projects(recent: &[ProjectEntry]) {
+    let path = recent_projects_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let list = RecentProjectList { projects: recent.to_vec() };
+    if let Ok(json) = serde_json::to_string_pretty(&list) {
+        let _ = fs::write(&path, &json);
+    }
+}
+
+pub fn add_recent_project(recent: &mut Vec<ProjectEntry>, path: String, info: &Option<ProjectInfo>) {
+    recent.retain(|p| p.path != path);
+    let name = info.as_ref().map(|i| i.name.clone()).unwrap_or_else(|| project_name_from_path(&path));
+    recent.insert(0, ProjectEntry { name, path, last_opened: chrono_now() });
+    if recent.len() > 10 {
+        recent.truncate(10);
+    }
+    save_recent_projects(recent);
+}

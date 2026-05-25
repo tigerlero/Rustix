@@ -85,10 +85,17 @@ Binary entry point with egui-based editor overlay:
 
 ---
 
-## Stub Crates (13 of 17)
+## Stub Crates (12 of 17)
 
 These compile but contain no implementation:
-`asset`, `physics`, `audio`, `animation`, `networking`, `scripting`, `ui` (partial widgets), `ai`, `terrain`, `world`, `editor`
+`asset`, `physics`, `animation`, `networking`, `scripting`, `ai`, `terrain`, `world`, `editor`
+
+### `rustix-audio` (crates/audio) — ACTIVE
+- Multi-format audio decoding via `symphonia` (WAV, MP3, OGG/Vorbis, FLAC, AAC)
+- Optional hardware playback via `rodio` (feature-gated: `audio-playback`)
+- `AudioEngine`, `SoundInstance`, `SoundPlayer`, `AudioSource`, `AudioListener` types
+- Pure-Rust decoding — no system audio libs required at build time
+- Sound effect assets in `assets/sounds/`
 
 ### `rustix-ui` (crates/ui) — PARTIAL
 - Immediate mode UI context with draw list

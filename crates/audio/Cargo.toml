@@ -8,12 +8,18 @@ description = "Rustix engine audio system"
 tracing = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+parking_lot = { workspace = true }
+hecs = { workspace = true }
 
 rustix-core = { path = "../core" }
 
-# Audio support - optional until system dependencies are available
+# Pure-Rust audio decoding (wav, mp3, ogg/vorbis, flac, aac)
+symphonia = { workspace = true, features = ["mp3", "wav", "flac", "vorbis", "aac"] }
+
+# Hardware audio playback via rodio — requires system audio libs (alsa on Linux)
+# Enable with: --features audio-playback
 rodio = { version = "0.20", default-features = false, optional = true }
 
 [features]
-default = ["audio"]
-audio = ["dep:rodio"]
+default = []
+audio-playback = ["dep:rodio"]

@@ -1,12 +1,15 @@
-use ash::vk;
+use ash::vk::{self, Handle};
 use gpu_allocator::MemoryLocation;
 use rustix_render::Renderer;
 use rustix_render::RenderError;
 
 pub struct EguiVulkanRenderer {
+    device: *const ash::Device,
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
     descriptor_set: vk::DescriptorSet,
+    descriptor_pool: vk::DescriptorPool,
+    descriptor_set_layout: vk::DescriptorSetLayout,
     font_texture: Option<rustix_render::GpuTexture>,
     font_texture_size: (u32, u32),
     #[allow(dead_code)]
@@ -134,7 +137,7 @@ fn main(@location(0) uv: vec2<f32>, @location(1) color: vec4<f32>) -> @location(
 
         tracing::info!("egui renderer ready (WGSL separate texture+sampler)");
 
-        Ok(Self{pipeline,pipeline_layout,descriptor_set:desc_set,font_texture:Some(font_texture),font_texture_size:(1,1),sampler,vertex_buffer:vb,index_buffer:ib})
+        Ok(Self{device:device.logical() as *const ash::Device,pipeline,pipeline_layout,descriptor_set:desc_set,descriptor_pool:desc_pool,descriptor_set_layout:desc_layout,font_texture:Some(font_texture),font_texture_size:(1,1),sampler,vertex_buffer:vb,index_buffer:ib})
     }
 
     pub fn update_textures(&mut self, renderer: &Renderer, delta: &egui::TexturesDelta) {
@@ -152,15 +155,12 @@ fn main(@location(0) uv: vec2<f32>, @location(1) color: vec4<f32>) -> @location(
             let same_size = w == self.font_texture_size.0 && h == self.font_texture_size.1;
 
             if same_size {
-                // Same size: update pixels in-place to keep same VkImage/VkImageView.
-                // This avoids descriptor re-binding entirely.
                 if let Some(ref existing) = self.font_texture {
                     if let Err(e) = renderer.update_texture_pixels(existing, w, h, &pixels) {
                         tracing::error!("failed to update texture pixels: {e}");
                     }
                 }
             } else {
-                // Different size: create fresh texture + update descriptor.
                 if let Ok(tex) = renderer.create_texture(w, h, &pixels) {
                     self.font_texture = Some(tex);
                     self.font_texture_size = (w, h);
@@ -181,11 +181,7 @@ fn main(@location(0) uv: vec2<f32>, @location(1) color: vec4<f32>) -> @location(
 
     pub fn draw_primitives(&self, cmd: vk::CommandBuffer, renderer: &Renderer, primitives: &[egui::ClippedPrimitive], pixels_per_point: f32) {
         if primitives.is_empty() { return; }
-        let tex_id_summary: Vec<String> = primitives.iter().map(|p| match &p.primitive {
-            egui::epaint::Primitive::Mesh(m) => format!("{:?}", m.texture_id),
-            _ => "callback".into(),
-        }).collect();
-        tracing::debug!("draw_primitives: {} prims, tex_ids: {:?}, ppp: {}", primitives.len(), tex_id_summary, pixels_per_point);
+        tracing::debug!("draw_primitives: {} prims, vb mapped={:?}, ib mapped={:?}", primitives.len(), self.vertex_buffer.mapped_ptr, self.index_buffer.mapped_ptr);
         let sw=renderer.swapchain.lock();
         let phys_w = sw.extent().width as f32;
         let phys_h = sw.extent().height as f32;
@@ -241,5 +237,31 @@ fn main(@location(0) uv: vec2<f32>, @location(1) color: vec4<f32>) -> @location(
         }
 
         unsafe{let dr=ash::khr::dynamic_rendering::Device::new(&renderer.instance.inner(),&renderer.device().logical());dr.cmd_end_rendering(cmd);}
+    }
+}
+
+impl Drop for EguiVulkanRenderer {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.device.is_null() {
+                let dev = &*self.device;
+                if !self.pipeline.is_null() {
+                    dev.destroy_pipeline(self.pipeline, None);
+                }
+                if !self.pipeline_layout.is_null() {
+                    dev.destroy_pipeline_layout(self.pipeline_layout, None);
+                }
+                if !self.descriptor_set_layout.is_null() {
+                    dev.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+                }
+                if !self.descriptor_pool.is_null() {
+                    dev.destroy_descriptor_pool(self.descriptor_pool, None);
+                }
+                if !self.sampler.is_null() {
+                    dev.destroy_sampler(self.sampler, None);
+                }
+            }
+        }
+        tracing::debug!("EguiVulkanRenderer dropped");
     }
 }

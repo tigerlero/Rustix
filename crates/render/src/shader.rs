@@ -47,7 +47,7 @@ impl ShaderModule {
 fn vk_stage_to_naga(s: vk::ShaderStageFlags) -> naga::ShaderStage {
     if s.contains(vk::ShaderStageFlags::VERTEX) { naga::ShaderStage::Vertex }
     else if s.contains(vk::ShaderStageFlags::FRAGMENT) { naga::ShaderStage::Fragment }
-    else { panic!("unsupported stage: {s:?}") }
+    else { tracing::warn!("unsupported shader stage {s:?}, defaulting to vertex"); naga::ShaderStage::Vertex }
 }
 
 fn spv_options() -> naga::back::spv::Options<'static> {
@@ -80,8 +80,9 @@ pub mod builtin {
     use super::*;
 
     pub const VERTEX_GLSL: &str = r#"#version 460
-layout(binding = 0) uniform ViewProj { mat4 view_proj; vec4 cam_pos; } ubo;
-layout(push_constant) uniform PC { mat4 model; vec4 light_dir; vec4 light_color; vec4 material; } pc;
+struct PointLight { vec4 position; vec4 color; };
+layout(binding = 0) uniform SceneUBO { mat4 view_proj; vec4 cam_pos; uint light_count; PointLight lights[8]; vec4 fog; } ubo;
+layout(push_constant) uniform PC { mat4 model; vec4 dir_light; vec4 dir_color; vec4 base_color; vec4 material; } pc;
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
 layout(location = 0) out vec3 fragNormal;
@@ -95,31 +96,58 @@ void main() {
 "#;
 
     pub const FRAGMENT_GLSL: &str = r#"#version 460
-layout(push_constant) uniform PC { mat4 model; vec4 light_dir; vec4 light_color; vec4 material; } pc;
-layout(binding = 0) uniform ViewProj { mat4 view_proj; vec4 cam_pos; } ubo;
+struct PointLight { vec4 position; vec4 color; };
+layout(binding = 0) uniform SceneUBO { mat4 view_proj; vec4 cam_pos; uint light_count; PointLight lights[8]; vec4 fog; } ubo;
+layout(push_constant) uniform PC { mat4 model; vec4 dir_light; vec4 dir_color; vec4 base_color; vec4 material; } pc;
 layout(location = 0) in vec3 fragNormal;
 layout(location = 1) in vec3 fragWorldPos;
 layout(location = 0) out vec4 outColor;
-void main() {
-    vec3 N = normalize(fragNormal);
-    vec3 L = normalize(-pc.light_dir.xyz);
-    vec3 V = normalize(ubo.cam_pos.xyz - fragWorldPos);
-    vec3 H = normalize(L + V);
 
+vec3 blinn_phong(vec3 N, vec3 L, vec3 V, vec3 light_color, vec3 base, float roughness, float metallic) {
+    vec3 H = normalize(L + V);
     float NdotL = max(dot(N, L), 0.0);
     float NdotH = max(dot(N, H), 0.0);
+    float spec_pow = 32.0 / (roughness * roughness + 0.001);
+    float spec = pow(NdotH, spec_pow);
 
-    vec3 base = pc.material.rgb;
-    float roughness = pc.material.a;
+    vec3 f0 = mix(vec3(0.04), base, metallic);
+    vec3 specular = spec * light_color * f0 * (1.0 - roughness) * 0.5;
+    vec3 diffuse = NdotL * light_color * base * (1.0 - metallic);
 
-    vec3 diffuse = NdotL * pc.light_color.rgb * base;
-    float spec = pow(NdotH, 32.0 / (roughness * roughness + 0.001));
-    vec3 specular = spec * pc.light_color.rgb * (1.0 - roughness) * 0.5;
+    return diffuse + specular;
+}
 
-    float ambient = pc.light_dir.w;
-    vec3 ambient_color = ambient * base * 0.5;
+void main() {
+    vec3 N = normalize(fragNormal);
+    vec3 V = normalize(ubo.cam_pos.xyz - fragWorldPos);
+    vec3 base = pc.base_color.rgb;
+    float roughness = pc.base_color.a;
+    float metallic = pc.material.x;
 
-    outColor = vec4(ambient_color + diffuse + specular, 1.0);
+    vec3 Ld = normalize(-pc.dir_light.xyz);
+    vec3 color = blinn_phong(N, Ld, V, pc.dir_color.rgb, base, roughness, metallic);
+
+    for (uint i = 0u; i < ubo.light_count && i < 8u; i++) {
+        vec3 to_light = ubo.lights[i].position.xyz - fragWorldPos;
+        float dist = length(to_light);
+        float radius = ubo.lights[i].position.w;
+        if (dist < radius) {
+            vec3 L = to_light / dist;
+            float atten = 1.0 / (1.0 + 0.1 * dist + 0.01 * dist * dist);
+            float falloff = 1.0 - smoothstep(0.7 * radius, radius, dist);
+            color += blinn_phong(N, L, V, ubo.lights[i].color.rgb * atten * falloff, base, roughness, metallic);
+        }
+    }
+
+    float sky_factor = max(N.y, 0.0) * 0.4 + 0.05;
+    vec3 sky_ambient = mix(vec3(0.02, 0.03, 0.06), vec3(0.15, 0.22, 0.40), sky_factor);
+    float ambient = pc.dir_light.w;
+    outColor.rgb = ambient * base * sky_ambient + color;
+
+    float fog_dist = length(fragWorldPos - ubo.cam_pos.xyz);
+    float fog_factor = clamp(fog_dist / max(ubo.fog.a, 0.1), 0.0, 1.0);
+    outColor.rgb = mix(outColor.rgb, ubo.fog.rgb, fog_factor);
+    outColor.a = 1.0;
 }
 "#;
 
