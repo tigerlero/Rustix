@@ -1,4 +1,6 @@
 use ash::vk::{self, Handle};
+use std::collections::HashMap;
+use std::cell::Cell;
 use gpu_allocator::MemoryLocation;
 use rustix_render::Renderer;
 use rustix_render::RenderError;
@@ -16,6 +18,14 @@ pub struct EguiVulkanRenderer {
     sampler: vk::Sampler,
     vertex_buffer: rustix_render::memory::GpuBuffer,
     index_buffer: rustix_render::memory::GpuBuffer,
+    // Keep old font textures alive until pending command buffers finish.
+    // With 3 in-flight frames, a texture pushed here survives at least
+    // 3 frames before being dropped (and having its GPU memory freed).
+    old_font_textures: Vec<rustix_render::GpuTexture>,
+    // Map of all active egui textures (including font atlas) by TextureId.
+    textures: HashMap<egui::TextureId, rustix_render::GpuTexture>,
+    // Cache of currently bound texture id to avoid redundant descriptor writes.
+    bound_texture: Cell<Option<egui::TextureId>>,
 }
 
 impl EguiVulkanRenderer {
@@ -87,7 +97,8 @@ fn main(@location(0) uv: vec2<f32>, @location(1) color: vec4<f32>) -> @location(
 ", vk::ShaderStageFlags::FRAGMENT)?;
 
         let stages = [vs.stage_create_info(), fs.stage_create_info()];
-        let vbs = [vk::VertexInputBindingDescription::default().binding(0).stride(20).input_rate(vk::VertexInputRate::VERTEX)];
+        let v_stride = std::mem::size_of::<egui::epaint::Vertex>() as u32;
+        let vbs = [vk::VertexInputBindingDescription::default().binding(0).stride(v_stride).input_rate(vk::VertexInputRate::VERTEX)];
         let vas = [
             vk::VertexInputAttributeDescription::default().binding(0).location(0).format(vk::Format::R32G32_SFLOAT).offset(0),
             vk::VertexInputAttributeDescription::default().binding(0).location(1).format(vk::Format::R32G32_SFLOAT).offset(8),
@@ -120,8 +131,9 @@ fn main(@location(0) uv: vec2<f32>, @location(1) color: vec4<f32>) -> @location(
         let pipeline=unsafe{device.logical().create_graphics_pipelines(device.pipeline_cache(),&[ci],None)
             .map_err(|(_,e)|RenderError::PipelineCreation(format!("pipe: {e}")))?.remove(0)};
 
-        let vb=renderer.create_buffer("egui_vb", 4*1024*1024, vk::BufferUsageFlags::VERTEX_BUFFER, MemoryLocation::CpuToGpu)?;
-        let ib=renderer.create_buffer("egui_ib", 4*1024*1024, vk::BufferUsageFlags::INDEX_BUFFER, MemoryLocation::CpuToGpu)?;
+        // Triple-buffered: 3 x 4MB slots so each in-flight frame writes to its own region
+        let vb=renderer.create_buffer("egui_vb", 4*1024*1024 * 3, vk::BufferUsageFlags::VERTEX_BUFFER, MemoryLocation::CpuToGpu)?;
+        let ib=renderer.create_buffer("egui_ib", 4*1024*1024 * 3, vk::BufferUsageFlags::INDEX_BUFFER, MemoryLocation::CpuToGpu)?;
 
         // Initial descriptor writes (placeholder texture + sampler)
         let img_info=[vk::DescriptorImageInfo::default()
@@ -137,62 +149,89 @@ fn main(@location(0) uv: vec2<f32>, @location(1) color: vec4<f32>) -> @location(
 
         tracing::info!("egui renderer ready (WGSL separate texture+sampler)");
 
-        Ok(Self{device:device.logical() as *const ash::Device,pipeline,pipeline_layout,descriptor_set:desc_set,descriptor_pool:desc_pool,descriptor_set_layout:desc_layout,font_texture:Some(font_texture),font_texture_size:(1,1),sampler,vertex_buffer:vb,index_buffer:ib})
+        Ok(Self{device:device.logical() as *const ash::Device,pipeline,pipeline_layout,descriptor_set:desc_set,descriptor_pool:desc_pool,descriptor_set_layout:desc_layout,font_texture:Some(font_texture),font_texture_size:(1,1),sampler,vertex_buffer:vb,index_buffer:ib,old_font_textures:Vec::new(),textures:HashMap::new(),bound_texture:Cell::new(None)})
     }
 
     pub fn update_textures(&mut self, renderer: &Renderer, delta: &egui::TexturesDelta) {
         for id in &delta.free {
-            tracing::info!("texture free: {id:?}");
+            tracing::trace!("texture free: {id:?}");
+            if let Some(tex) = self.textures.remove(id) {
+                self.old_font_textures.push(tex);
+            }
+            // If the freed texture was currently bound, force rebind to fallback
+            if self.bound_texture.get() == Some(*id) {
+                self.bound_texture.set(None);
+            }
         }
         for (id, d) in &delta.set {
-            let egui::ImageData::Color(ref img) = &d.image;
-            let pixels: Vec<u8> = img.pixels.iter()
-                .flat_map(|c| [c.r(), c.g(), c.b(), c.a()]).collect();
-            let w = img.size[0] as u32;
-            let h = img.size[1] as u32;
-            tracing::info!("texture set: {id:?} {w}x{h} (existing: {}x{})", self.font_texture_size.0, self.font_texture_size.1);
-
-            let same_size = w == self.font_texture_size.0 && h == self.font_texture_size.1;
-
-            if same_size {
-                if let Some(ref existing) = self.font_texture {
-                    if let Err(e) = renderer.update_texture_pixels(existing, w, h, &pixels) {
-                        tracing::error!("failed to update texture pixels: {e}");
-                    }
+            let (w, h, pixels_rgba) = match &d.image {
+                egui::ImageData::Color(img) => {
+                    let w = img.size[0] as u32;
+                    let h = img.size[1] as u32;
+                    let px: Vec<u8> = img.pixels.iter().flat_map(|c| [c.r(), c.g(), c.b(), c.a()]).collect();
+                    (w, h, px)
                 }
-            } else {
-                if let Ok(tex) = renderer.create_texture(w, h, &pixels) {
-                    self.font_texture = Some(tex);
-                    self.font_texture_size = (w, h);
-                    if let Some(ref t) = self.font_texture {
-                        let img_info = [vk::DescriptorImageInfo::default()
-                            .image_view(t.view).image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
-                        let writes = [vk::WriteDescriptorSet::default()
-                            .dst_set(self.descriptor_set).dst_binding(0)
-                            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE).image_info(&img_info)];
-                        unsafe { renderer.device().logical().update_descriptor_sets(&writes, &[]); }
+            };
+            tracing::trace!("texture set: {id:?} {w}x{h} pos={:?} (existing: {}x{})", d.pos, self.font_texture_size.0, self.font_texture_size.1);
+
+            // Skip empty texture data (egui may send zero-size delta)
+            if w == 0 || h == 0 || pixels_rgba.is_empty() { continue; }
+
+            if let Some([x, y]) = d.pos {
+                // Partial update: patch existing texture subregion
+                if let Some(existing) = self.textures.get(id) {
+                    if let Err(e) = renderer.update_texture_subregion(existing, x as u32, y as u32, w, h, &pixels_rgba) {
+                        tracing::error!("failed to update texture subregion {id:?} at ({x},{y}): {e}");
                     }
                 } else {
-                    tracing::error!("failed to create texture {id:?}");
+                    tracing::warn!("partial texture update for unknown id {id:?}");
+                }
+            } else {
+                // Full update: create or replace the texture for this id
+                if let Ok(tex) = renderer.create_texture(w, h, &pixels_rgba) {
+                    if let Some(old) = self.textures.insert(*id, tex) {
+                        self.old_font_textures.push(old);
+                    }
+                    while self.old_font_textures.len() > 8 {
+                        self.old_font_textures.remove(0);
+                    }
+                    // If this id was the last bound texture, force a rebind next frame
+                    if self.bound_texture.get() == Some(*id) {
+                        self.bound_texture.set(None);
+                    }
+
+                    // Update cached atlas size (used for logging/diagnostics)
+                    self.font_texture_size = (w, h);
+                } else {
+                    tracing::error!("failed to create/replace egui texture {id:?} ({}x{})", w, h);
                 }
             }
         }
     }
 
-    pub fn draw_primitives(&self, cmd: vk::CommandBuffer, renderer: &Renderer, primitives: &[egui::ClippedPrimitive], pixels_per_point: f32) {
+    pub fn draw_primitives(&self, cmd: vk::CommandBuffer, renderer: &Renderer, primitives: &[egui::ClippedPrimitive], pixels_per_point: f32, frame_index: usize) {
         if primitives.is_empty() { return; }
-        tracing::debug!("draw_primitives: {} prims, vb mapped={:?}, ib mapped={:?}", primitives.len(), self.vertex_buffer.mapped_ptr, self.index_buffer.mapped_ptr);
-        let sw=renderer.swapchain.lock();
+        if self.font_texture.is_none() {
+            tracing::warn!("draw_primitives: no font atlas texture bound, skipping");
+            return;
+        }
+
+        let sw = renderer.swapchain.lock();
         let phys_w = sw.extent().width as f32;
         let phys_h = sw.extent().height as f32;
+
+        if phys_w == 0.0 || phys_h == 0.0 || pixels_per_point <= 0.0 {
+            return;
+        }
+
         let logical_w = phys_w / pixels_per_point;
         let logical_h = phys_h / pixels_per_point;
-        let s=[logical_w, logical_h];
-        let ca=vk::RenderingAttachmentInfoKHR::default().image_view(sw.current_image_view())
+        let s = [logical_w, logical_h];
+        let ca = vk::RenderingAttachmentInfoKHR::default().image_view(sw.current_image_view())
             .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
             .load_op(vk::AttachmentLoadOp::LOAD).store_op(vk::AttachmentStoreOp::STORE);
-        let cas=[ca];
-        let ri=vk::RenderingInfoKHR::default()
+        let cas = [ca];
+        let ri = vk::RenderingInfoKHR::default()
             .render_area(vk::Rect2D{offset:vk::Offset2D{x:0,y:0},extent:sw.extent()})
             .layer_count(1).color_attachments(&cas);
         drop(sw);
@@ -206,29 +245,64 @@ fn main(@location(0) uv: vec2<f32>, @location(1) color: vec4<f32>) -> @location(
             renderer.device().logical().cmd_push_constants(cmd,self.pipeline_layout,vk::ShaderStageFlags::VERTEX,0,bytemuck::bytes_of(&s));
         }
 
+        const SLOT_SIZE: u64 = 4 * 1024 * 1024;
+        let slot = (frame_index % 3) as u64;
+        let vb_base = slot * SLOT_SIZE;
+        let ib_base = slot * SLOT_SIZE;
         let mut vb_off = 0u64;
         let mut ib_off = 0u64;
         for prim in primitives {
             let egui::ClippedPrimitive{clip_rect,primitive}=prim;
             if let egui::epaint::Primitive::Mesh(mesh)=primitive {
+                if mesh.vertices.is_empty() || mesh.indices.is_empty() { continue; }
+
+                // Bind the texture for this mesh if we have it; otherwise fall back to the font texture
+                let wanted_id = Some(mesh.texture_id);
+                if self.bound_texture.get() != wanted_id {
+                    let tex_to_bind = self.textures.get(&mesh.texture_id).or_else(|| self.font_texture.as_ref());
+                    if let Some(t) = tex_to_bind {
+                        let img_info = [vk::DescriptorImageInfo::default()
+                            .image_view(t.view).image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+                        let writes = [vk::WriteDescriptorSet::default()
+                            .dst_set(self.descriptor_set).dst_binding(0)
+                            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE).image_info(&img_info)];
+                        unsafe { renderer.device().logical().update_descriptor_sets(&writes, &[]); }
+                        self.bound_texture.set(wanted_id);
+                    }
+                }
+
                 let vb_bytes = bytemuck::cast_slice(&mesh.vertices);
                 let ib_bytes = bytemuck::cast_slice(&mesh.indices);
-                self.vertex_buffer.write_at(vb_bytes, vb_off);
-                self.index_buffer.write_at(ib_bytes, ib_off);
-                let sc=vk::Rect2D{
-                    offset:vk::Offset2D{
-                        x:(clip_rect.min.x * pixels_per_point) as i32,
-                        y:(clip_rect.min.y * pixels_per_point) as i32,
-                    },
-                    extent:vk::Extent2D{
-                        width:(clip_rect.width() * pixels_per_point).max(0.0)as u32,
-                        height:(clip_rect.height() * pixels_per_point).max(0.0)as u32,
-                    },
+
+                // Ensure we don't overflow the per-frame 4MB slot
+                let vb_end = vb_off.saturating_add(vb_bytes.len() as u64);
+                let ib_end = ib_off.saturating_add(ib_bytes.len() as u64);
+                if vb_end > SLOT_SIZE || ib_end > SLOT_SIZE {
+                    tracing::warn!("draw_primitives: vertex/index buffer slot overflow, dropping primitives");
+                    break;
+                }
+
+                self.vertex_buffer.write_at(vb_bytes, vb_base + vb_off);
+                self.index_buffer.write_at(ib_bytes, ib_base + ib_off);
+                let _ = self.vertex_buffer.flush(vb_base + vb_off, vb_bytes.len() as u64);
+                let _ = self.index_buffer.flush(ib_base + ib_off, ib_bytes.len() as u64);
+
+                // Clamp scissor to valid range (avoid Vulkan validation errors)
+                let sc_x = (clip_rect.min.x * pixels_per_point) as i32;
+                let sc_y = (clip_rect.min.y * pixels_per_point) as i32;
+                let sc_w = (clip_rect.width() * pixels_per_point).max(0.0) as u32;
+                let sc_h = (clip_rect.height() * pixels_per_point).max(0.0) as u32;
+                let sc = vk::Rect2D{
+                    offset: vk::Offset2D{ x: sc_x.max(0), y: sc_y.max(0) },
+                    extent: vk::Extent2D{ width: sc_w.min(phys_w as u32), height: sc_h.min(phys_h as u32) },
                 };
+
+                if sc.extent.width == 0 || sc.extent.height == 0 { continue; }
+
                 unsafe{
                     renderer.device().logical().cmd_set_scissor(cmd,0,&[sc]);
-                    renderer.device().logical().cmd_bind_vertex_buffers(cmd,0,&[self.vertex_buffer.buffer],&[vb_off]);
-                    renderer.device().logical().cmd_bind_index_buffer(cmd,self.index_buffer.buffer,ib_off,vk::IndexType::UINT32);
+                    renderer.device().logical().cmd_bind_vertex_buffers(cmd,0,&[self.vertex_buffer.buffer],&[vb_base + vb_off]);
+                    renderer.device().logical().cmd_bind_index_buffer(cmd,self.index_buffer.buffer,ib_base + ib_off,vk::IndexType::UINT32);
                     renderer.device().logical().cmd_draw_indexed(cmd,mesh.indices.len() as u32,1,0,0,0);
                 }
                 vb_off += vb_bytes.len() as u64;

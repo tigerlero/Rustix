@@ -149,6 +149,20 @@ impl GpuBuffer {
         }
     }
 
+    /// Flush mapped memory range so the GPU sees CPU writes.
+    /// Needed when the backing memory is not HOST_COHERENT.
+    pub fn flush(&self, offset: u64, size: u64) {
+        if self.device.is_null() { return; }
+        let memory = unsafe { self.allocation.memory() };
+        let range = vk::MappedMemoryRange::default()
+            .memory(memory)
+            .offset(self.allocation.offset() + offset)
+            .size(size);
+        unsafe {
+            let _ = (*self.device).flush_mapped_memory_ranges(&[range]);
+        }
+    }
+
     /// Copy data to a mapped buffer. Panics if not mapped.
     pub fn write(&self, data: &[u8]) {
         self.write_at(data, 0);

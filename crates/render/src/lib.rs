@@ -126,6 +126,7 @@ impl Renderer {
     }
 
     pub fn current_cmd(&self) -> vk::CommandBuffer { self.command_buffers[self.frame_index % 3] }
+    pub fn frame_index(&self) -> usize { self.frame_index }
     pub fn device(&self) -> &GpuDevice { &self.device }
 
     pub fn create_buffer(&self, name: &str, size: u64, usage: vk::BufferUsageFlags, location: gpu_allocator::MemoryLocation) -> Result<GpuBuffer, RenderError> {
@@ -182,6 +183,7 @@ impl Renderer {
         // Staging buffer
         let staging = self.create_buffer("tex_staging", pixels.len() as u64, vk::BufferUsageFlags::TRANSFER_SRC, gpu_allocator::MemoryLocation::CpuToGpu)?;
         staging.write(pixels);
+        staging.flush(0, pixels.len() as u64);
 
         // Device-local image
         let img = unsafe {
@@ -274,6 +276,7 @@ impl Renderer {
         let extent = vk::Extent3D { width, height, depth: 1 };
         let staging = self.create_buffer("tex_update", pixels.len() as u64, vk::BufferUsageFlags::TRANSFER_SRC, gpu_allocator::MemoryLocation::CpuToGpu)?;
         staging.write(pixels);
+        staging.flush(0, pixels.len() as u64);
 
         let one_time_cmd = {
             let info = vk::CommandBufferAllocateInfo::default()
@@ -308,6 +311,125 @@ impl Renderer {
             .subresource_range(vk::ImageSubresourceRange { aspect_mask: vk::ImageAspectFlags::COLOR, base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: 1 });
         unsafe {
             self.device.logical().cmd_pipeline_barrier(one_time_cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[barrier2]);
+        }
+
+        unsafe { self.device.logical().end_command_buffer(one_time_cmd)?; }
+        let cmds = [one_time_cmd];
+        let si = vk::SubmitInfo::default().command_buffers(&cmds);
+        let subs = [si];
+        let upload_fence = unsafe { self.device.logical().create_fence(&vk::FenceCreateInfo::default(), None)? };
+        unsafe { self.device.logical().queue_submit(self.device.graphics_queue(), &subs, upload_fence)?; }
+        unsafe { self.device.logical().wait_for_fences(&[upload_fence], true, u64::MAX)?; }
+        unsafe { self.device.logical().destroy_fence(upload_fence, None); }
+
+        unsafe { self.device.logical().free_command_buffers(self.transfer_command_pool, &[one_time_cmd]); }
+        Ok(())
+    }
+
+    pub fn update_texture_subregion(
+        &self,
+        tex: &GpuTexture,
+        offset_x: u32,
+        offset_y: u32,
+        width: u32,
+        height: u32,
+        pixels: &[u8],
+    ) -> Result<(), RenderError> {
+        let extent = vk::Extent3D { width, height, depth: 1 };
+        let staging = self.create_buffer("tex_subregion_update", pixels.len() as u64, vk::BufferUsageFlags::TRANSFER_SRC, gpu_allocator::MemoryLocation::CpuToGpu)?;
+        staging.write(pixels);
+        staging.flush(0, pixels.len() as u64);
+
+        // Ensure all prior GPU work reading this texture has finished before we
+        // change its layout. Without this, a previous frame's fragment shader
+        // may still be sampling the image while we transition it to TRANSFER_DST.
+        unsafe { self.device.logical().device_wait_idle()?; }
+
+        let one_time_cmd = {
+            let info = vk::CommandBufferAllocateInfo::default()
+                .command_pool(self.transfer_command_pool)
+                .level(vk::CommandBufferLevel::PRIMARY)
+                .command_buffer_count(1);
+            unsafe { self.device.logical().allocate_command_buffers(&info)?.remove(0) }
+        };
+        unsafe {
+            self.device.logical().begin_command_buffer(one_time_cmd, &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT))?;
+        }
+
+        // Transition: shader read -> transfer dst
+        let barrier = vk::ImageMemoryBarrier::default()
+            .image(tex.image)
+            .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .src_access_mask(vk::AccessFlags::SHADER_READ)
+            .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .subresource_range(vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            });
+        unsafe {
+            self.device.logical().cmd_pipeline_barrier(
+                one_time_cmd,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[barrier],
+            );
+        }
+
+        let copy_region = vk::BufferImageCopy::default()
+            .buffer_offset(0)
+            .image_subresource(vk::ImageSubresourceLayers {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_level: 0,
+                base_array_layer: 0,
+                layer_count: 1,
+            })
+            .image_offset(vk::Offset3D {
+                x: offset_x as i32,
+                y: offset_y as i32,
+                z: 0,
+            })
+            .image_extent(extent);
+        unsafe {
+            self.device.logical().cmd_copy_buffer_to_image(
+                one_time_cmd,
+                staging.buffer,
+                tex.image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[copy_region],
+            );
+        }
+
+        // Transition: transfer dst -> shader read
+        let barrier2 = vk::ImageMemoryBarrier::default()
+            .image(tex.image)
+            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ)
+            .subresource_range(vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            });
+        unsafe {
+            self.device.logical().cmd_pipeline_barrier(
+                one_time_cmd,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[barrier2],
+            );
         }
 
         unsafe { self.device.logical().end_command_buffer(one_time_cmd)?; }

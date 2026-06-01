@@ -54,7 +54,8 @@ pub fn show_console(
                 entries.sort_by_key(|e| !e.file_type().map(|t| t.is_dir()).unwrap_or(false));
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    let mut selected_audio: Option<String> = None;
+                    let sel_id = egui::Id::new("asset_browser_selected_audio");
+                    let mut selected_audio: Option<String> = ctx.data(|d| d.get_temp::<String>(sel_id));
                     for entry in &entries {
                         let name = entry.file_name().to_string_lossy().to_string();
                         let full_path = path.join(&name);
@@ -77,14 +78,33 @@ pub fn show_console(
                             }
                         };
                         let resp = ui.selectable_label(false, egui::RichText::new(format!("{icon}  {name}")).color(color).size(12.0));
-                        if resp.clicked() && is_audio {
-                            selected_audio = Some(full_path.to_string_lossy().to_string());
+                        if resp.clicked() {
+                            if is_audio {
+                                selected_audio = Some(full_path.to_string_lossy().to_string());
+                            } else {
+                                selected_audio = None;
+                            }
                         }
                     }
+                    ctx.data_mut(|d| {
+                        if let Some(ref path) = selected_audio {
+                            d.insert_temp(sel_id, path.clone());
+                        } else {
+                            d.remove_temp::<String>(sel_id);
+                        }
+                    });
 
+                    let mut close_preview = false;
                     if let Some(ref audio_path) = selected_audio {
                         ui.separator();
-                        ui.label(egui::RichText::new("Audio Preview").strong());
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("Audio Preview").strong());
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.button("\u{2715} Close").clicked() {
+                                    close_preview = true;
+                                }
+                            });
+                        });
                         let path_buf = std::path::PathBuf::from(audio_path);
                         let file_name = path_buf.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                         ui.label(format!("File: {file_name}"));
@@ -128,6 +148,9 @@ pub fn show_console(
                         } else {
                             ui.label(egui::RichText::new("Audio engine not available").weak());
                         }
+                    }
+                    if close_preview {
+                        ctx.data_mut(|d| d.remove_temp::<String>(sel_id));
                     }
                 });
             } else {

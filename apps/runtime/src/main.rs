@@ -27,6 +27,52 @@ use project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo, load_project_f
 use scene::{Transform, Name, MeshComponent, Material, world_transform, scene_to_world};
 use undo::UndoHistory;
 
+/// Configure egui fonts using bundled Noto fonts embedded via `include_bytes!`.
+///
+/// Fallback chain:
+///   Proportional: noto_sans → [Ubuntu-Light] → noto_emoji
+///   Monospace:    noto_mono → [Hack] → noto_emoji
+///
+/// noto_emoji catches emoji and symbols (▶ ⏹ 🔊); box-drawing (└ ─) and
+/// arrows (→) are covered by egui's built-in Ubuntu-Light / Hack.
+///
+/// Fonts are compiled into the binary, so rendering is deterministic across
+/// platforms (no dependency on OS-installed fonts).
+fn setup_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+
+    let noto_sans = include_bytes!("../../../assets/fonts/NotoSans-Regular.ttf");
+    let noto_mono = include_bytes!("../../../assets/fonts/NotoSansMono-Regular.ttf");
+    let noto_emoji = include_bytes!("../../../assets/fonts/NotoEmoji-Regular.ttf");
+
+    fonts.font_data.insert(
+        "noto_sans".into(),
+        std::sync::Arc::new(egui::FontData::from_owned(noto_sans.to_vec())),
+    );
+    fonts.font_data.insert(
+        "noto_mono".into(),
+        std::sync::Arc::new(egui::FontData::from_owned(noto_mono.to_vec())),
+    );
+    fonts.font_data.insert(
+        "noto_emoji".into(),
+        std::sync::Arc::new(egui::FontData::from_owned(noto_emoji.to_vec())),
+    );
+
+    // Proportional: prefer Noto Sans, fall back to Noto Emoji for symbols/emoji
+    if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        fam.insert(0, "noto_sans".into());
+        fam.push("noto_emoji".into());
+    }
+
+    // Monospace: prefer Noto Mono, fall back to Noto Emoji
+    if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+        fam.insert(0, "noto_mono".into());
+        fam.push("noto_emoji".into());
+    }
+
+    ctx.set_fonts(fonts);
+}
+
 fn main() {
     let config = config::find_and_load_config();
     let log_buffer = rustix_core::init_log_capture(500);
@@ -52,37 +98,8 @@ fn main() {
     let mut input = InputManager::new();
 
     let egui_ctx = egui::Context::default();
-    {
-        let mut fonts = egui::FontDefinitions::default();
-        let candidates = [
-            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-            "/usr/share/fonts/truetype/ubuntu/Ubuntu-Regular.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        ];
-        let mut loaded = false;
-        for path in &candidates {
-            if let Ok(bytes) = std::fs::read(path) {
-                let name = std::path::Path::new(path)
-                    .file_stem().and_then(|s| s.to_str()).unwrap_or("custom");
-                fonts.font_data.insert(name.to_owned(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
-                if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-                    fam.insert(0, name.to_owned());
-                }
-                if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-                    fam.insert(0, name.to_owned());
-                }
-                loaded = true;
-                tracing::info!("loaded system font: {name}");
-                break;
-            }
-        }
-        if !loaded {
-            tracing::warn!("no system font found, using egui defaults (Greek may not render)");
-        }
-        egui_ctx.set_fonts(fonts);
-    }
+    setup_fonts(&egui_ctx);
+    tracing::info!("fonts: bundled NotoSans + NotoMono + NotoEmoji");
     let mut egui_state = egui_winit::State::new(egui_ctx.clone(), egui_ctx.viewport_id(), window.inner(), None, None, None);
 
     let rc = rustix_core::config::RenderConfig {
@@ -471,9 +488,8 @@ fn main() {
                         }
 
                         // Process egui and upload textures DURING command buffer recording.
-                        // This matches the original working ordering: run -> upload -> tessellate -> draw.
-                        // update_textures submits transfer commands on its own queue/fence,
-                        // which is safe even while the primary command buffer is being recorded.
+                        // update_textures now waits for GPU idle before partial updates to avoid
+                        // layout-transition races with in-flight frames.
                         let mut raw_input = egui_state.take_egui_input(window.inner());
                         if !input.mouse().down(rustix_platform::input::MouseButton::Left) {
                             raw_input.events.push(egui::Event::PointerButton {
@@ -507,6 +523,7 @@ fn main() {
                                 project_dir = Some(path.clone());
                                 add_recent_project(&mut recent_projects, path, &current_project);
                                 screen = AppScreen::Editor;
+                                window.request_redraw();
                             }
                         }
                         if let Some(path) = new_project.borrow_mut().take() {
@@ -518,6 +535,7 @@ fn main() {
                                 project_dir = Some(path.clone());
                                 add_recent_project(&mut recent_projects, path, &current_project);
                                 screen = AppScreen::Editor;
+                                window.request_redraw();
                             }
                         }
 
@@ -525,7 +543,7 @@ fn main() {
                         egui_r.update_textures(&renderer, &out.textures_delta);
                         let clipped = egui_ctx.tessellate(out.shapes, out.pixels_per_point);
 
-                        egui_r.draw_primitives(cmd, &renderer, &clipped, out.pixels_per_point);
+                        egui_r.draw_primitives(cmd, &renderer, &clipped, out.pixels_per_point, renderer.frame_index());
 
                         egui_state.handle_platform_output(window.inner(), out.platform_output);
 

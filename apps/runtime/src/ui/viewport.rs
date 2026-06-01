@@ -124,7 +124,7 @@ pub fn show_viewport(
                                 if let Some(sp) = world_to_screen(wp) {
                                     if let Some(lp) = last_point {
                                         let _alpha = if *radius == aud.min_distance { 80 } else { 25 };
-                                        ui.painter().line_segment([lp, sp], egui::Stroke::new(1.0, aud_min_color));
+                                        ui.painter().line_segment([lp, sp], egui::Stroke::new(1.0, *color));
                                     }
                                     last_point = Some(sp);
                                 }
@@ -171,7 +171,9 @@ pub fn show_viewport(
                     for (axis_idx, (axis_dir, color)) in axis_colors.iter().enumerate() {
                         let tip_world = transform.position + *axis_dir * 2.0;
                         if let Some(tip_screen) = world_to_screen(tip_world) {
-                            let dir_2d = (tip_screen - screen_pos).normalized();
+                            let v = tip_screen - screen_pos;
+                            let len = (v.x * v.x + v.y * v.y).sqrt();
+                            let dir_2d = if len > 0.0 { v / len } else { egui::Vec2::ZERO };
                             let handle_screen = screen_pos + dir_2d * gizmo_len;
                             
                             ui.painter().line_segment(
@@ -227,8 +229,10 @@ pub fn show_viewport(
                                             world_to_screen(gizmo_entity_pos + axis_dir),
                                             world_to_screen(gizmo_entity_pos),
                                         ) {
-                                            let axis_2d = (tip - base).normalized();
-                                            let along = drag_delta.dot(axis_2d) * cam.distance * 0.01;
+                                            let v = tip - base;
+                                            let len = (v.x * v.x + v.y * v.y).sqrt();
+                                            let axis_2d = if len > 0.0 { v / len } else { egui::Vec2::ZERO };
+                                            let along = (drag_delta.x * axis_2d.x + drag_delta.y * axis_2d.y) * cam.distance * 0.01;
                                             deferred_new_pos = Some(gizmo_entity_pos + axis_dir * along);
                                         }
                                     }
