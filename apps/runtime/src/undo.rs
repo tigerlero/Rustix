@@ -1,17 +1,23 @@
-use rustix_core::math::Vec4;
-use super::scene::{Transform};
+use rustix_render::{DirectionalLight, PointLight, SpotLight};
+use rustix_audio::AudioSource;
+use super::scene::{Transform, Material, SceneEntity};
 
 #[derive(Clone)]
 pub enum EditorAction {
-    AddEntity(hecs::Entity),
-    DeleteEntity { name: String, transform: Transform, mesh: String, material: Vec4, metallic: f32 },
+    AddEntity { entity: hecs::Entity, snapshot: SceneEntity },
+    DeleteEntity { entity: hecs::Entity, snapshot: SceneEntity },
     RenameEntity { entity: hecs::Entity, old_name: String },
     TransformEntity { entity: hecs::Entity, old_transform: Transform },
+    DirectionalLightChanged { entity: hecs::Entity, old: DirectionalLight },
+    PointLightChanged { entity: hecs::Entity, old: PointLight },
+    SpotLightChanged { entity: hecs::Entity, old: SpotLight },
+    MaterialChanged { entity: hecs::Entity, old: Material },
+    AudioSourceChanged { entity: hecs::Entity, old: AudioSource },
 }
 
 pub struct UndoHistory {
-    actions: Vec<EditorAction>,
-    index: usize,
+    pub(crate) actions: Vec<EditorAction>,
+    pub(crate) index: usize,
     max_actions: usize,
 }
 

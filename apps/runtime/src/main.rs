@@ -21,6 +21,8 @@ use rustix_platform::window::{WindowConfig, WindowHandle};
 use rustix_render::{Renderer, DirectionalLight, PointLight, SpotLight};
 use rustix_render::mesh::Mesh;
 use rustix_audio::{AudioEngine, SoundInstance};
+use rustix_animation::{Animator, AnimationClip, update_animators};
+use rustix_physics::{RigidBody, Collider, PhysicsWorld, step_physics};
 
 use camera::EditorCamera;
 use project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo, load_project_file, create_project_file, add_recent_project, load_recent_projects};
@@ -143,6 +145,8 @@ fn main() {
     }
 
     let mut meshes: HashMap<String, Mesh> = HashMap::new();
+    let mut animation_clips: HashMap<String, AnimationClip> = HashMap::new();
+    let mut physics_world = PhysicsWorld::default();
     let pending_mesh_load: std::rc::Rc<std::cell::RefCell<Option<String>>> = std::rc::Rc::new(std::cell::RefCell::new(None));
     let mut scene_pipeline: Option<rustix_render::pipeline::GraphicsPipeline> = None;
     let mut scene_descriptor_pool: Option<vk::DescriptorPool> = None;
@@ -212,6 +216,42 @@ fn main() {
                             Some(pos)
                         });
                         cam.follow(follow_pos);
+
+                        // Update animations
+                        {
+                            let mut animators: Vec<(hecs::Entity, &mut Animator)> = Vec::new();
+                            for (e, mut a) in ecs_world.query_mut::<(&hecs::Entity, &mut Animator)>() {
+                                animators.push((*e, a));
+                            }
+                            let results = update_animators(&mut animators, &animation_clips, dt);
+                            for (entity, pos, rot, scale) in results {
+                                if let Ok(mut t) = ecs_world.get::<&mut Transform>(entity) {
+                                    if let Some(p) = pos { t.position = p; }
+                                    if let Some(r) = rot { t.rotation = r; }
+                                    if let Some(s) = scale { t.scale = s; }
+                                }
+                            }
+                        }
+
+                        // Update physics
+                        {
+                            let mut bodies: Vec<(hecs::Entity, RigidBody)> = Vec::new();
+                            for (e, b) in ecs_world.query_mut::<(&hecs::Entity, &RigidBody)>() {
+                                bodies.push((*e, *b));
+                            }
+                            let results = step_physics(&mut bodies, &physics_world, dt);
+                            for (entity, pos_delta, rot_delta) in results {
+                                if let Ok(mut t) = ecs_world.get::<&mut Transform>(entity) {
+                                    t.position += pos_delta;
+                                    t.rotation += rot_delta;
+                                }
+                            }
+                            for (entity, body) in bodies {
+                                if let Ok(mut b) = ecs_world.get::<&mut RigidBody>(entity) {
+                                    *b = body;
+                                }
+                            }
+                        }
 
                         if needs_resize {
                             if let Err(e) = renderer.swapchain.lock().recreate(&renderer.instance, &renderer.device) {

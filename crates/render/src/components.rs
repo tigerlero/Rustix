@@ -56,7 +56,7 @@ impl Default for Camera {
 }
 
 /// Directional light component.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct DirectionalLight {
     pub color: Vec3,
     pub intensity: f32,
@@ -69,7 +69,7 @@ impl Default for DirectionalLight {
 }
 
 /// Point light component.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PointLight {
     pub color: Vec3,
     pub intensity: f32,
@@ -83,7 +83,7 @@ impl Default for PointLight {
 }
 
 /// Spot light component.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SpotLight {
     pub color: Vec3,
     pub intensity: f32,

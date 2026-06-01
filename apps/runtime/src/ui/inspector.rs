@@ -25,21 +25,27 @@ pub fn show_inspector(
     let mut selected_dirlight: Option<DirectionalLight> = selected_entity_val.and_then(|sel_ent| {
         world.query::<(&Entity, &DirectionalLight)>().iter().find(|(e, _)| **e == sel_ent).map(|(_, l)| l.clone())
     });
+    let old_dirlight = selected_dirlight.clone();
     let mut selected_pointlight: Option<PointLight> = selected_entity_val.and_then(|sel_ent| {
         world.query::<(&Entity, &PointLight)>().iter().find(|(e, _)| **e == sel_ent).map(|(_, l)| l.clone())
     });
+    let old_pointlight = selected_pointlight.clone();
     let mut selected_spotlight: Option<SpotLight> = selected_entity_val.and_then(|sel_ent| {
         world.query::<(&Entity, &SpotLight)>().iter().find(|(e, _)| **e == sel_ent).map(|(_, l)| l.clone())
     });
+    let old_spotlight = selected_spotlight.clone();
     let mut selected_material: Option<Material> = selected_entity_val.and_then(|sel_ent| {
         world.query::<(&Entity, &Material)>().iter().find(|(e, _)| **e == sel_ent).map(|(_, m)| m.clone())
     });
+    let old_material = selected_material.clone();
     let mut selected_audio_source: Option<AudioSource> = selected_entity_val.and_then(|sel_ent| {
         world.query::<(&Entity, &AudioSource)>().iter().find(|(e, _)| **e == sel_ent).map(|(_, a)| a.clone())
     });
+    let old_audio_source = selected_audio_source.clone();
     let mut selected_audio_listener: Option<AudioListener> = selected_entity_val.and_then(|sel_ent| {
         world.query::<(&Entity, &AudioListener)>().iter().find(|(e, _)| **e == sel_ent).map(|(_, a)| a.clone())
     });
+    let old_audio_listener = selected_audio_listener.clone();
 
     egui::Panel::right("inspector").resizable(true).default_size(260.0).show(ctx, |ui| {
         ui.heading("Inspector");
@@ -74,24 +80,36 @@ pub fn show_inspector(
                 }
             }
             if let Some(target_entity) = selected_entity_val {
-                if let Some(ref dl) = selected_dirlight {
-                    for (e, l) in world.query_mut::<(&Entity, &mut DirectionalLight)>() {
-                        if *e == target_entity { *l = *dl; dirty.set(true); break; }
+                if let (Some(ref new), Some(ref old)) = (selected_dirlight, old_dirlight) {
+                    if new != old {
+                        for (e, l) in world.query_mut::<(&Entity, &mut DirectionalLight)>() {
+                            if *e == target_entity { *l = *new; dirty.set(true); break; }
+                        }
+                        undo_history.borrow_mut().push(EditorAction::DirectionalLightChanged { entity: target_entity, old: *old });
                     }
                 }
-                if let Some(ref pl) = selected_pointlight {
-                    for (e, l) in world.query_mut::<(&Entity, &mut PointLight)>() {
-                        if *e == target_entity { *l = *pl; dirty.set(true); break; }
+                if let (Some(ref new), Some(ref old)) = (selected_pointlight, old_pointlight) {
+                    if new != old {
+                        for (e, l) in world.query_mut::<(&Entity, &mut PointLight)>() {
+                            if *e == target_entity { *l = *new; dirty.set(true); break; }
+                        }
+                        undo_history.borrow_mut().push(EditorAction::PointLightChanged { entity: target_entity, old: *old });
                     }
                 }
-                if let Some(ref sl) = selected_spotlight {
-                    for (e, l) in world.query_mut::<(&Entity, &mut SpotLight)>() {
-                        if *e == target_entity { *l = *sl; dirty.set(true); break; }
+                if let (Some(ref new), Some(ref old)) = (selected_spotlight, old_spotlight) {
+                    if new != old {
+                        for (e, l) in world.query_mut::<(&Entity, &mut SpotLight)>() {
+                            if *e == target_entity { *l = *new; dirty.set(true); break; }
+                        }
+                        undo_history.borrow_mut().push(EditorAction::SpotLightChanged { entity: target_entity, old: *old });
                     }
                 }
-                if let Some(ref mat) = selected_material {
-                    for (e, m) in world.query_mut::<(&Entity, &mut Material)>() {
-                        if *e == target_entity { *m = mat.clone(); dirty.set(true); break; }
+                if let (Some(ref new), Some(ref old)) = (&selected_material, &old_material) {
+                    if new != old {
+                        for (e, m) in world.query_mut::<(&Entity, &mut Material)>() {
+                            if *e == target_entity { *m = new.clone(); dirty.set(true); break; }
+                        }
+                        undo_history.borrow_mut().push(EditorAction::MaterialChanged { entity: target_entity, old: old.clone() });
                     }
                 }
             }
@@ -143,14 +161,19 @@ pub fn show_inspector(
             }
 
             if let Some(target_entity) = selected_entity_val {
-                if let Some(ref aud_src) = selected_audio_source {
-                    for (e, a) in world.query_mut::<(&Entity, &mut AudioSource)>() {
-                        if *e == target_entity { *a = *aud_src; dirty.set(true); break; }
+                if let (Some(ref new), Some(ref old)) = (selected_audio_source, old_audio_source) {
+                    if new != old {
+                        for (e, a) in world.query_mut::<(&Entity, &mut AudioSource)>() {
+                            if *e == target_entity { *a = *new; dirty.set(true); break; }
+                        }
+                        undo_history.borrow_mut().push(EditorAction::AudioSourceChanged { entity: target_entity, old: *old });
                     }
                 }
-                if let Some(ref aud_listener) = selected_audio_listener {
-                    for (e, a) in world.query_mut::<(&Entity, &mut AudioListener)>() {
-                        if *e == target_entity { *a = *aud_listener; dirty.set(true); break; }
+                if let (Some(ref new), Some(ref old)) = (selected_audio_listener, old_audio_listener) {
+                    if new != old {
+                        for (e, a) in world.query_mut::<(&Entity, &mut AudioListener)>() {
+                            if *e == target_entity { *a = *new; dirty.set(true); break; }
+                        }
                     }
                 }
             }

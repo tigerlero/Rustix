@@ -154,24 +154,8 @@ pub fn show_hierarchy(
             }
         });
         if let Some(entity) = pending_delete.borrow_mut().take() {
-            let mut name = String::new();
-            let mut transform = Transform::default();
-            let mut mesh = String::new();
-            let mut mat = Vec4::new(0.7, 0.7, 0.7, 0.5);
-            let mut metal = 0.0f32;
-            for (e, n, t, m) in world.query_mut::<(&Entity, &Name, &Transform, &MeshComponent)>() {
-                if *e == entity {
-                    name = n.0.clone();
-                    transform = t.clone();
-                    mesh = m.0.clone();
-                    if let Ok(mat_comp) = world.get::<&Material>(entity) {
-                        mat = Vec4::new(mat_comp.base_color.x, mat_comp.base_color.y, mat_comp.base_color.z, mat_comp.roughness);
-                        metal = mat_comp.metallic;
-                    }
-                    break;
-                }
-            }
-            undo_history.borrow_mut().push(EditorAction::DeleteEntity { name, transform, mesh, material: mat, metallic: metal });
+            let snapshot = crate::scene::entity_to_scene_entity(world, entity);
+            undo_history.borrow_mut().push(EditorAction::DeleteEntity { entity, snapshot });
             let _ = world.despawn(entity);
             dirty.set(true);
             if *selected_entity.borrow() == Some(entity) {
@@ -181,28 +165,32 @@ pub fn show_hierarchy(
         ui.add_space(4.0);
         if ui.button("Add Entity").clicked() {
             let e = world.spawn((Name("New Entity".to_string()), Transform::default(), MeshComponent("Cube".into()), Material { base_color: Vec3::new(0.7, 0.7, 0.7), roughness: 0.5, metallic: 0.0 }));
-            undo_history.borrow_mut().push(EditorAction::AddEntity(e));
+            let snapshot = crate::scene::entity_to_scene_entity(world, e);
+            undo_history.borrow_mut().push(EditorAction::AddEntity { entity: e, snapshot });
             *selected_entity.borrow_mut() = Some(e);
             dirty.set(true);
         }
         ui.menu_button("Create Light", |ui| {
             if ui.button("Directional").clicked() {
                 let e = world.spawn((Name("Directional Light".to_string()), Transform::default(), DirectionalLight::default(), MeshComponent("Cube".into()), Material { base_color: Vec3::new(1.0, 0.95, 0.8), roughness: 0.3, metallic: 0.0 }));
-                undo_history.borrow_mut().push(EditorAction::AddEntity(e));
+                let snapshot = crate::scene::entity_to_scene_entity(world, e);
+                undo_history.borrow_mut().push(EditorAction::AddEntity { entity: e, snapshot });
                 *selected_entity.borrow_mut() = Some(e);
                 dirty.set(true);
                 ui.close();
             }
             if ui.button("Point").clicked() {
                 let e = world.spawn((Name("Point Light".to_string()), Transform { position: Vec3::new(0.0, 3.0, 0.0), ..Default::default() }, PointLight::default(), MeshComponent("Cube".into()), Material { base_color: Vec3::new(1.0, 0.9, 0.6), roughness: 0.3, metallic: 0.0 }));
-                undo_history.borrow_mut().push(EditorAction::AddEntity(e));
+                let snapshot = crate::scene::entity_to_scene_entity(world, e);
+                undo_history.borrow_mut().push(EditorAction::AddEntity { entity: e, snapshot });
                 *selected_entity.borrow_mut() = Some(e);
                 dirty.set(true);
                 ui.close();
             }
             if ui.button("Spot").clicked() {
                 let e = world.spawn((Name("Spot Light".to_string()), Transform { position: Vec3::new(0.0, 3.0, 0.0), ..Default::default() }, SpotLight::default(), MeshComponent("Cube".into()), Material { base_color: Vec3::new(1.0, 0.95, 0.7), roughness: 0.3, metallic: 0.0 }));
-                undo_history.borrow_mut().push(EditorAction::AddEntity(e));
+                let snapshot = crate::scene::entity_to_scene_entity(world, e);
+                undo_history.borrow_mut().push(EditorAction::AddEntity { entity: e, snapshot });
                 *selected_entity.borrow_mut() = Some(e);
                 dirty.set(true);
                 ui.close();

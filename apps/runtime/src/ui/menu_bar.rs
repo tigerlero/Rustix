@@ -123,20 +123,81 @@ pub fn show_menu_bar(
                     }
                 }
             });
+            let prefs_id = egui::Id::new("show_preferences");
+            let mut show_prefs = ctx.data(|d| d.get_temp::<bool>(prefs_id).unwrap_or(false));
             ui.menu_button("Edit", |ui| {
-                if ui.button("Preferences").clicked() { ui.close(); }
+                if ui.button("Preferences").clicked() {
+                    show_prefs = true;
+                    ui.close();
+                }
             });
+            if show_prefs {
+                egui::Window::new("Preferences")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label("Editor Preferences");
+                        ui.add_space(8.0);
+                        ui.label("(Editor-specific settings will appear here in future updates.)");
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("OK").clicked() {
+                                show_prefs = false;
+                            }
+                        });
+                    });
+            }
+            ctx.data_mut(|d| d.insert_temp(prefs_id, show_prefs));
+
             ui.menu_button("Assets", |ui| {
-                if ui.button("Import New Asset\u{2026}").clicked() { ui.close(); }
+                if ui.button("Import New Asset\u{2026}").clicked() {
+                    ui.close();
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Import New Asset")
+                        .add_filter("GLB", &["glb"])
+                        .add_filter("glTF", &["gltf"])
+                        .add_filter("OBJ", &["obj"])
+                        .add_filter("FBX", &["fbx"])
+                        .pick_file()
+                    {
+                        pending_mesh_load.replace(Some(path.to_string_lossy().to_string()));
+                    }
+                }
                 ui.separator();
                 if ui.button("Sprite Editor").clicked() {
                     sprite_editor.set_visible(true);
                     ui.close();
                 }
             });
+
+            let about_id = egui::Id::new("show_about");
+            let mut show_about = ctx.data(|d| d.get_temp::<bool>(about_id).unwrap_or(false));
             ui.menu_button("Help", |ui| {
-                if ui.button("About Rustix").clicked() { ui.close(); }
+                if ui.button("About Rustix").clicked() {
+                    show_about = true;
+                    ui.close();
+                }
             });
+            if show_about {
+                egui::Window::new("About Rustix")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.heading("Rustix Engine");
+                        ui.label("Version 0.1.0");
+                        ui.add_space(8.0);
+                        ui.label("A game engine built with Rust, Vulkan, and egui.");
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("OK").clicked() {
+                                show_about = false;
+                            }
+                        });
+                    });
+            }
+            ctx.data_mut(|d| d.insert_temp(about_id, show_about));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let ptype = current_project.as_ref().map(|p| match p.settings.project_type {
                     ProjectType::Dim3 => "3D",

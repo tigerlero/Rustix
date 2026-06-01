@@ -1,7 +1,7 @@
 use rustix_core::math::Vec3;
 
 /// Audio listener component (usually on the main camera).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AudioListener {
     pub position: Vec3,
     pub forward: Vec3,
@@ -15,7 +15,7 @@ impl Default for AudioListener {
 }
 
 /// Component for spatial audio positioning.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AudioSource {
     pub position: Vec3,
     pub min_distance: f32,

@@ -3338,6 +3338,7 @@ dependencies = [
 name = "rustix-animation"
 version = "0.1.0"
 dependencies = [
+ "hecs",
  "rustix-core",
  "thiserror 2.0.18",
  "tracing",
@@ -3445,6 +3446,7 @@ dependencies = [
 name = "rustix-physics"
 version = "0.1.0"
 dependencies = [
+ "hecs",
  "rustix-core",
  "thiserror 2.0.18",
  "tracing",
@@ -3495,8 +3497,10 @@ dependencies = [
  "hecs",
  "raw-window-handle",
  "rfd",
+ "rustix-animation",
  "rustix-audio",
  "rustix-core",
+ "rustix-physics",
  "rustix-platform",
  "rustix-render",
  "rustix-ui",

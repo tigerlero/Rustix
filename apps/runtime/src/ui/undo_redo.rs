@@ -1,5 +1,7 @@
 use rustix_core::ecs::{EcsWorld, Entity};
 use rustix_core::math::Vec3;
+use rustix_render::{DirectionalLight, PointLight, SpotLight};
+use rustix_audio::AudioSource;
 
 use crate::scene::{Transform, Name, MeshComponent, Material};
 use crate::undo::{UndoHistory, EditorAction};
@@ -12,18 +14,23 @@ pub fn handle_undo_redo(
     undo_history: &std::cell::RefCell<UndoHistory>,
 ) {
     if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Z) && !i.modifiers.shift) {
-        let action = undo_history.borrow_mut().undo().cloned();
+        let (action, idx) = {
+            let mut history = undo_history.borrow_mut();
+            let action = history.undo().cloned();
+            (action, history.index)
+        };
         if let Some(action) = action {
             match action {
-                EditorAction::AddEntity(entity) => {
+                EditorAction::AddEntity { entity, .. } => {
                     let _ = world.despawn(entity);
                     if *selected_entity.borrow() == Some(entity) {
                         *selected_entity.borrow_mut() = None;
                     }
                 }
-                EditorAction::DeleteEntity { name, transform, mesh, material, metallic } => {
-                    let e = world.spawn((Name(name), transform, MeshComponent(mesh), Material { base_color: Vec3::new(material.x, material.y, material.z), roughness: material.w, metallic }));
+                EditorAction::DeleteEntity { snapshot, .. } => {
+                    let e = crate::scene::spawn_entity(world, &snapshot);
                     *selected_entity.borrow_mut() = Some(e);
+                    undo_history.borrow_mut().actions[idx] = EditorAction::DeleteEntity { entity: e, snapshot };
                 }
                 EditorAction::RenameEntity { entity, old_name } => {
                     for (e, n) in world.query_mut::<(&Entity, &mut Name)>() {
@@ -39,6 +46,31 @@ pub fn handle_undo_redo(
                             *t = old_transform;
                             break;
                         }
+                    }
+                }
+                EditorAction::DirectionalLightChanged { entity, old } => {
+                    for (e, l) in world.query_mut::<(&Entity, &mut DirectionalLight)>() {
+                        if *e == entity { *l = old; break; }
+                    }
+                }
+                EditorAction::PointLightChanged { entity, old } => {
+                    for (e, l) in world.query_mut::<(&Entity, &mut PointLight)>() {
+                        if *e == entity { *l = old; break; }
+                    }
+                }
+                EditorAction::SpotLightChanged { entity, old } => {
+                    for (e, l) in world.query_mut::<(&Entity, &mut SpotLight)>() {
+                        if *e == entity { *l = old; break; }
+                    }
+                }
+                EditorAction::MaterialChanged { entity, old } => {
+                    for (e, m) in world.query_mut::<(&Entity, &mut Material)>() {
+                        if *e == entity { *m = old; break; }
+                    }
+                }
+                EditorAction::AudioSourceChanged { entity, old } => {
+                    for (e, a) in world.query_mut::<(&Entity, &mut AudioSource)>() {
+                        if *e == entity { *a = old; break; }
                     }
                 }
             }
@@ -47,15 +79,24 @@ pub fn handle_undo_redo(
     }
 
     if ctx.input(|i| i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::Z)) {
-        let action = undo_history.borrow_mut().redo().cloned();
+        let (action, idx) = {
+            let mut history = undo_history.borrow_mut();
+            let idx = history.index;
+            let action = history.redo().cloned();
+            (action, idx)
+        };
         if let Some(action) = action {
             match action {
-                EditorAction::AddEntity(_entity) => {
-                    // Re-adding is too fragile since the old entity ID is gone
-                }
-                EditorAction::DeleteEntity { name, transform, mesh, material, metallic } => {
-                    let e = world.spawn((Name(name), transform, MeshComponent(mesh), Material { base_color: Vec3::new(material.x, material.y, material.z), roughness: material.w, metallic }));
+                EditorAction::AddEntity { snapshot, .. } => {
+                    let e = crate::scene::spawn_entity(world, &snapshot);
                     *selected_entity.borrow_mut() = Some(e);
+                    undo_history.borrow_mut().actions[idx] = EditorAction::AddEntity { entity: e, snapshot };
+                }
+                EditorAction::DeleteEntity { entity, .. } => {
+                    let _ = world.despawn(entity);
+                    if *selected_entity.borrow() == Some(entity) {
+                        *selected_entity.borrow_mut() = None;
+                    }
                 }
                 EditorAction::RenameEntity { entity, old_name } => {
                     for (e, n) in world.query_mut::<(&Entity, &mut Name)>() {
@@ -71,6 +112,31 @@ pub fn handle_undo_redo(
                             *t = old_transform;
                             break;
                         }
+                    }
+                }
+                EditorAction::DirectionalLightChanged { entity, old } => {
+                    for (e, l) in world.query_mut::<(&Entity, &mut DirectionalLight)>() {
+                        if *e == entity { *l = old; break; }
+                    }
+                }
+                EditorAction::PointLightChanged { entity, old } => {
+                    for (e, l) in world.query_mut::<(&Entity, &mut PointLight)>() {
+                        if *e == entity { *l = old; break; }
+                    }
+                }
+                EditorAction::SpotLightChanged { entity, old } => {
+                    for (e, l) in world.query_mut::<(&Entity, &mut SpotLight)>() {
+                        if *e == entity { *l = old; break; }
+                    }
+                }
+                EditorAction::MaterialChanged { entity, old } => {
+                    for (e, m) in world.query_mut::<(&Entity, &mut Material)>() {
+                        if *e == entity { *m = old; break; }
+                    }
+                }
+                EditorAction::AudioSourceChanged { entity, old } => {
+                    for (e, a) in world.query_mut::<(&Entity, &mut AudioSource)>() {
+                        if *e == entity { *a = old; break; }
                     }
                 }
             }
