@@ -13,6 +13,8 @@ pub enum EditorAction {
     SpotLightChanged { entity: hecs::Entity, old: SpotLight },
     MaterialChanged { entity: hecs::Entity, old: Material },
     AudioSourceChanged { entity: hecs::Entity, old: AudioSource },
+    ComponentAdded { entity: hecs::Entity, component: String, old_snapshot: SceneEntity },
+    ComponentRemoved { entity: hecs::Entity, component: String, old_snapshot: SceneEntity },
 }
 
 pub struct UndoHistory {

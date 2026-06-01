@@ -3,7 +3,8 @@ use rustix_core::math::{Vec3, Vec4, Mat4, Quat, EulerRot};
 use rustix_audio::AudioSource;
 
 use crate::camera::EditorCamera;
-use crate::scene::{Transform, Name, world_transform};
+use crate::scene::{Transform, Name, MeshComponent, Material, world_transform};
+use crate::undo::{UndoHistory, EditorAction};
 
 pub fn show_viewport(
     ctx: &egui::Context,
@@ -11,8 +12,11 @@ pub fn show_viewport(
     world: &mut EcsWorld,
     selected_entity: &std::cell::RefCell<Option<hecs::Entity>>,
     dirty: &std::cell::Cell<bool>,
+    undo_history: &std::cell::RefCell<UndoHistory>,
 ) {
-    egui::CentralPanel::default().show(ctx, |ui| {
+    let mut frame = egui::Frame::central_panel(&ctx.style());
+    frame.fill = egui::Color32::TRANSPARENT;
+    egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
         let rect = ui.max_rect();
         
         let entity_count = world.query::<&Name>().iter().count();
@@ -42,11 +46,15 @@ pub fn show_viewport(
         let gizmo_entity_pos_id = egui::Id::new("gizmo_entity_pos");
         let gizmo_entity_rot_id = egui::Id::new("gizmo_entity_rot");
         let gizmo_entity_scale_id = egui::Id::new("gizmo_entity_scale");
+        let gizmo_undo_transform_id = egui::Id::new("gizmo_undo_transform");
+        let gizmo_dragging_id = egui::Id::new("gizmo_dragging");
         let mut gizmo_active = ctx.data(|d| d.get_temp::<usize>(gizmo_active_id).unwrap_or(usize::MAX));
         let mut gizmo_drag_start = ctx.data(|d| d.get_temp::<egui::Vec2>(gizmo_drag_start_id).unwrap_or(egui::Vec2::ZERO));
         let mut gizmo_entity_pos = ctx.data(|d| d.get_temp::<Vec3>(gizmo_entity_pos_id).unwrap_or(Vec3::ZERO));
         let mut gizmo_entity_rot = ctx.data(|d| d.get_temp::<Vec3>(gizmo_entity_rot_id).unwrap_or(Vec3::ZERO));
         let mut gizmo_entity_scale = ctx.data(|d| d.get_temp::<Vec3>(gizmo_entity_scale_id).unwrap_or(Vec3::ONE));
+        let mut gizmo_undo_transform: Option<Transform> = ctx.data(|d| d.get_temp::<Transform>(gizmo_undo_transform_id));
+        let mut gizmo_dragging = ctx.data(|d| d.get_temp::<bool>(gizmo_dragging_id).unwrap_or(false));
         
         let mut deferred_new_pos: Option<Vec3> = None;
         let mut deferred_new_rot: Option<Vec3> = None;
@@ -81,10 +89,15 @@ pub fn show_viewport(
             x += grid_step;
         }
         
-        for (entity, name, transform) in world.query::<(&Entity, &Name, &Transform)>().iter() {
-            let is_selected = *selected_entity.borrow() == Some(*entity);
+        for (entity, name, transform) in world.query::<(Entity, &Name, &Transform)>().iter() {
+            let is_selected = *selected_entity.borrow() == Some(entity);
+            let world_pos = {
+                let m = world_transform(world, entity);
+                let (_s, _r, pos) = m.to_scale_rotation_translation();
+                pos
+            };
             
-            if let Some(screen_pos) = world_to_screen(transform.position) {
+            if let Some(screen_pos) = world_to_screen(world_pos) {
                 let entity_color = if is_selected {
                     egui::Color32::from_rgb(70, 150, 250)
                 } else {
@@ -96,7 +109,7 @@ pub fn show_viewport(
                     ui.next_auto_id(),
                     egui::Sense::click()
                 );
-                if ent_resp.clicked() { clicked_entity = Some(*entity); }
+                if ent_resp.clicked() { clicked_entity = Some(entity); }
                 ui.painter().circle_filled(screen_pos, 4.0, entity_color);
                 ui.painter().text(
                     egui::pos2(screen_pos.x + 8.0, screen_pos.y - 4.0),
@@ -106,7 +119,7 @@ pub fn show_viewport(
                     egui::Color32::LIGHT_GRAY
                 );
 
-                if let Ok(aud) = world.get::<&AudioSource>(*entity) {
+                if let Ok(aud) = world.get::<&AudioSource>(entity) {
                     let aud_min_color = egui::Color32::from_rgba_premultiplied(255, 120, 180, 80);
                     let aud_max_color = egui::Color32::from_rgba_premultiplied(255, 120, 180, 30);
                     let aud_label_color = egui::Color32::from_rgba_premultiplied(255, 160, 200, 200);
@@ -120,7 +133,7 @@ pub fn show_viewport(
                             for i in 0..=num_segments {
                                 let angle = (i as f32 / num_segments as f32) * std::f32::consts::TAU;
                                 let r_horiz = (*radius * (1.0 - (h_frac * 0.3).powi(2)).sqrt()).max(0.0);
-                                let wp = transform.position + Vec3::new(r_horiz * angle.cos(), h, r_horiz * angle.sin());
+                                let wp = world_pos + Vec3::new(r_horiz * angle.cos(), h, r_horiz * angle.sin());
                                 if let Some(sp) = world_to_screen(wp) {
                                     if let Some(lp) = last_point {
                                         let _alpha = if *radius == aud.min_distance { 80 } else { 25 };
@@ -132,7 +145,7 @@ pub fn show_viewport(
                         }
                     }
 
-                    if let Some(label_pos) = world_to_screen(transform.position + Vec3::new(aud.max_distance, aud.max_distance * 0.3, 0.0)) {
+                    if let Some(label_pos) = world_to_screen(world_pos + Vec3::new(aud.max_distance, aud.max_distance * 0.3, 0.0)) {
                         ui.painter().text(
                             label_pos,
                             egui::Align2::LEFT_BOTTOM,
@@ -141,7 +154,7 @@ pub fn show_viewport(
                             aud_label_color,
                         );
                     }
-                    if let Some(label_pos) = world_to_screen(transform.position + Vec3::new(aud.min_distance, -aud.min_distance * 0.3, 0.0)) {
+                    if let Some(label_pos) = world_to_screen(world_pos + Vec3::new(aud.min_distance, -aud.min_distance * 0.3, 0.0)) {
                         ui.painter().text(
                             label_pos,
                             egui::Align2::LEFT_TOP,
@@ -169,7 +182,7 @@ pub fn show_viewport(
                     let gizmo_len = 60.0;
                     
                     for (axis_idx, (axis_dir, color)) in axis_colors.iter().enumerate() {
-                        let tip_world = transform.position + *axis_dir * 2.0;
+                        let tip_world = world_pos + *axis_dir * 2.0;
                         if let Some(tip_screen) = world_to_screen(tip_world) {
                             let v = tip_screen - screen_pos;
                             let len = (v.x * v.x + v.y * v.y).sqrt();
@@ -192,9 +205,15 @@ pub fn show_viewport(
                             if handle_resp.drag_started() {
                                 gizmo_active = axis_idx;
                                 gizmo_drag_start = handle_resp.interact_pointer_pos().unwrap_or(handle_screen).to_vec2();
-                                gizmo_entity_pos = transform.position;
+                                gizmo_entity_pos = world_pos;
                                 gizmo_entity_rot = transform.rotation;
                                 gizmo_entity_scale = transform.scale;
+                                gizmo_undo_transform = Some(Transform {
+                                    position: transform.position,
+                                    rotation: transform.rotation,
+                                    scale: transform.scale,
+                                });
+                                gizmo_dragging = true;
                             }
                         }
                     }
@@ -249,19 +268,34 @@ pub fn show_viewport(
         }
         
         if let (Some(sel), Some(new_pos)) = (*selected_entity.borrow(), deferred_new_pos) {
-            for (e, t) in world.query_mut::<(&Entity, &mut Transform)>() {
-                if *e == sel { t.position = new_pos; dirty.set(true); break; }
+            let parent_entity = world.get::<&crate::scene::Parent>(sel).ok().and_then(|p| p.0);
+            let parent_matrix = parent_entity.map(|pe| world_transform(world, pe)).unwrap_or(Mat4::IDENTITY);
+            let parent_inv = parent_matrix.inverse();
+            for (e, t) in world.query_mut::<(Entity, &mut Transform)>() {
+                if e == sel {
+                    let local = parent_inv * Vec4::new(new_pos.x, new_pos.y, new_pos.z, 1.0);
+                    t.position = Vec3::new(local.x, local.y, local.z);
+                    dirty.set(true);
+                    break;
+                }
             }
         }
         if let (Some(sel), Some(new_rot)) = (*selected_entity.borrow(), deferred_new_rot) {
-            for (e, t) in world.query_mut::<(&Entity, &mut Transform)>() {
-                if *e == sel { t.rotation = new_rot; dirty.set(true); break; }
+            for (e, t) in world.query_mut::<(Entity, &mut Transform)>() {
+                if e == sel { t.rotation = new_rot; dirty.set(true); break; }
             }
         }
         if let (Some(sel), Some(new_scale)) = (*selected_entity.borrow(), deferred_new_scale) {
-            for (e, t) in world.query_mut::<(&Entity, &mut Transform)>() {
-                if *e == sel { t.scale = new_scale; dirty.set(true); break; }
+            for (e, t) in world.query_mut::<(Entity, &mut Transform)>() {
+                if e == sel { t.scale = new_scale; dirty.set(true); break; }
             }
+        }
+
+        if gizmo_dragging && ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary)) {
+            if let (Some(target), Some(old)) = (*selected_entity.borrow(), gizmo_undo_transform.take()) {
+                undo_history.borrow_mut().push(EditorAction::TransformEntity { entity: target, old_transform: old });
+            }
+            gizmo_dragging = false;
         }
         
         if let Some(e) = clicked_entity {
@@ -285,12 +319,60 @@ pub fn show_viewport(
             cam.pitch = -0.3;
             cam.distance = 8.0;
         }
+        if ctx.input(|i| i.key_pressed(egui::Key::Delete)) {
+            if let Some(sel) = *selected_entity.borrow() {
+                if world.get::<&Name>(sel).is_ok() {
+                    let snapshot = crate::scene::entity_to_scene_entity(world, sel);
+                    let _ = world.despawn(sel);
+                    undo_history.borrow_mut().push(EditorAction::DeleteEntity { entity: sel, snapshot });
+                    *selected_entity.borrow_mut() = None;
+                    dirty.set(true);
+                }
+            }
+        }
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::D)) {
+            if let Some(sel) = *selected_entity.borrow() {
+                let name = world.get::<&Name>(sel).ok().map(|n| n.0.clone()).unwrap_or_default();
+                let transform = world.get::<&Transform>(sel).ok().map(|r| (*r).clone()).unwrap_or_default();
+                let mesh = world.get::<&MeshComponent>(sel).ok().map(|r| (*r).clone());
+                let material = world.get::<&Material>(sel).ok().map(|r| (*r).clone());
+                let dirlight = world.get::<&rustix_render::DirectionalLight>(sel).ok().map(|r| (*r).clone());
+                let pointlight = world.get::<&rustix_render::PointLight>(sel).ok().map(|r| (*r).clone());
+                let spotlight = world.get::<&rustix_render::SpotLight>(sel).ok().map(|r| (*r).clone());
+                let audio = world.get::<&AudioSource>(sel).ok().map(|r| (*r).clone());
+
+                let mut new_transform = transform;
+                new_transform.position.x += 1.0;
+
+                let mut builder = hecs::EntityBuilder::new();
+                builder.add(Name(format!("{} Copy", name)));
+                builder.add(new_transform);
+                if let Some(m) = mesh { builder.add(m); }
+                if let Some(m) = material { builder.add(m); }
+                if let Some(l) = dirlight { builder.add(l); }
+                if let Some(l) = pointlight { builder.add(l); }
+                if let Some(l) = spotlight { builder.add(l); }
+                if let Some(a) = audio { builder.add(a); }
+                let new_entity = world.spawn(builder.build());
+
+                let snapshot = crate::scene::entity_to_scene_entity(world, new_entity);
+                undo_history.borrow_mut().push(EditorAction::AddEntity { entity: new_entity, snapshot });
+                *selected_entity.borrow_mut() = Some(new_entity);
+                dirty.set(true);
+            }
+        }
         
         ctx.data_mut(|d| d.insert_temp(gizmo_active_id, gizmo_active));
         ctx.data_mut(|d| d.insert_temp(gizmo_drag_start_id, gizmo_drag_start));
         ctx.data_mut(|d| d.insert_temp(gizmo_entity_pos_id, gizmo_entity_pos));
         ctx.data_mut(|d| d.insert_temp(gizmo_entity_rot_id, gizmo_entity_rot));
         ctx.data_mut(|d| d.insert_temp(gizmo_entity_scale_id, gizmo_entity_scale));
+        if let Some(t) = gizmo_undo_transform {
+            ctx.data_mut(|d| d.insert_temp(gizmo_undo_transform_id, t));
+        } else {
+            ctx.data_mut(|d| d.remove_temp::<Transform>(gizmo_undo_transform_id));
+        }
+        ctx.data_mut(|d| d.insert_temp(gizmo_dragging_id, gizmo_dragging));
         
         let mode_label = match gizmo_mode { 1 => "Rotate", 2 => "Scale", _ => "Translate" };
         let hud = format!("[{mode_label}]  {} entities", entity_count);

@@ -159,4 +159,32 @@ pub mod procedural {
         }}
         idx
     }
+
+    pub fn capsule(radius: f32, height: f32, rings: u32, sectors: u32) -> (Vec<Vertex>, Vec<u16>) {
+        let mut verts = Vec::new();
+        let half_h = height * 0.5;
+        let total_rings = rings * 2;
+        for r in 0..=total_rings {
+            let (y, ring_r, center_y) = if r <= rings {
+                let phi = std::f32::consts::PI * r as f32 / rings as f32;
+                (-half_h - radius * phi.cos(), radius * phi.sin(), -half_h)
+            } else {
+                let phi = std::f32::consts::PI * (r - rings) as f32 / rings as f32;
+                (half_h + radius * phi.cos(), radius * phi.sin(), half_h)
+            };
+            for s in 0..=sectors {
+                let theta = 2.0 * std::f32::consts::PI * s as f32 / sectors as f32;
+                let x = theta.cos() * ring_r;
+                let z = theta.sin() * ring_r;
+                let nx = if ring_r > 0.001 { x / ring_r } else { 0.0 };
+                let nz = if ring_r > 0.001 { z / ring_r } else { 0.0 };
+                let ny = if ring_r > 0.001 { (y - center_y) / radius } else { 0.0 };
+                let nlen = (nx*nx + ny*ny + nz*nz).sqrt();
+                let (nx, ny, nz) = if nlen > 0.0 { (nx/nlen, ny/nlen, nz/nlen) } else { (0.0, 1.0, 0.0) };
+                verts.push(vert([x, y, z], [nx, ny, nz]));
+            }
+        }
+        let idx = quad_indices(total_rings + 1, sectors + 1);
+        (verts, idx)
+    }
 }

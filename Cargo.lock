@@ -3503,7 +3503,9 @@ dependencies = [
  "rustix-physics",
  "rustix-platform",
  "rustix-render",
+ "rustix-terrain",
  "rustix-ui",
+ "rustix-world",
  "serde",
  "serde_json",
  "tracing",
@@ -3550,6 +3552,7 @@ name = "rustix-world"
 version = "0.1.0"
 dependencies = [
  "crossbeam",
+ "hecs",
  "rustix-asset",
  "rustix-core",
  "rustix-terrain",

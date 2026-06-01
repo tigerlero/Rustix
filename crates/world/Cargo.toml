@@ -9,6 +9,7 @@ tracing = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 crossbeam = { workspace = true }
+hecs = { workspace = true }
 
 rustix-core = { path = "../core" }
 rustix-asset = { path = "../asset" }

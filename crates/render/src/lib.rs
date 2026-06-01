@@ -494,7 +494,7 @@ impl Renderer {
             self.device.logical().cmd_set_scissor(cmd, 0, &[vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent: sw.extent() }]);
             self.device.logical().cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
             self.device.logical().cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.layout, 0, &[descriptor_set], &[]);
-            self.device.logical().cmd_push_constants(cmd, pipeline.layout, vk::ShaderStageFlags::VERTEX, 0, push_constants);
+            self.device.logical().cmd_push_constants(cmd, pipeline.layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
             self.device.logical().cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer.buffer], &[0u64]);
             self.device.logical().cmd_draw(cmd, vertex_count, 1, 0, 0);
             dr.cmd_end_rendering(cmd);
@@ -528,7 +528,7 @@ impl Renderer {
             self.device.logical().cmd_set_scissor(cmd, 0, &[vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent }]);
             self.device.logical().cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
             self.device.logical().cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.layout, 0, &[descriptor_set], &[]);
-            self.device.logical().cmd_push_constants(cmd, pipeline.layout, vk::ShaderStageFlags::VERTEX, 0, push_constants);
+            self.device.logical().cmd_push_constants(cmd, pipeline.layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
             self.device.logical().cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer.buffer], &[0u64]);
             if let Some(ib) = index_buffer {
                 self.device.logical().cmd_bind_index_buffer(cmd, ib.buffer, 0, vk::IndexType::UINT16);
@@ -571,7 +571,7 @@ impl Renderer {
         unsafe {
             self.device.logical().cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
             self.device.logical().cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.layout, 0, &[descriptor_set], &[]);
-            self.device.logical().cmd_push_constants(cmd, pipeline.layout, vk::ShaderStageFlags::VERTEX, 0, push_constants);
+            self.device.logical().cmd_push_constants(cmd, pipeline.layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
             self.device.logical().cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer.buffer], &[0u64]);
             if let Some(ib) = index_buffer {
                 self.device.logical().cmd_bind_index_buffer(cmd, ib.buffer, 0, vk::IndexType::UINT16);

@@ -52,7 +52,7 @@ pub fn editor_screen(
     hierarchy::show_hierarchy(ctx, world, selected_entity, pending_delete, dirty, renaming, rename_buffer, undo_history);
     inspector::show_inspector(ctx, cam, world, selected_entity, dirty, undo_history);
     console::show_console(ctx, project_dir, audio_engine, audio_instance, waveform_viewer);
-    viewport::show_viewport(ctx, cam, world, selected_entity, dirty);
+    viewport::show_viewport(ctx, cam, world, selected_entity, dirty, undo_history);
     dialogs::show_dialogs(ctx, screen, target, current_project, dirty, show_confirm, confirm_target, show_settings, sprite_editor);
     undo_redo::handle_undo_redo(ctx, world, selected_entity, dirty, undo_history);
 }

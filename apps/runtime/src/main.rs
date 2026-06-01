@@ -23,6 +23,7 @@ use rustix_render::mesh::Mesh;
 use rustix_audio::{AudioEngine, SoundInstance};
 use rustix_animation::{Animator, AnimationClip, update_animators};
 use rustix_physics::{RigidBody, Collider, PhysicsWorld, step_physics};
+use rustix_terrain::{TerrainParams, generate_heightmap, build_terrain_mesh};
 
 use camera::EditorCamera;
 use project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo, load_project_file, create_project_file, add_recent_project, load_recent_projects};
@@ -143,6 +144,7 @@ fn main() {
         ));
         tracing::info!("created entity {}: {:?}", i, e);
     }
+    tracing::info!("startup world has {} named entities", ecs_world.query::<&Name>().iter().count());
 
     let mut meshes: HashMap<String, Mesh> = HashMap::new();
     let mut animation_clips: HashMap<String, AnimationClip> = HashMap::new();
@@ -298,6 +300,46 @@ fn main() {
                                     meshes.insert("Torus".into(), t_mesh);
                                 }
                             }
+                            if let Ok((c_verts, c_idx)) = (|| -> Result<(Vec<rustix_render::mesh::Vertex>, Vec<u16>), rustix_render::RenderError> {
+                                Ok(rustix_render::mesh::procedural::capsule(0.3, 0.6, 8, 16))
+                            })() {
+                                let vb_slice = bytemuck::cast_slice(&c_verts);
+                                if let Ok(c_mesh) = Mesh::new(&renderer, "Capsule", vb_slice, c_verts.len() as u32, Some((&c_idx, c_idx.len() as u32))) {
+                                    meshes.insert("Capsule".into(), c_mesh);
+                                }
+                            }
+                            if let Ok((ico_verts, ico_idx)) = (|| -> Result<(Vec<rustix_render::mesh::Vertex>, Vec<u16>), rustix_render::RenderError> {
+                                Ok(rustix_render::mesh::procedural::icosphere(0.5, 2))
+                            })() {
+                                let vb_slice = bytemuck::cast_slice(&ico_verts);
+                                if let Ok(ico_mesh) = Mesh::new(&renderer, "Icosphere", vb_slice, ico_verts.len() as u32, Some((&ico_idx, ico_idx.len() as u32))) {
+                                    meshes.insert("Icosphere".into(), ico_mesh);
+                                }
+                            }
+                            if let Ok((p_verts, p_idx)) = (|| -> Result<(Vec<rustix_render::mesh::Vertex>, Vec<u16>), rustix_render::RenderError> {
+                                Ok(rustix_render::mesh::procedural::quad(1.0, 1))
+                            })() {
+                                let vb_slice = bytemuck::cast_slice(&p_verts);
+                                if let Ok(p_mesh) = Mesh::new(&renderer, "Plane", vb_slice, p_verts.len() as u32, Some((&p_idx, p_idx.len() as u32))) {
+                                    meshes.insert("Plane".into(), p_mesh);
+                                }
+                            }
+                            {
+                                let params = TerrainParams { width: 32, depth: 32, scale: 2.0, height_scale: 4.0, ..Default::default() };
+                                let hm = generate_heightmap(&params);
+                                let (t_verts, t_idx) = build_terrain_mesh(&hm, params.scale);
+                                let mut tr_verts: Vec<rustix_render::mesh::Vertex> = Vec::with_capacity(t_verts.len());
+                                for v in &t_verts {
+                                    tr_verts.push(rustix_render::mesh::Vertex {
+                                        position: v.position,
+                                        normal: v.normal,
+                                    });
+                                }
+                                let vb_slice = bytemuck::cast_slice(&tr_verts);
+                                if let Ok(t_mesh) = Mesh::new(&renderer, "Terrain", vb_slice, tr_verts.len() as u32, Some((&t_idx, t_idx.len() as u32))) {
+                                    meshes.insert("Terrain".into(), t_mesh);
+                                }
+                            }
                             let vs = rustix_render::shader::builtin::vertex_shader(renderer.device().logical());
                             let fs = rustix_render::shader::builtin::fragment_shader(renderer.device().logical());
                             if let (Ok(vs), Ok(fs)) = (vs, fs) {
@@ -422,7 +464,7 @@ fn main() {
                                 let eye = cam.eye_pos();
 
                                 let mut point_lights: Vec<(Vec3, f32, Vec3, f32)> = Vec::new();
-                                for (_e, pl, xform) in ecs_world.query::<(&Entity, &PointLight, &Transform)>().iter() {
+                                for (_e, pl, xform) in ecs_world.query::<(Entity, &PointLight, &Transform)>().iter() {
                                     point_lights.push((
                                         xform.position,
                                         pl.radius.max(0.1),
@@ -430,7 +472,7 @@ fn main() {
                                         pl.intensity,
                                     ));
                                 }
-                                for (_e, sl, xform) in ecs_world.query::<(&Entity, &SpotLight, &Transform)>().iter() {
+                                for (_e, sl, xform) in ecs_world.query::<(Entity, &SpotLight, &Transform)>().iter() {
                                     point_lights.push((
                                         xform.position,
                                         sl.radius.max(0.1),
@@ -472,11 +514,11 @@ fn main() {
                                 let clear_color = [0.04, 0.04, 0.08, 1.0f32];
                                 renderer.begin_scene_pass(cmd, depth_buf, clear_color);
                                 
-                                for (entity, _transform, mesh_comp) in ecs_world.query::<(&Entity, &Transform, &MeshComponent)>().iter() {
+                                for (entity, _transform, mesh_comp) in ecs_world.query::<(Entity, &Transform, &MeshComponent)>().iter() {
                                     if let Some(mesh) = meshes.get(&mesh_comp.0) {
-                                        let model = world_transform(&ecs_world, *entity);
+                                        let model = world_transform(&ecs_world, entity);
 
-                                        let mat: Option<(Vec4, f32)> = ecs_world.get::<&Material>(*entity).ok()
+                                        let mat: Option<(Vec4, f32)> = ecs_world.get::<&Material>(entity).ok()
                                             .map(|m| (Vec4::new(m.base_color.x, m.base_color.y, m.base_color.z, m.roughness), m.metallic));
                                         let (mat_v, metallic) = mat.unwrap_or((Vec4::new(0.7, 0.7, 0.7, 0.5), 0.0));
                                         
@@ -485,7 +527,7 @@ fn main() {
                                         pc_data[64..80].copy_from_slice(bytemuck::bytes_of(&light_dir));
                                         pc_data[80..96].copy_from_slice(bytemuck::bytes_of(&light_color));
                                         pc_data[96..112].copy_from_slice(bytemuck::bytes_of(&mat_v));
-                                        pc_data[112..128].copy_from_slice(bytemuck::bytes_of(&Vec2::new(metallic, 0.0)));
+                                        pc_data[112..128].copy_from_slice(bytemuck::bytes_of(&Vec4::new(metallic, 0.0, 0.0, 0.0)));
                                         
                                         renderer.draw_indexed_in_pass(
                                             cmd, pipeline,

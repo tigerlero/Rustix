@@ -19,7 +19,47 @@ pub fn show_hierarchy(
     undo_history: &std::cell::RefCell<UndoHistory>,
 ) {
     egui::Panel::left("hierarchy").resizable(true).default_size(220.0).show(ctx, |ui| {
-        ui.heading("Hierarchy");
+        ui.horizontal(|ui| {
+            ui.heading("Hierarchy");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Delete").clicked() {
+                    if let Some(sel) = *selected_entity.borrow() {
+                        *pending_delete.borrow_mut() = Some(sel);
+                    }
+                }
+                if ui.button("Duplicate").clicked() {
+                    if let Some(sel) = *selected_entity.borrow() {
+                        let name = world.get::<&Name>(sel).ok().map(|n| n.0.clone()).unwrap_or_default();
+                        let transform = world.get::<&Transform>(sel).ok().map(|r| (*r).clone()).unwrap_or_default();
+                        let mesh = world.get::<&MeshComponent>(sel).ok().map(|r| (*r).clone());
+                        let material = world.get::<&Material>(sel).ok().map(|r| (*r).clone());
+                        let dirlight = world.get::<&DirectionalLight>(sel).ok().map(|r| (*r).clone());
+                        let pointlight = world.get::<&PointLight>(sel).ok().map(|r| (*r).clone());
+                        let spotlight = world.get::<&SpotLight>(sel).ok().map(|r| (*r).clone());
+                        let audio = world.get::<&rustix_audio::AudioSource>(sel).ok().map(|r| (*r).clone());
+
+                        let mut new_transform = transform;
+                        new_transform.position.x += 1.0;
+
+                        let mut builder = hecs::EntityBuilder::new();
+                        builder.add(Name(format!("{} Copy", name)));
+                        builder.add(new_transform);
+                        if let Some(m) = mesh { builder.add(m); }
+                        if let Some(m) = material { builder.add(m); }
+                        if let Some(l) = dirlight { builder.add(l); }
+                        if let Some(l) = pointlight { builder.add(l); }
+                        if let Some(l) = spotlight { builder.add(l); }
+                        if let Some(a) = audio { builder.add(a); }
+                        let new_entity = world.spawn(builder.build());
+
+                        let snapshot = crate::scene::entity_to_scene_entity(world, new_entity);
+                        undo_history.borrow_mut().push(EditorAction::AddEntity { entity: new_entity, snapshot });
+                        *selected_entity.borrow_mut() = Some(new_entity);
+                        dirty.set(true);
+                    }
+                }
+            });
+        });
         ui.separator();
         egui::ScrollArea::vertical().show(ui, |ui| {
             let is_renaming = *renaming.borrow();
@@ -28,8 +68,10 @@ pub fn show_hierarchy(
 
             let mut children: HashMap<hecs::Entity, Vec<hecs::Entity>> = HashMap::new();
             let mut roots: Vec<hecs::Entity> = Vec::new();
-            for (_e, _name) in world.query::<(&Entity, &Name)>().iter() {
-                let entity = *_e;
+            let mut query_count = 0;
+            for (eid, _name) in world.query::<(Entity, &Name)>().iter() {
+                query_count += 1;
+                let entity = eid;
                 if let Ok(p) = world.get::<&Parent>(entity) {
                     if let Some(parent) = p.0 {
                         children.entry(parent).or_default().push(entity);
@@ -40,6 +82,7 @@ pub fn show_hierarchy(
                     roots.push(entity);
                 }
             }
+            ui.label(format!("Entities: {query_count}"));
 
             fn render_entity(
                 ui: &mut egui::Ui,
@@ -54,6 +97,8 @@ pub fn show_hierarchy(
                 pending_delete: &std::cell::RefCell<Option<hecs::Entity>>,
                 children: &HashMap<hecs::Entity, Vec<hecs::Entity>>,
                 finish_rename: &mut Option<hecs::Entity>,
+                undo_history: &std::cell::RefCell<UndoHistory>,
+                dirty: &std::cell::Cell<bool>,
             ) {
                 let name = world.get::<&Name>(entity).map(|n| n.0.clone()).unwrap_or_else(|_| "Unnamed".into());
                 let is_selected = sel == Some(entity);
@@ -98,6 +143,36 @@ pub fn show_hierarchy(
                             *selected_entity.borrow_mut() = Some(entity);
                         }
                         resp.context_menu(|ui| {
+                            if ui.button("Duplicate").clicked() {
+                                let name = world.get::<&Name>(entity).ok().map(|n| n.0.clone()).unwrap_or_default();
+                                let transform = world.get::<&Transform>(entity).ok().map(|r| (*r).clone()).unwrap_or_default();
+                                let mesh = world.get::<&MeshComponent>(entity).ok().map(|r| (*r).clone());
+                                let material = world.get::<&Material>(entity).ok().map(|r| (*r).clone());
+                                let dirlight = world.get::<&DirectionalLight>(entity).ok().map(|r| (*r).clone());
+                                let pointlight = world.get::<&PointLight>(entity).ok().map(|r| (*r).clone());
+                                let spotlight = world.get::<&SpotLight>(entity).ok().map(|r| (*r).clone());
+                                let audio = world.get::<&rustix_audio::AudioSource>(entity).ok().map(|r| (*r).clone());
+
+                                let mut new_transform = transform;
+                                new_transform.position.x += 1.0;
+
+                                let mut builder = hecs::EntityBuilder::new();
+                                builder.add(Name(format!("{} Copy", name)));
+                                builder.add(new_transform);
+                                if let Some(m) = mesh { builder.add(m); }
+                                if let Some(m) = material { builder.add(m); }
+                                if let Some(l) = dirlight { builder.add(l); }
+                                if let Some(l) = pointlight { builder.add(l); }
+                                if let Some(l) = spotlight { builder.add(l); }
+                                if let Some(a) = audio { builder.add(a); }
+                                let new_entity = world.spawn(builder.build());
+
+                                let snapshot = crate::scene::entity_to_scene_entity(world, new_entity);
+                                undo_history.borrow_mut().push(EditorAction::AddEntity { entity: new_entity, snapshot });
+                                *selected_entity.borrow_mut() = Some(new_entity);
+                                dirty.set(true);
+                                ui.close();
+                            }
                             if ui.button("Rename").clicked() {
                                 let n = world.get::<&Name>(entity).map(|n| n.0.clone()).unwrap_or_default();
                                 *renaming.borrow_mut() = Some(entity);
@@ -129,19 +204,19 @@ pub fn show_hierarchy(
 
                 if let Some(kids) = children.get(&entity) {
                     for &child in kids {
-                        render_entity(ui, child, world, depth + 1, is_renaming, sel, selected_entity, renaming, rename_buffer, pending_delete, children, finish_rename);
+                        render_entity(ui, child, world, depth + 1, is_renaming, sel, selected_entity, renaming, rename_buffer, pending_delete, children, finish_rename, undo_history, dirty);
                     }
                 }
             }
 
             for &root in &roots {
-                render_entity(ui, root, world, 0, is_renaming, sel, selected_entity, renaming, rename_buffer, pending_delete, &children, &mut finish_rename);
+                render_entity(ui, root, world, 0, is_renaming, sel, selected_entity, renaming, rename_buffer, pending_delete, &children, &mut finish_rename, undo_history, dirty);
             }
 
             if let Some(entity) = finish_rename {
                 let new_name = rename_buffer.borrow().clone();
-                for (e, n) in world.query_mut::<(&Entity, &mut Name)>() {
-                    if *e == entity {
+                for (e, n) in world.query_mut::<(Entity, &mut Name)>() {
+                    if e == entity {
                         if n.0 != new_name {
                             undo_history.borrow_mut().push(EditorAction::RenameEntity { entity, old_name: n.0.clone() });
                             n.0 = new_name;
@@ -163,13 +238,50 @@ pub fn show_hierarchy(
             }
         }
         ui.add_space(4.0);
-        if ui.button("Add Entity").clicked() {
-            let e = world.spawn((Name("New Entity".to_string()), Transform::default(), MeshComponent("Cube".into()), Material { base_color: Vec3::new(0.7, 0.7, 0.7), roughness: 0.5, metallic: 0.0 }));
-            let snapshot = crate::scene::entity_to_scene_entity(world, e);
-            undo_history.borrow_mut().push(EditorAction::AddEntity { entity: e, snapshot });
-            *selected_entity.borrow_mut() = Some(e);
-            dirty.set(true);
-        }
+        ui.menu_button("Create 3D Object", |ui| {
+            let mut spawn = |name: &str, mesh: &str, color: Vec3| {
+                let count = world.query::<(&Name,)>().iter().filter(|(n,)| n.0.starts_with(name)).count() as u32;
+                let e = world.spawn((
+                    Name(format!("{} {}", name, count + 1)),
+                    Transform { position: Vec3::new(0.0, 0.5 + count as f32 * 0.5, 0.0), ..Default::default() },
+                    MeshComponent(mesh.into()),
+                    Material { base_color: color, roughness: 0.5, metallic: 0.0 },
+                ));
+                tracing::info!("spawned {} entity {:?}", name, e);
+                let snapshot = crate::scene::entity_to_scene_entity(world, e);
+                undo_history.borrow_mut().push(EditorAction::AddEntity { entity: e, snapshot });
+                *selected_entity.borrow_mut() = Some(e);
+                dirty.set(true);
+            };
+            if ui.button("Cube").clicked() {
+                spawn("Cube", "Cube", Vec3::new(0.7, 0.7, 0.7));
+                ui.close();
+            }
+            if ui.button("Sphere").clicked() {
+                spawn("Sphere", "Sphere", Vec3::new(0.7, 0.5, 0.4));
+                ui.close();
+            }
+            if ui.button("Torus").clicked() {
+                spawn("Torus", "Torus", Vec3::new(0.5, 0.7, 0.6));
+                ui.close();
+            }
+            if ui.button("Capsule").clicked() {
+                spawn("Capsule", "Capsule", Vec3::new(0.6, 0.6, 0.8));
+                ui.close();
+            }
+            if ui.button("Icosphere").clicked() {
+                spawn("Icosphere", "Icosphere", Vec3::new(0.5, 0.5, 0.7));
+                ui.close();
+            }
+            if ui.button("Plane").clicked() {
+                spawn("Plane", "Plane", Vec3::new(0.4, 0.7, 0.4));
+                ui.close();
+            }
+            if ui.button("Terrain").clicked() {
+                spawn("Terrain", "Terrain", Vec3::new(0.35, 0.6, 0.3));
+                ui.close();
+            }
+        });
         ui.menu_button("Create Light", |ui| {
             if ui.button("Directional").clicked() {
                 let e = world.spawn((Name("Directional Light".to_string()), Transform::default(), DirectionalLight::default(), MeshComponent("Cube".into()), Material { base_color: Vec3::new(1.0, 0.95, 0.8), roughness: 0.3, metallic: 0.0 }));
