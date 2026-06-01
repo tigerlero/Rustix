@@ -31,13 +31,13 @@ impl Asset for Script {
 }
 
 /// Configuration for a script behavior.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ScriptConfig {
     pub enabled: bool,
 }
 
 /// Script component attached to entities.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScriptComponent {
     pub source: String,
     pub config: ScriptConfig,

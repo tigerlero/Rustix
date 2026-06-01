@@ -1,5 +1,6 @@
 use rustix_render::{DirectionalLight, PointLight, SpotLight};
 use rustix_audio::AudioSource;
+use rustix_scripting::ScriptComponent;
 use super::scene::{Transform, Material, SceneEntity};
 
 #[derive(Clone)]
@@ -13,6 +14,7 @@ pub enum EditorAction {
     SpotLightChanged { entity: hecs::Entity, old: SpotLight },
     MaterialChanged { entity: hecs::Entity, old: Material },
     AudioSourceChanged { entity: hecs::Entity, old: AudioSource },
+    ScriptComponentChanged { entity: hecs::Entity, old: ScriptComponent },
     ComponentAdded { entity: hecs::Entity, component: String, old_snapshot: SceneEntity },
     ComponentRemoved { entity: hecs::Entity, component: String, old_snapshot: SceneEntity },
 }

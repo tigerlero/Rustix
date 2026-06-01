@@ -2,6 +2,7 @@ use rustix_core::ecs::{EcsWorld, Entity};
 use rustix_core::math::Vec3;
 use rustix_render::{DirectionalLight, PointLight, SpotLight};
 use rustix_audio::{AudioSource, AudioListener};
+use rustix_scripting::ScriptComponent;
 
 use crate::camera::{EditorCamera, CameraMode};
 use crate::scene::{Transform, Name, Material};
@@ -47,6 +48,10 @@ pub fn show_inspector(
         world.query::<(Entity, &AudioListener)>().iter().find(|(e, _)| *e == sel_ent).map(|(_, a)| a.clone())
     });
     let old_audio_listener = selected_audio_listener.clone();
+    let mut selected_script: Option<ScriptComponent> = selected_entity_val.and_then(|sel_ent| {
+        world.query::<(Entity, &ScriptComponent)>().iter().find(|(e, _)| *e == sel_ent).map(|(_, s)| s.clone())
+    });
+    let old_script = selected_script.clone();
 
     egui::Panel::right("inspector").resizable(true).default_size(260.0).show(ctx, |ui| {
         ui.heading("Inspector");
@@ -80,6 +85,158 @@ pub fn show_inspector(
                     }
                 }
             }
+            if let Some(ref mut dl) = selected_dirlight {
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("Directional Light");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Remove").clicked() {
+                            if let Some(target) = selected_entity_val {
+                                let snapshot = crate::scene::entity_to_scene_entity(world, target);
+                                let _ = world.remove_one::<DirectionalLight>(target);
+                                undo_history.borrow_mut().push(EditorAction::ComponentRemoved { entity: target, component: "DirectionalLight".into(), old_snapshot: snapshot });
+                                dirty.set(true);
+                            }
+                        }
+                    });
+                });
+                ui.horizontal(|ui| {
+                    let (r, g, b) = (dl.color.x, dl.color.y, dl.color.z);
+                    let size = egui::vec2(18.0, 18.0);
+                    let rect = ui.allocate_exact_size(size, egui::Sense::hover()).0;
+                    ui.painter().rect_filled(rect, 2.0, egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8));
+                    ui.add(egui::DragValue::new(&mut dl.color.x).prefix("R: ").speed(0.01).range(0.0..=1.0));
+                    ui.add(egui::DragValue::new(&mut dl.color.y).prefix("G: ").speed(0.01).range(0.0..=1.0));
+                    ui.add(egui::DragValue::new(&mut dl.color.z).prefix("B: ").speed(0.01).range(0.0..=1.0));
+                });
+                ui.add(egui::DragValue::new(&mut dl.intensity).prefix("Intensity: ").speed(0.1));
+            }
+            if let Some(ref mut pl) = selected_pointlight {
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("Point Light");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Remove").clicked() {
+                            if let Some(target) = selected_entity_val {
+                                let snapshot = crate::scene::entity_to_scene_entity(world, target);
+                                let _ = world.remove_one::<PointLight>(target);
+                                undo_history.borrow_mut().push(EditorAction::ComponentRemoved { entity: target, component: "PointLight".into(), old_snapshot: snapshot });
+                                dirty.set(true);
+                            }
+                        }
+                    });
+                });
+                ui.horizontal(|ui| {
+                    let (r, g, b) = (pl.color.x, pl.color.y, pl.color.z);
+                    let size = egui::vec2(18.0, 18.0);
+                    let rect = ui.allocate_exact_size(size, egui::Sense::hover()).0;
+                    ui.painter().rect_filled(rect, 2.0, egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8));
+                    ui.add(egui::DragValue::new(&mut pl.color.x).prefix("R: ").speed(0.01).range(0.0..=1.0));
+                    ui.add(egui::DragValue::new(&mut pl.color.y).prefix("G: ").speed(0.01).range(0.0..=1.0));
+                    ui.add(egui::DragValue::new(&mut pl.color.z).prefix("B: ").speed(0.01).range(0.0..=1.0));
+                });
+                ui.add(egui::DragValue::new(&mut pl.intensity).prefix("Intensity: ").speed(0.1));
+                ui.add(egui::DragValue::new(&mut pl.radius).prefix("Radius: ").speed(0.1));
+            }
+            if let Some(ref mut sl) = selected_spotlight {
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("Spot Light");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Remove").clicked() {
+                            if let Some(target) = selected_entity_val {
+                                let snapshot = crate::scene::entity_to_scene_entity(world, target);
+                                let _ = world.remove_one::<SpotLight>(target);
+                                undo_history.borrow_mut().push(EditorAction::ComponentRemoved { entity: target, component: "SpotLight".into(), old_snapshot: snapshot });
+                                dirty.set(true);
+                            }
+                        }
+                    });
+                });
+                ui.horizontal(|ui| {
+                    let (r, g, b) = (sl.color.x, sl.color.y, sl.color.z);
+                    let size = egui::vec2(18.0, 18.0);
+                    let rect = ui.allocate_exact_size(size, egui::Sense::hover()).0;
+                    ui.painter().rect_filled(rect, 2.0, egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8));
+                    ui.add(egui::DragValue::new(&mut sl.color.x).prefix("R: ").speed(0.01).range(0.0..=1.0));
+                    ui.add(egui::DragValue::new(&mut sl.color.y).prefix("G: ").speed(0.01).range(0.0..=1.0));
+                    ui.add(egui::DragValue::new(&mut sl.color.z).prefix("B: ").speed(0.01).range(0.0..=1.0));
+                });
+                ui.add(egui::DragValue::new(&mut sl.intensity).prefix("Intensity: ").speed(0.1));
+                ui.add(egui::DragValue::new(&mut sl.inner_angle).prefix("Inner angle: ").speed(0.01));
+                ui.add(egui::DragValue::new(&mut sl.outer_angle).prefix("Outer angle: ").speed(0.01));
+                ui.add(egui::DragValue::new(&mut sl.radius).prefix("Radius: ").speed(0.1));
+            }
+            if let Some(ref mut mat) = selected_material {
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("Material");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Remove").clicked() {
+                            if let Some(target) = selected_entity_val {
+                                let snapshot = crate::scene::entity_to_scene_entity(world, target);
+                                let _ = world.remove_one::<Material>(target);
+                                undo_history.borrow_mut().push(EditorAction::ComponentRemoved { entity: target, component: "Material".into(), old_snapshot: snapshot });
+                                dirty.set(true);
+                            }
+                        }
+                    });
+                });
+                ui.horizontal(|ui| {
+                    let (r, g, b) = (mat.base_color.x, mat.base_color.y, mat.base_color.z);
+                    let size = egui::vec2(18.0, 18.0);
+                    let rect = ui.allocate_exact_size(size, egui::Sense::hover()).0;
+                    ui.painter().rect_filled(rect, 2.0, egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8));
+                    ui.add(egui::DragValue::new(&mut mat.base_color.x).prefix("R: ").speed(0.01).range(0.0..=1.0));
+                    ui.add(egui::DragValue::new(&mut mat.base_color.y).prefix("G: ").speed(0.01).range(0.0..=1.0));
+                    ui.add(egui::DragValue::new(&mut mat.base_color.z).prefix("B: ").speed(0.01).range(0.0..=1.0));
+                });
+                ui.add(egui::DragValue::new(&mut mat.roughness).prefix("Roughness: ").speed(0.01).range(0.0..=1.0));
+                ui.add(egui::DragValue::new(&mut mat.metallic).prefix("Metallic: ").speed(0.01).range(0.0..=1.0));
+            }
+            if let Some(ref mut aud) = selected_audio_source {
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("Audio Source");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Remove").clicked() {
+                            if let Some(target) = selected_entity_val {
+                                let snapshot = crate::scene::entity_to_scene_entity(world, target);
+                                let _ = world.remove_one::<AudioSource>(target);
+                                undo_history.borrow_mut().push(EditorAction::ComponentRemoved { entity: target, component: "AudioSource".into(), old_snapshot: snapshot });
+                                dirty.set(true);
+                            }
+                        }
+                    });
+                });
+                ui.add(egui::DragValue::new(&mut aud.min_distance).prefix("Min dist: ").speed(0.1));
+                ui.add(egui::DragValue::new(&mut aud.max_distance).prefix("Max dist: ").speed(0.1));
+                ui.add(egui::DragValue::new(&mut aud.rolloff).prefix("Rolloff: ").speed(0.1));
+            }
+            if let Some(ref _aud) = selected_audio_listener {
+                ui.separator();
+                ui.label("Audio Listener (active)");
+            }
+            if let Some(ref mut sc) = selected_script {
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("Script");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Remove").clicked() {
+                            if let Some(target) = selected_entity_val {
+                                let snapshot = crate::scene::entity_to_scene_entity(world, target);
+                                let _ = world.remove_one::<ScriptComponent>(target);
+                                undo_history.borrow_mut().push(EditorAction::ComponentRemoved { entity: target, component: "ScriptComponent".into(), old_snapshot: snapshot });
+                                dirty.set(true);
+                            }
+                        }
+                    });
+                });
+                ui.checkbox(&mut sc.config.enabled, "Enabled");
+                ui.label("Source:");
+                ui.add_sized([ui.available_width(), 120.0], egui::TextEdit::multiline(&mut sc.source).code_editor());
+            }
+
             if let Some(target_entity) = selected_entity_val {
                 if let (Some(ref new), Some(ref old)) = (selected_dirlight, old_dirlight) {
                     if new != old {
@@ -113,130 +270,6 @@ pub fn show_inspector(
                         undo_history.borrow_mut().push(EditorAction::MaterialChanged { entity: target_entity, old: old.clone() });
                     }
                 }
-            }
-            
-            if let Some(ref mut dl) = selected_dirlight {
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label("Directional Light");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("Remove").clicked() {
-                            if let Some(target) = selected_entity_val {
-                                let snapshot = crate::scene::entity_to_scene_entity(world, target);
-                                let _ = world.remove_one::<DirectionalLight>(target);
-                                undo_history.borrow_mut().push(EditorAction::ComponentRemoved { entity: target, component: "DirectionalLight".into(), old_snapshot: snapshot });
-                                dirty.set(true);
-                            }
-                        }
-                    });
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Color");
-                    let mut rgb = [dl.color.x, dl.color.y, dl.color.z];
-                    ui.color_edit_button_rgb(&mut rgb);
-                    dl.color = Vec3::new(rgb[0], rgb[1], rgb[2]);
-                });
-                ui.add(egui::DragValue::new(&mut dl.intensity).prefix("Intensity: ").speed(0.1));
-            }
-            if let Some(ref mut pl) = selected_pointlight {
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label("Point Light");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("Remove").clicked() {
-                            if let Some(target) = selected_entity_val {
-                                let snapshot = crate::scene::entity_to_scene_entity(world, target);
-                                let _ = world.remove_one::<PointLight>(target);
-                                undo_history.borrow_mut().push(EditorAction::ComponentRemoved { entity: target, component: "PointLight".into(), old_snapshot: snapshot });
-                                dirty.set(true);
-                            }
-                        }
-                    });
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Color");
-                    let mut rgb = [pl.color.x, pl.color.y, pl.color.z];
-                    ui.color_edit_button_rgb(&mut rgb);
-                    pl.color = Vec3::new(rgb[0], rgb[1], rgb[2]);
-                });
-                ui.add(egui::DragValue::new(&mut pl.intensity).prefix("Intensity: ").speed(0.1));
-                ui.add(egui::DragValue::new(&mut pl.radius).prefix("Radius: ").speed(0.1));
-            }
-            if let Some(ref mut sl) = selected_spotlight {
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label("Spot Light");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("Remove").clicked() {
-                            if let Some(target) = selected_entity_val {
-                                let snapshot = crate::scene::entity_to_scene_entity(world, target);
-                                let _ = world.remove_one::<SpotLight>(target);
-                                undo_history.borrow_mut().push(EditorAction::ComponentRemoved { entity: target, component: "SpotLight".into(), old_snapshot: snapshot });
-                                dirty.set(true);
-                            }
-                        }
-                    });
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Color");
-                    let mut rgb = [sl.color.x, sl.color.y, sl.color.z];
-                    ui.color_edit_button_rgb(&mut rgb);
-                    sl.color = Vec3::new(rgb[0], rgb[1], rgb[2]);
-                });
-                ui.add(egui::DragValue::new(&mut sl.intensity).prefix("Intensity: ").speed(0.1));
-                ui.add(egui::DragValue::new(&mut sl.inner_angle).prefix("Inner angle: ").speed(0.01));
-                ui.add(egui::DragValue::new(&mut sl.outer_angle).prefix("Outer angle: ").speed(0.01));
-                ui.add(egui::DragValue::new(&mut sl.radius).prefix("Radius: ").speed(0.1));
-            }
-            if let Some(ref mut mat) = selected_material {
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label("Material");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("Remove").clicked() {
-                            if let Some(target) = selected_entity_val {
-                                let snapshot = crate::scene::entity_to_scene_entity(world, target);
-                                let _ = world.remove_one::<Material>(target);
-                                undo_history.borrow_mut().push(EditorAction::ComponentRemoved { entity: target, component: "Material".into(), old_snapshot: snapshot });
-                                dirty.set(true);
-                            }
-                        }
-                    });
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Base Color");
-                    let mut rgb = [mat.base_color.x, mat.base_color.y, mat.base_color.z];
-                    ui.color_edit_button_rgb(&mut rgb);
-                    mat.base_color = Vec3::new(rgb[0], rgb[1], rgb[2]);
-                });
-                ui.add(egui::DragValue::new(&mut mat.roughness).prefix("Roughness: ").speed(0.01).range(0.0..=1.0));
-                ui.add(egui::DragValue::new(&mut mat.metallic).prefix("Metallic: ").speed(0.01).range(0.0..=1.0));
-            }
-            if let Some(ref mut aud) = selected_audio_source {
-                ui.separator();
-                ui.horizontal(|ui| {
-                    ui.label("Audio Source");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("Remove").clicked() {
-                            if let Some(target) = selected_entity_val {
-                                let snapshot = crate::scene::entity_to_scene_entity(world, target);
-                                let _ = world.remove_one::<AudioSource>(target);
-                                undo_history.borrow_mut().push(EditorAction::ComponentRemoved { entity: target, component: "AudioSource".into(), old_snapshot: snapshot });
-                                dirty.set(true);
-                            }
-                        }
-                    });
-                });
-                ui.add(egui::DragValue::new(&mut aud.min_distance).prefix("Min dist: ").speed(0.1));
-                ui.add(egui::DragValue::new(&mut aud.max_distance).prefix("Max dist: ").speed(0.1));
-                ui.add(egui::DragValue::new(&mut aud.rolloff).prefix("Rolloff: ").speed(0.1));
-            }
-            if let Some(ref _aud) = selected_audio_listener {
-                ui.separator();
-                ui.label("Audio Listener (active)");
-            }
-
-            if let Some(target_entity) = selected_entity_val {
                 if let (Some(ref new), Some(ref old)) = (selected_audio_source, old_audio_source) {
                     if new != old {
                         for (e, a) in world.query_mut::<(Entity, &mut AudioSource)>() {
@@ -250,6 +283,14 @@ pub fn show_inspector(
                         for (e, a) in world.query_mut::<(Entity, &mut AudioListener)>() {
                             if e == target_entity { *a = *new; dirty.set(true); break; }
                         }
+                    }
+                }
+                if let (Some(ref new), Some(ref old)) = (&selected_script, &old_script) {
+                    if new != old {
+                        for (e, s) in world.query_mut::<(Entity, &mut ScriptComponent)>() {
+                            if e == target_entity { *s = new.clone(); dirty.set(true); break; }
+                        }
+                        undo_history.borrow_mut().push(EditorAction::ScriptComponentChanged { entity: target_entity, old: old.clone() });
                     }
                 }
             }
@@ -266,6 +307,7 @@ pub fn show_inspector(
                 let has_spot = world.get::<&SpotLight>(target).is_ok();
                 let has_mat = world.get::<&Material>(target).is_ok();
                 let has_audio = world.get::<&AudioSource>(target).is_ok();
+                let has_script = world.get::<&ScriptComponent>(target).is_ok();
                 if !has_dir && ui.button("Directional Light").clicked() {
                     let snapshot = crate::scene::entity_to_scene_entity(world, target);
                     let _ = world.insert(target, (DirectionalLight::default(),));
@@ -298,6 +340,13 @@ pub fn show_inspector(
                     let snapshot = crate::scene::entity_to_scene_entity(world, target);
                     let _ = world.insert(target, (AudioSource { position: Vec3::ZERO, min_distance: 1.0, max_distance: 100.0, rolloff: 1.0 },));
                     undo_history.borrow_mut().push(EditorAction::ComponentAdded { entity: target, component: "AudioSource".into(), old_snapshot: snapshot });
+                    dirty.set(true);
+                    ui.close();
+                }
+                if !has_script && ui.button("Script").clicked() {
+                    let snapshot = crate::scene::entity_to_scene_entity(world, target);
+                    let _ = world.insert(target, (ScriptComponent::default(),));
+                    undo_history.borrow_mut().push(EditorAction::ComponentAdded { entity: target, component: "ScriptComponent".into(), old_snapshot: snapshot });
                     dirty.set(true);
                     ui.close();
                 }

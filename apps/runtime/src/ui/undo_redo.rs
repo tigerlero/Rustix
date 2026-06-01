@@ -2,6 +2,7 @@ use rustix_core::ecs::{EcsWorld, Entity};
 use rustix_core::math::Vec3;
 use rustix_render::{DirectionalLight, PointLight, SpotLight};
 use rustix_audio::AudioSource;
+use rustix_scripting::ScriptComponent;
 
 use crate::scene::{Transform, Name, MeshComponent, Material};
 use crate::undo::{UndoHistory, EditorAction};
@@ -78,6 +79,11 @@ pub fn handle_undo_redo(
                 EditorAction::AudioSourceChanged { entity, old } => {
                     for (e, a) in world.query_mut::<(Entity, &mut AudioSource)>() {
                         if e == entity { *a = old; break; }
+                    }
+                }
+                EditorAction::ScriptComponentChanged { entity, old } => {
+                    for (e, s) in world.query_mut::<(Entity, &mut ScriptComponent)>() {
+                        if e == entity { *s = old.clone(); break; }
                     }
                 }
                 EditorAction::ComponentAdded { entity, old_snapshot, .. } => {
@@ -160,6 +166,11 @@ pub fn handle_undo_redo(
                         if e == entity { *a = old; break; }
                     }
                 }
+                EditorAction::ScriptComponentChanged { entity, old } => {
+                    for (e, s) in world.query_mut::<(Entity, &mut ScriptComponent)>() {
+                        if e == entity { *s = old.clone(); break; }
+                    }
+                }
                 EditorAction::ComponentAdded { entity, component, .. } => {
                     let comp = component.as_str();
                     if comp == "DirectionalLight" {
@@ -174,6 +185,8 @@ pub fn handle_undo_redo(
                         let _ = world.insert(entity, (MeshComponent("Cube".into()),));
                     } else if comp == "AudioSource" {
                         let _ = world.insert(entity, (default_audio_source(),));
+                    } else if comp == "ScriptComponent" {
+                        let _ = world.insert(entity, (ScriptComponent::default(),));
                     }
                 }
                 EditorAction::ComponentRemoved { entity, component, .. } => {
@@ -190,6 +203,8 @@ pub fn handle_undo_redo(
                         let _ = world.remove_one::<MeshComponent>(entity);
                     } else if comp == "AudioSource" {
                         let _ = world.remove_one::<AudioSource>(entity);
+                    } else if comp == "ScriptComponent" {
+                        let _ = world.remove_one::<ScriptComponent>(entity);
                     }
                 }
             }

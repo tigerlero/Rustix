@@ -1,6 +1,7 @@
 use rustix_core::ecs::EcsWorld;
 use rustix_core::math::{Vec3, Mat4, Quat, EulerRot};
 use rustix_render::{DirectionalLight, PointLight, SpotLight};
+use rustix_scripting::ScriptComponent;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Transform {
@@ -48,6 +49,8 @@ pub struct SceneEntity {
     #[serde(default)]
     pub material: Option<Material>,
     #[serde(default)]
+    pub script: Option<ScriptComponent>,
+    #[serde(default)]
     pub parent_idx: Option<usize>,
 }
 
@@ -81,6 +84,7 @@ pub fn entity_to_scene_entity(world: &EcsWorld, entity: hecs::Entity) -> SceneEn
     let dirlight = world.get::<&DirectionalLight>(entity).ok().map(|r| *r);
     let pointlight = world.get::<&PointLight>(entity).ok().map(|r| *r);
     let spotlight = world.get::<&SpotLight>(entity).ok().map(|r| *r);
+    let script = world.get::<&ScriptComponent>(entity).ok().map(|r| (*r).clone());
     SceneEntity {
         name,
         position: t.position.into(),
@@ -91,6 +95,7 @@ pub fn entity_to_scene_entity(world: &EcsWorld, entity: hecs::Entity) -> SceneEn
         pointlight,
         spotlight,
         material,
+        script,
         parent_idx: None,
     }
 }
@@ -119,6 +124,9 @@ pub fn spawn_entity(world: &mut EcsWorld, e: &SceneEntity) -> hecs::Entity {
     if let Some(ref sl) = e.spotlight {
         let _ = world.insert(entity, (*sl,));
     }
+    if let Some(ref sc) = e.script {
+        let _ = world.insert(entity, (sc.clone(),));
+    }
     entity
 }
 
@@ -134,6 +142,7 @@ pub fn world_to_scene(world: &EcsWorld) -> SceneData {
         let spotlight = world.get::<&SpotLight>(*entity).ok().map(|r| *r);
         let mesh = world.get::<&MeshComponent>(*entity).ok().map(|r| r.0.clone());
         let material = world.get::<&Material>(*entity).ok().map(|r| (*r).clone());
+        let script = world.get::<&ScriptComponent>(*entity).ok().map(|r| (*r).clone());
         let parent_idx = world.get::<&Parent>(*entity).ok()
             .and_then(|p| p.0.and_then(|pe| entity_to_idx.get(&pe).copied()));
         entities.push(SceneEntity {
@@ -146,6 +155,7 @@ pub fn world_to_scene(world: &EcsWorld) -> SceneData {
             pointlight,
             spotlight,
             material,
+            script,
             parent_idx,
         });
     }
@@ -179,6 +189,9 @@ pub fn scene_to_world(world: &mut EcsWorld, data: &SceneData) {
         }
         if let Some(ref sl) = e.spotlight {
             let _ = world.insert(entity, (*sl,));
+        }
+        if let Some(ref sc) = e.script {
+            let _ = world.insert(entity, (sc.clone(),));
         }
         idx_to_entity.push(entity);
     }

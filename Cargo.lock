@@ -3503,6 +3503,7 @@ dependencies = [
  "rustix-physics",
  "rustix-platform",
  "rustix-render",
+ "rustix-scripting",
  "rustix-terrain",
  "rustix-ui",
  "rustix-world",

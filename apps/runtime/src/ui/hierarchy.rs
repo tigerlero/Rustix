@@ -28,7 +28,8 @@ pub fn show_hierarchy(
                     }
                 }
                 if ui.button("Duplicate").clicked() {
-                    if let Some(sel) = *selected_entity.borrow() {
+                    let sel = *selected_entity.borrow();
+                    if let Some(sel) = sel {
                         let name = world.get::<&Name>(sel).ok().map(|n| n.0.clone()).unwrap_or_default();
                         let transform = world.get::<&Transform>(sel).ok().map(|r| (*r).clone()).unwrap_or_default();
                         let mesh = world.get::<&MeshComponent>(sel).ok().map(|r| (*r).clone());

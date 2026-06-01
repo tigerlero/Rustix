@@ -118,36 +118,7 @@ vec3 blinn_phong(vec3 N, vec3 L, vec3 V, vec3 light_color, vec3 base, float roug
 }
 
 void main() {
-    vec3 N = normalize(fragNormal);
-    vec3 V = normalize(ubo.cam_pos.xyz - fragWorldPos);
-    vec3 base = pc.base_color.rgb;
-    float roughness = pc.base_color.a;
-    float metallic = pc.material.x;
-
-    vec3 Ld = normalize(-pc.dir_light.xyz);
-    vec3 color = blinn_phong(N, Ld, V, pc.dir_color.rgb, base, roughness, metallic);
-
-    for (uint i = 0u; i < ubo.light_count && i < 8u; i++) {
-        vec3 to_light = ubo.lights[i].position.xyz - fragWorldPos;
-        float dist = length(to_light);
-        float radius = ubo.lights[i].position.w;
-        if (dist < radius) {
-            vec3 L = to_light / dist;
-            float atten = 1.0 / (1.0 + 0.1 * dist + 0.01 * dist * dist);
-            float falloff = 1.0 - smoothstep(0.7 * radius, radius, dist);
-            color += blinn_phong(N, L, V, ubo.lights[i].color.rgb * atten * falloff, base, roughness, metallic);
-        }
-    }
-
-    float sky_factor = max(N.y, 0.0) * 0.4 + 0.05;
-    vec3 sky_ambient = mix(vec3(0.02, 0.03, 0.06), vec3(0.15, 0.22, 0.40), sky_factor);
-    float ambient = pc.dir_light.w;
-    outColor.rgb = ambient * base * sky_ambient + color;
-
-    float fog_dist = length(fragWorldPos - ubo.cam_pos.xyz);
-    float fog_factor = clamp(fog_dist / max(ubo.fog.a, 0.1), 0.0, 1.0);
-    outColor.rgb = mix(outColor.rgb, ubo.fog.rgb, fog_factor);
-    outColor.a = 1.0;
+    outColor = vec4(pc.base_color.rgb, 1.0);
 }
 "#;
 

@@ -21,6 +21,7 @@ rustix-ui = { path = "../../crates/ui" }
 rustix-audio = { path = "../../crates/audio" }
 rustix-animation = { path = "../../crates/animation" }
 rustix-physics = { path = "../../crates/physics" }
+rustix-scripting = { path = "../../crates/scripting" }
 rustix-terrain = { path = "../../crates/terrain" }
 rustix-world = { path = "../../crates/world" }
 gltf = { workspace = true }
