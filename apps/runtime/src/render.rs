@@ -46,11 +46,29 @@ pub fn render_3d_scene(
     meshes: &HashMap<String, Mesh>,
     ecs_world: &EcsWorld,
     cam: &EditorCamera,
+    offscreen: Option<&rustix_render::Framebuffer>,
 ) {
-    let aspect = {
+    let (aspect, target_extent, color_image, color_view, fb_depth) = if let Some(fb) = offscreen {
+        let ext = fb.extent;
+        (
+            ext.width as f32 / ext.height as f32,
+            Some(ext),
+            Some(fb.color_image),
+            Some(fb.color_view),
+            Some(&fb.depth_buffer),
+        )
+    } else {
         let sw = renderer.swapchain.lock();
-        sw.extent().width as f32 / sw.extent().height as f32
+        let ext = sw.extent();
+        (
+            ext.width as f32 / ext.height as f32,
+            None,
+            None,
+            None,
+            None,
+        )
     };
+    let depth_buf = fb_depth.unwrap_or(depth_buf);
     let view_proj = cam.view_proj(aspect);
     let eye = cam.eye_pos();
 
@@ -134,7 +152,13 @@ pub fn render_3d_scene(
     }
 
     let clear_color = [0.04, 0.04, 0.08, 1.0f32];
-    renderer.begin_scene_pass(cmd, depth_buf, clear_color);
+    if let (Some(ext), Some(ci), Some(cv)) = (target_extent, color_image, color_view) {
+        tracing::trace!("render_3d_scene: using offscreen pass {}x{}", ext.width, ext.height);
+        renderer.begin_scene_pass_offscreen(cmd, ci, cv, depth_buf, ext, clear_color);
+    } else {
+        tracing::trace!("render_3d_scene: using swapchain pass");
+        renderer.begin_scene_pass(cmd, depth_buf, clear_color);
+    }
 
     let frustum = Frustum::from_view_proj(&view_proj);
 
@@ -167,7 +191,11 @@ pub fn render_3d_scene(
         }
     }
 
-    renderer.end_scene_pass(cmd);
+    if let Some(ci) = color_image {
+        renderer.end_scene_pass_offscreen(cmd, ci);
+    } else {
+        renderer.end_scene_pass(cmd);
+    }
 }
 
 pub fn render_2d_overlay(

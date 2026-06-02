@@ -9,8 +9,10 @@ pub struct EguiVulkanRenderer {
     device: *const ash::Device,
     pipeline: vk::Pipeline,
     pipeline_layout: vk::PipelineLayout,
-    descriptor_set: vk::DescriptorSet,
-    descriptor_pool: vk::DescriptorPool,
+    
+    descriptor_pools: [std::sync::Mutex<vk::DescriptorPool>; 3],
+    last_frame_index: Cell<usize>,
+    bound_descriptor_set: Cell<vk::DescriptorSet>,
     descriptor_set_layout: vk::DescriptorSetLayout,
     font_texture: Option<rustix_render::GpuTexture>,
     font_texture_size: (u32, u32),
@@ -24,6 +26,8 @@ pub struct EguiVulkanRenderer {
     old_font_textures: Vec<rustix_render::GpuTexture>,
     // Map of all active egui textures (including font atlas) by TextureId.
     textures: HashMap<egui::TextureId, rustix_render::GpuTexture>,
+    // User-managed textures (image view + sampler) that outlive this renderer.
+    user_textures: HashMap<egui::TextureId, (vk::ImageView, vk::Sampler)>,
     // Cache of currently bound texture id to avoid redundant descriptor writes.
     bound_texture: Cell<Option<egui::TextureId>>,
 }
@@ -66,20 +70,17 @@ impl EguiVulkanRenderer {
         };
 
         let pool_sizes = [
-            vk::DescriptorPoolSize { ty: vk::DescriptorType::SAMPLED_IMAGE, descriptor_count: 1 },
-            vk::DescriptorPoolSize { ty: vk::DescriptorType::SAMPLER, descriptor_count: 1 },
+            vk::DescriptorPoolSize { ty: vk::DescriptorType::SAMPLED_IMAGE, descriptor_count: 1000 },
+            vk::DescriptorPoolSize { ty: vk::DescriptorType::SAMPLER, descriptor_count: 1000 },
         ];
-        let desc_pool = unsafe {
-            device.logical().create_descriptor_pool(&vk::DescriptorPoolCreateInfo::default()
-                .pool_sizes(&pool_sizes).max_sets(1), None,
-            ).map_err(|e| RenderError::PipelineCreation(format!("dp: {e}")))?
-        };
-        let desc_set = unsafe {
-            let mut sets = device.logical().allocate_descriptor_sets(
-                &vk::DescriptorSetAllocateInfo::default().descriptor_pool(desc_pool).set_layouts(&[desc_layout]),
-            ).map_err(|e| RenderError::PipelineCreation(format!("ds: {e}")))?;
-            sets.remove(0)
-        };
+        let desc_pools = std::array::from_fn(|_| {
+            let pool = unsafe {
+                device.logical().create_descriptor_pool(&vk::DescriptorPoolCreateInfo::default()
+                    .pool_sizes(&pool_sizes).max_sets(1000), None,
+                ).unwrap()
+            };
+            std::sync::Mutex::new(pool)
+        });
 
         let vs = rustix_render::shader::ShaderModule::from_glsl(device.logical(), r"#version 460
 layout(push_constant) uniform PC { vec2 screen_size; } pc;
@@ -135,21 +136,9 @@ fn main(@location(0) uv: vec2<f32>, @location(1) color: vec4<f32>) -> @location(
         let vb=renderer.create_buffer("egui_vb", 4*1024*1024 * 3, vk::BufferUsageFlags::VERTEX_BUFFER, MemoryLocation::CpuToGpu)?;
         let ib=renderer.create_buffer("egui_ib", 4*1024*1024 * 3, vk::BufferUsageFlags::INDEX_BUFFER, MemoryLocation::CpuToGpu)?;
 
-        // Initial descriptor writes (placeholder texture + sampler)
-        let img_info=[vk::DescriptorImageInfo::default()
-            .image_view(font_texture.view).image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
-        let samp_info=[vk::DescriptorImageInfo::default().sampler(sampler)];
-        let writes = [
-            vk::WriteDescriptorSet::default().dst_set(desc_set).dst_binding(0)
-                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE).image_info(&img_info),
-            vk::WriteDescriptorSet::default().dst_set(desc_set).dst_binding(1)
-                .descriptor_type(vk::DescriptorType::SAMPLER).image_info(&samp_info),
-        ];
-        unsafe{device.logical().update_descriptor_sets(&writes,&[]);}
-
         tracing::info!("egui renderer ready (WGSL separate texture+sampler)");
 
-        Ok(Self{device:device.logical() as *const ash::Device,pipeline,pipeline_layout,descriptor_set:desc_set,descriptor_pool:desc_pool,descriptor_set_layout:desc_layout,font_texture:Some(font_texture),font_texture_size:(1,1),sampler,vertex_buffer:vb,index_buffer:ib,old_font_textures:Vec::new(),textures:HashMap::new(),bound_texture:Cell::new(None)})
+        Ok(Self{device:device.logical() as *const ash::Device,pipeline,pipeline_layout,descriptor_pools:desc_pools,last_frame_index:Cell::new(usize::MAX),bound_descriptor_set:Cell::new(vk::DescriptorSet::null()),descriptor_set_layout:desc_layout,font_texture:Some(font_texture),font_texture_size:(1,1),sampler,vertex_buffer:vb,index_buffer:ib,old_font_textures:Vec::new(),textures:HashMap::new(),user_textures:HashMap::new(),bound_texture:Cell::new(None)})
     }
 
     pub fn update_textures(&mut self, renderer: &Renderer, delta: &egui::TexturesDelta) {
@@ -209,11 +198,34 @@ fn main(@location(0) uv: vec2<f32>, @location(1) color: vec4<f32>) -> @location(
         }
     }
 
+    pub fn sampler(&self) -> vk::Sampler { self.sampler }
+
+    pub fn register_user_texture(&mut self, id: egui::TextureId, image_view: vk::ImageView, sampler: vk::Sampler) {
+        tracing::trace!("register_user_texture: id={:?}, view={:?}, sampler={:?}", id, image_view, sampler);
+        self.user_textures.insert(id, (image_view, sampler));
+        // Force rebind if this id was previously bound with a different view
+        if self.bound_texture.get() == Some(id) {
+            tracing::trace!("register_user_texture: clearing bound_texture cache for {:?}", id);
+            self.bound_texture.set(None);
+        }
+    }
+
     pub fn draw_primitives(&self, cmd: vk::CommandBuffer, renderer: &Renderer, primitives: &[egui::ClippedPrimitive], pixels_per_point: f32, frame_index: usize) {
         if primitives.is_empty() { return; }
         if self.font_texture.is_none() {
             tracing::warn!("draw_primitives: no font atlas texture bound, skipping");
             return;
+        }
+
+        if self.last_frame_index.get() != frame_index {
+            self.last_frame_index.set(frame_index);
+            let slot = frame_index % 3;
+            let pool = *self.descriptor_pools[slot].lock().unwrap();
+            unsafe {
+                renderer.device().logical().reset_descriptor_pool(pool, vk::DescriptorPoolResetFlags::empty()).unwrap();
+            }
+            self.bound_texture.set(None);
+            self.bound_descriptor_set.set(vk::DescriptorSet::null());
         }
 
         let sw = renderer.swapchain.lock();
@@ -241,7 +253,7 @@ fn main(@location(0) uv: vec2<f32>, @location(1) color: vec4<f32>) -> @location(
             dr.cmd_begin_rendering(cmd,&ri);
             renderer.device().logical().cmd_set_viewport(cmd,0,&[vk::Viewport{x:0.0,y:phys_h,width:phys_w,height:-(phys_h),min_depth:0.0,max_depth:1.0}]);
             renderer.device().logical().cmd_bind_pipeline(cmd,vk::PipelineBindPoint::GRAPHICS,self.pipeline);
-            renderer.device().logical().cmd_bind_descriptor_sets(cmd,vk::PipelineBindPoint::GRAPHICS,self.pipeline_layout,0,&[self.descriptor_set],&[]);
+            
             renderer.device().logical().cmd_push_constants(cmd,self.pipeline_layout,vk::ShaderStageFlags::VERTEX,0,bytemuck::bytes_of(&s));
         }
 
@@ -259,15 +271,50 @@ fn main(@location(0) uv: vec2<f32>, @location(1) color: vec4<f32>) -> @location(
                 // Bind the texture for this mesh if we have it; otherwise fall back to the font texture
                 let wanted_id = Some(mesh.texture_id);
                 if self.bound_texture.get() != wanted_id {
-                    let tex_to_bind = self.textures.get(&mesh.texture_id).or_else(|| self.font_texture.as_ref());
-                    if let Some(t) = tex_to_bind {
+                    let view = if let Some(t) = self.textures.get(&mesh.texture_id) {
+                        tracing::trace!("draw_primitives: binding managed texture {:?} view={:?}", mesh.texture_id, t.view);
+                        Some(t.view)
+                    } else if let Some(&(v, _s)) = self.user_textures.get(&mesh.texture_id) {
+                        tracing::trace!("draw_primitives: binding user texture {:?} view={:?}", mesh.texture_id, v);
+                        Some(v)
+                    } else if let Some(ref t) = self.font_texture {
+                        tracing::trace!("draw_primitives: FALLBACK to font atlas for {:?}", mesh.texture_id);
+                        Some(t.view)
+                    } else {
+                        tracing::warn!("draw_primitives: no texture found for {:?}", mesh.texture_id);
+                        None
+                    };
+                    if let Some(v) = view {
+                        let slot = frame_index % 3;
+                        let pool = *self.descriptor_pools[slot].lock().unwrap();
+                        let desc_set = unsafe {
+                            let mut sets = renderer.device().logical().allocate_descriptor_sets(
+                                &vk::DescriptorSetAllocateInfo::default().descriptor_pool(pool).set_layouts(&[self.descriptor_set_layout]),
+                            ).unwrap();
+                            sets.remove(0)
+                        };
+
                         let img_info = [vk::DescriptorImageInfo::default()
-                            .image_view(t.view).image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
-                        let writes = [vk::WriteDescriptorSet::default()
-                            .dst_set(self.descriptor_set).dst_binding(0)
-                            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE).image_info(&img_info)];
+                            .image_view(v).image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+                        let samp_info=[vk::DescriptorImageInfo::default().sampler(self.sampler)];
+                        let writes = [
+                            vk::WriteDescriptorSet::default()
+                                .dst_set(desc_set).dst_binding(0)
+                                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE).image_info(&img_info),
+                            vk::WriteDescriptorSet::default().dst_set(desc_set).dst_binding(1)
+                                .descriptor_type(vk::DescriptorType::SAMPLER).image_info(&samp_info),
+                        ];
                         unsafe { renderer.device().logical().update_descriptor_sets(&writes, &[]); }
+                        
                         self.bound_texture.set(wanted_id);
+                        self.bound_descriptor_set.set(desc_set);
+
+                        unsafe {
+                            renderer.device().logical().cmd_bind_descriptor_sets(
+                                cmd, vk::PipelineBindPoint::GRAPHICS, self.pipeline_layout,
+                                0, &[desc_set], &[]
+                            );
+                        }
                     }
                 }
 
@@ -328,8 +375,11 @@ impl Drop for EguiVulkanRenderer {
                 if !self.descriptor_set_layout.is_null() {
                     dev.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
                 }
-                if !self.descriptor_pool.is_null() {
-                    dev.destroy_descriptor_pool(self.descriptor_pool, None);
+                for pool in &self.descriptor_pools {
+                    let p = *pool.lock().unwrap();
+                    if !p.is_null() {
+                        dev.destroy_descriptor_pool(p, None);
+                    }
                 }
                 if !self.sampler.is_null() {
                     dev.destroy_sampler(self.sampler, None);

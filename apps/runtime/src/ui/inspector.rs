@@ -50,10 +50,20 @@ fn color_picker_button(ui: &mut egui::Ui, rgb: &mut [u8; 3], popup_id: egui::Id)
 
     egui::Popup::from_toggle_button_response(&response)
         .id(popup_id)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
         .show(|ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_min_width(250.0);
+                // Header row with X button
+                ui.horizontal(|ui| {
+                    ui.label("Color");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("✕").clicked() {
+                            ui.ctx().memory_mut(|mem| mem.close_popup(popup_id));
+                        }
+                    });
+                });
+                ui.separator();
                 // Use the HSVA 2-D picker so no R/G/B text appears inside the popup.
                 let mut hsva = egui::epaint::Hsva::from(color);
                 color_picker_hsva_2d(ui, &mut hsva, Alpha::Opaque);

@@ -100,7 +100,7 @@ Binary entry point with egui-based editor overlay:
 - [x] Gizmos (translate handles for X/Y/Z axes)
 - [x] Per-entity mesh rendering (mesh registry, GLB import, procedural presets)
 - [x] 3D scene grid overlay with entity position dots in scene view
-- [ ] Offscreen 3D scene rendering in scene view panel
+- [x] Offscreen 3D scene rendering in scene view panel
 
 ---
 

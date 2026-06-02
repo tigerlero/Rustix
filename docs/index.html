@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rustix Engine — A Modern Game Engine in Rust</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0b0c10;
+            --bg-elev: #121418;
+            --bg-card: #1a1d23;
+            --border: #2a2f38;
+            --text: #c9d1d9;
+            --text-dim: #8b949e;
+            --text-heading: #f0f6fc;
+            --accent: #e67e22;
+            --accent-hover: #d35400;
+            --accent-glow: rgba(230, 126, 34, 0.25);
+            --success: #2ecc71;
+            --code-bg: #0d1117;
+            --radius: 12px;
+            --radius-sm: 8px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html { scroll-behavior: smooth; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        a { color: var(--accent); text-decoration: none; transition: opacity 0.2s; }
+        a:hover { opacity: 0.85; }
+
+        /* Navigation */
+        nav {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            z-index: 100;
+            background: rgba(11, 12, 16, 0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+        }
+        .nav-inner {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+            height: 64px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .logo {
+            font-weight: 800;
+            font-size: 1.4rem;
+            color: var(--text-heading);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .logo-icon {
+            width: 32px; height: 32px;
+            background: var(--accent);
+            border-radius: var(--radius-sm);
+            display: grid;
+            place-items: center;
+            color: #fff;
+            font-size: 0.9rem;
+        }
+        .nav-links {
+            display: flex;
+            gap: 32px;
+            align-items: center;
+        }
+        .nav-links a {
+            color: var(--text-dim);
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+        .nav-links a:hover { color: var(--text-heading); }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 22px;
+            border-radius: var(--radius-sm);
+            font-weight: 600;
+            font-size: 0.9rem;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: var(--accent);
+            color: #fff;
+            box-shadow: 0 0 0 0 var(--accent-glow);
+        }
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            box-shadow: 0 0 0 4px var(--accent-glow);
+            opacity: 1;
+        }
+        .btn-secondary {
+            background: transparent;
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        .btn-secondary:hover {
+            background: var(--bg-card);
+            border-color: var(--text-dim);
+            opacity: 1;
+        }
+
+        /* Hero */
+        .hero {
+            padding: 160px 24px 100px;
+            text-align: center;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            margin-bottom: 28px;
+        }
+        .badge-dot {
+            width: 8px; height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            box-shadow: 0 0 8px var(--success);
+        }
+        .hero h1 {
+            font-size: clamp(2.5rem, 6vw, 4.5rem);
+            font-weight: 800;
+            color: var(--text-heading);
+            line-height: 1.1;
+            letter-spacing: -0.03em;
+            margin-bottom: 20px;
+        }
+        .hero h1 span { color: var(--accent); }
+        .hero p {
+            font-size: 1.15rem;
+            color: var(--text-dim);
+            max-width: 620px;
+            margin: 0 auto 40px;
+        }
+        .hero-actions {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        /* Terminal */
+        .terminal {
+            max-width: 720px;
+            margin: 40px auto 0;
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+            text-align: left;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+        }
+        .terminal-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            background: rgba(255,255,255,0.02);
+        }
+        .term-btn {
+            width: 12px; height: 12px;
+            border-radius: 50%;
+        }
+        .term-btn.r { background: #ff5f56; }
+        .term-btn.y { background: #ffbd2e; }
+        .term-btn.g { background: #27c93f; }
+        .terminal-body {
+            padding: 20px 24px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            line-height: 1.7;
+            color: var(--text-dim);
+        }
+        .terminal-body .prompt { color: var(--accent); }
+        .terminal-body .cmd { color: var(--text-heading); }
+        .terminal-body .comment { color: #6e7681; }
+
+        /* Section layout */
+        .section {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 100px 24px;
+        }
+        .section-header {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+        .section-header h2 {
+            font-size: 2.2rem;
+            font-weight: 800;
+            color: var(--text-heading);
+            margin-bottom: 12px;
+        }
+        .section-header p {
+            color: var(--text-dim);
+            max-width: 560px;
+            margin: 0 auto;
+        }
+
+        /* Features */
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+        }
+        .feature {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 28px;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        .feature:hover {
+            transform: translateY(-2px);
+            border-color: var(--accent);
+        }
+        .feature-icon {
+            width: 40px; height: 40px;
+            border-radius: var(--radius-sm);
+            background: var(--bg-elev);
+            border: 1px solid var(--border);
+            display: grid;
+            place-items: center;
+            margin-bottom: 16px;
+            font-size: 1.1rem;
+        }
+        .feature h3 {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: var(--text-heading);
+            margin-bottom: 8px;
+        }
+        .feature p {
+            font-size: 0.9rem;
+            color: var(--text-dim);
+            line-height: 1.55;
+        }
+
+        /* Try It / Install */
+        .install-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+            align-items: start;
+        }
+        @media (max-width: 800px) { .install-grid { grid-template-columns: 1fr; } }
+        .install-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 32px;
+        }
+        .install-card h3 {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--text-heading);
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .code-block {
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 16px 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.82rem;
+            color: var(--text);
+            overflow-x: auto;
+            margin-bottom: 16px;
+        }
+        .req-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .req-list li {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.9rem;
+            color: var(--text-dim);
+        }
+        .req-list li::before {
+            content: "✓";
+            color: var(--success);
+            font-weight: 700;
+            width: 20px;
+        }
+
+        /* Contribute */
+        .contribute {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 60px 48px;
+            text-align: center;
+        }
+        .contribute h2 {
+            font-size: 2rem;
+            font-weight: 800;
+            color: var(--text-heading);
+            margin-bottom: 16px;
+        }
+        .contribute p {
+            color: var(--text-dim);
+            max-width: 560px;
+            margin: 0 auto 32px;
+        }
+        .contrib-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            max-width: 800px;
+            margin: 0 auto;
+            text-align: left;
+        }
+        .contrib-item {
+            background: var(--bg-elev);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 20px;
+        }
+        .contrib-item h4 {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: var(--text-heading);
+            margin-bottom: 6px;
+        }
+        .contrib-item p {
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            margin: 0;
+        }
+
+        /* Footer */
+        footer {
+            border-top: 1px solid var(--border);
+            padding: 40px 24px;
+            text-align: center;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+        }
+        footer a { color: var(--text-dim); }
+        footer a:hover { color: var(--text-heading); }
+
+        /* Mobile */
+        @media (max-width: 600px) {
+            .nav-links { display: none; }
+            .hero { padding: 120px 20px 60px; }
+            .section { padding: 60px 20px; }
+            .contribute { padding: 40px 24px; }
+        }
+    </style>
+</head>
+<body>
+
+    <nav>
+        <div class="nav-inner">
+            <div class="logo">
+                <div class="logo-icon">R</div>
+                Rustix
+            </div>
+            <div class="nav-links">
+                <a href="#features">Features</a>
+                <a href="#try">Try It</a>
+                <a href="#contribute">Contribute</a>
+                <a href="https://github.com/tigerlero/Rustix" target="_blank" class="btn btn-primary">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+                    GitHub
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <div class="badge">
+            <span class="badge-dot"></span>
+            Under active development
+        </div>
+        <h1>A modern game engine <br>built in <span>Rust</span></h1>
+        <p>
+            Rustix is a high-performance, Vulkan-powered game engine and editor for Linux.
+            Designed for developers who want control, speed, and a clean architecture.
+        </p>
+        <div class="hero-actions">
+            <a href="#try" class="btn btn-primary">Get Started</a>
+            <a href="https://github.com/tigerlero/Rustix" target="_blank" class="btn btn-secondary">View on GitHub</a>
+        </div>
+
+        <div class="terminal">
+            <div class="terminal-header">
+                <span class="term-btn r"></span>
+                <span class="term-btn y"></span>
+                <span class="term-btn g"></span>
+            </div>
+            <div class="terminal-body">
+                <div><span class="prompt">$</span> <span class="cmd">git clone https://github.com/tigerlero/Rustix.git</span></div>
+                <div><span class="prompt">$</span> <span class="cmd">cd Rustix</span></div>
+                <div><span class="prompt">$</span> <span class="cmd">cargo run -p rustix-runtime</span> <span class="comment"># Launch the editor</span></div>
+            </div>
+        </div>
+    </section>
+
+    <section class="section" id="features">
+        <div class="section-header">
+            <h2>Built for Serious Development</h2>
+            <p>A modular engine with an editor-first workflow, real-time rendering, and an ECS core designed to scale.</p>
+        </div>
+        <div class="features">
+            <div class="feature">
+                <div class="feature-icon">⚡</div>
+                <h3>Vulkan 1.3 Renderer</h3>
+                <p>Dynamic rendering with gpu-allocator, descriptor sets, push constants, and a staging buffer ring for async uploads.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🧩</div>
+                <h3>Archetypal ECS</h3>
+                <p>hecs-powered ECS with query filters, a component registry, dynamic bundles, and deferred command buffers.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🛠️</div>
+                <h3>Integrated Editor</h3>
+                <p>Edit scenes, place entities, adjust transforms, and manage projects — all inside the runtime with an egui interface.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🔺</div>
+                <h3>Procedural Geometry</h3>
+                <p>Built-in generators for cubes, spheres, toruses, icospheres, capsules, and terrain — ready to render immediately.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">💡</div>
+                <h3>Lighting & Shadows</h3>
+                <p>Directional, point, and spot lights with shadow map support and a configurable clear-color pipeline.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🦀</div>
+                <h3>Pure Rust Stack</h3>
+                <p>No C++ glue. From windowing to GPU commands, everything is Rust — with full cargo check and cargo test coverage.</p>
+            </div>
+        </div>
+    </section>
+
+    <section class="section" id="try">
+        <div class="section-header">
+            <h2>Try It in Minutes</h2>
+            <p>Clone, build, and run. The editor launches out of the box on Linux with a Vulkan-capable GPU.</p>
+        </div>
+        <div class="install-grid">
+            <div class="install-card">
+                <h3>⚡ Quick Start</h3>
+                <div class="code-block">cargo run -p rustix-runtime</div>
+                <p style="color: var(--text-dim); font-size: 0.9rem; margin-bottom: 16px;">
+                    That's it. The editor opens with a default scene, project management, and a full inspector panel.
+                </p>
+                <a href="https://github.com/tigerlero/Rustix#readme" target="_blank" class="btn btn-secondary" style="width: 100%; justify-content: center;">Read Full Setup Guide</a>
+            </div>
+            <div class="install-card">
+                <h3>📋 Requirements</h3>
+                <ul class="req-list">
+                    <li>Rust 1.95+ stable</li>
+                    <li>Vulkan 1.3 capable GPU</li>
+                    <li>Linux (Wayland / X11)</li>
+                    <li>Vulkan drivers installed</li>
+                </ul>
+            </div>
+        </div>
+    </section>
+
+    <section class="section" id="contribute">
+        <div class="contribute">
+            <h2>Join the Build</h2>
+            <p>
+                Rustix is an open, community-driven engine. Whether you want to hack on the renderer,
+                improve the editor, or write documentation, there's a place for you.
+            </p>
+            <div class="contrib-grid">
+                <div class="contrib-item">
+                    <h4>🎨 Renderer</h4>
+                    <p>Vulkan pipelines, shaders, and GPU optimization.</p>
+                </div>
+                <div class="contrib-item">
+                    <h4>🧠 ECS & Core</h4>
+                    <p>Systems, job scheduling, memory management.</p>
+                </div>
+                <div class="contrib-item">
+                    <h4>🖥️ Editor UI</h4>
+                    <p>egui panels, viewport, inspectors, and UX.</p>
+                </div>
+                <div class="contrib-item">
+                    <h4>📚 Docs</h4>
+                    <p>Architecture guides, examples, and tutorials.</p>
+                </div>
+            </div>
+            <div style="margin-top: 32px;">
+                <a href="https://github.com/tigerlero/Rustix/issues" target="_blank" class="btn btn-primary">Browse Open Issues</a>
+                <a href="https://github.com/tigerlero/Rustix/blob/main/docs/ARCHITECTURE.md" target="_blank" class="btn btn-secondary" style="margin-left: 12px;">Read Architecture</a>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <p>
+            Released under the MIT License —
+            <a href="https://github.com/tigerlero/Rustix" target="_blank">GitHub</a> ·
+            <a href="ARCHITECTURE.md">Architecture</a> ·
+            <a href="ROADMAP.md">Roadmap</a>
+        </p>
+        <p style="margin-top: 8px; opacity: 0.6;">Built with Rust, Vulkan, and caffeine.</p>
+    </footer>
+
+</body>
+</html>

@@ -113,6 +113,61 @@ impl super::Renderer {
         }
     }
 
+    pub fn begin_scene_pass_offscreen(&self, cmd: vk::CommandBuffer, color_image: vk::Image, color_view: vk::ImageView, depth_buffer: &DepthBuffer, extent: vk::Extent2D, clear_color: [f32; 4]) {
+        // Color: transition from UNDEFINED — valid for newly-created images and harmless for
+        // images that were previously SHADER_READ_ONLY_OPTIMAL (we clear anyway).
+        let color_barrier = vk::ImageMemoryBarrier::default()
+            .image(color_image)
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .src_access_mask(vk::AccessFlags::empty())
+            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+            .subresource_range(vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0, level_count: 1,
+                base_array_layer: 0, layer_count: 1,
+            });
+        // Depth: transition from UNDEFINED to DEPTH_STENCIL_ATTACHMENT_OPTIMAL.
+        let depth_barrier = vk::ImageMemoryBarrier::default()
+            .image(depth_buffer.image)
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            .src_access_mask(vk::AccessFlags::empty())
+            .dst_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+            .subresource_range(vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::DEPTH,
+                base_mip_level: 0, level_count: 1,
+                base_array_layer: 0, layer_count: 1,
+            });
+        unsafe {
+            self.device.logical().cmd_pipeline_barrier(
+                cmd,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                vk::DependencyFlags::empty(),
+                &[], &[],
+                &[color_barrier, depth_barrier],
+            );
+        }
+        let ca = vk::RenderingAttachmentInfoKHR::default()
+            .image_view(color_view).image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR).store_op(vk::AttachmentStoreOp::STORE)
+            .clear_value(vk::ClearValue { color: vk::ClearColorValue { float32: clear_color } });
+        let da = vk::RenderingAttachmentInfoKHR::default()
+            .image_view(depth_buffer.view).image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR).store_op(vk::AttachmentStoreOp::STORE)
+            .clear_value(vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } });
+        let cas = [ca];
+        let ri = vk::RenderingInfoKHR::default()
+            .render_area(vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent }).layer_count(1).color_attachments(&cas).depth_attachment(&da);
+        unsafe {
+            let dr = ash::khr::dynamic_rendering::Device::new(&self.instance.inner(), &self.device.logical());
+            dr.cmd_begin_rendering(cmd, &ri);
+            self.device.logical().cmd_set_viewport(cmd, 0, &[vk::Viewport { x: 0.0, y: extent.height as f32, width: extent.width as f32, height: -(extent.height as f32), min_depth: 0.0, max_depth: 1.0 }]);
+            self.device.logical().cmd_set_scissor(cmd, 0, &[vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent }]);
+        }
+    }
+
     pub fn draw_indexed_in_pass(
         &self, cmd: vk::CommandBuffer,
         pipeline: &pipeline::GraphicsPipeline,
@@ -137,6 +192,32 @@ impl super::Renderer {
         unsafe {
             let dr = ash::khr::dynamic_rendering::Device::new(&self.instance.inner(), &self.device.logical());
             dr.cmd_end_rendering(cmd);
+        }
+    }
+
+    pub fn end_scene_pass_offscreen(&self, cmd: vk::CommandBuffer, color_image: vk::Image) {
+        unsafe {
+            let dr = ash::khr::dynamic_rendering::Device::new(&self.instance.inner(), &self.device.logical());
+            dr.cmd_end_rendering(cmd);
+            let barrier = vk::ImageMemoryBarrier::default()
+                .image(color_image)
+                .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+                .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0, level_count: 1,
+                    base_array_layer: 0, layer_count: 1,
+                });
+            self.device.logical().cmd_pipeline_barrier(
+                cmd,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::DependencyFlags::empty(),
+                &[], &[],
+                &[barrier],
+            );
         }
     }
 

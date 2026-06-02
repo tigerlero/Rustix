@@ -8,6 +8,8 @@ use crate::camera::EditorCamera;
 use crate::scene::{Transform, Name, MeshComponent, Material, world_transform};
 use crate::undo::{UndoHistory, EditorAction};
 
+pub const VIEWPORT_TEXTURE_ID: egui::TextureId = egui::TextureId::User(0);
+
 pub fn show_viewport(
     ctx: &egui::Context,
     cam: &mut EditorCamera,
@@ -20,20 +22,35 @@ pub fn show_viewport(
     frame.fill = egui::Color32::TRANSPARENT;
     egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
         let rect = ui.max_rect();
-        let screen_rect = ctx.screen_rect();
 
         let mut clicked_entity = None;
 
-        // The 3D scene is rendered to the full window, so projection must match the window aspect.
-        let aspect = screen_rect.width() / screen_rect.height().max(1.0);
+        // Store viewport rect for next frame's offscreen render sizing
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new("viewport_rect"), rect));
+
+        // Display the offscreen-rendered 3D scene as an image filling the panel
+        let has_offscreen = ctx.data(|d| d.get_temp::<bool>(egui::Id::new("viewport_offscreen_valid")).unwrap_or(false));
+        tracing::trace!("show_viewport: has_offscreen={} rect={:?}", has_offscreen, rect);
+        if has_offscreen {
+            let tex_id = VIEWPORT_TEXTURE_ID;
+            let size = rect.size();
+            if size.x > 0.0 && size.y > 0.0 {
+                let image_rect = egui::Rect::from_min_size(rect.min, size);
+                ui.painter().image(tex_id, image_rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+                tracing::trace!("show_viewport: drew image with tex_id={:?} size={:?}", tex_id, size);
+            }
+        }
+
+        // Use panel rect for projection (aspect ratio matches offscreen framebuffer)
+        let aspect = rect.width() / rect.height().max(1.0);
         let vp = cam.view_proj(aspect);
 
         let world_to_screen = |wpos: Vec3| -> Option<egui::Pos2> {
             let clip = vp * Vec4::new(wpos.x, wpos.y, wpos.z, 1.0);
             if clip.w <= 0.0 { return None; }
             let ndc = clip.truncate() / clip.w;
-            let x = screen_rect.min.x + (ndc.x * 0.5 + 0.5) * screen_rect.width();
-            let y = screen_rect.min.y + (1.0 - (ndc.y * 0.5 + 0.5)) * screen_rect.height();
+            let x = rect.min.x + (ndc.x * 0.5 + 0.5) * rect.width();
+            let y = rect.min.y + (1.0 - (ndc.y * 0.5 + 0.5)) * rect.height();
             Some(egui::pos2(x, y))
         };
         
@@ -157,7 +174,7 @@ pub fn show_viewport(
 
                 // Approximate screen-space radius from object scale and camera distance.
                 let avg_scale = (transform.scale.x + transform.scale.y + transform.scale.z) / 3.0;
-                let pick_radius = ((avg_scale / _dist.max(0.001)) * screen_rect.height() * 0.5).max(12.0).min(120.0);
+                let pick_radius = ((avg_scale / _dist.max(0.001)) * rect.height() * 0.5).max(12.0).min(120.0);
 
                 let ent_hit_rect = egui::Rect::from_center_size(screen_pos, egui::vec2(pick_radius * 2.0, pick_radius * 2.0));
                 let ent_resp = ui.interact(

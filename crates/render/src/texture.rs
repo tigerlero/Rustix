@@ -21,7 +21,7 @@ pub struct Framebuffer {
     pub color_image: vk::Image,
     pub color_view: vk::ImageView,
     pub depth_buffer: DepthBuffer,
-    pub(crate) extent: vk::Extent2D,
+    pub extent: vk::Extent2D,
     pub(crate) _color_allocation: gpu_allocator::vulkan::Allocation,
 }
 
@@ -37,7 +37,7 @@ impl Framebuffer {
                     .extent(vk::Extent3D { width, height, depth: 1 })
                     .mip_levels(1).array_layers(1).samples(vk::SampleCountFlags::TYPE_1)
                     .tiling(vk::ImageTiling::OPTIMAL)
-                    .usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC)
+                    .usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::SAMPLED)
                     .sharing_mode(vk::SharingMode::EXCLUSIVE),
                 None,
             ).map_err(|e| RenderError::DeviceCreation(format!("color img: {e}")))?

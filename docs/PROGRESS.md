@@ -15,11 +15,11 @@ Renderer      ███████░░░░░░░░░  40%  Vulkan back
 Audio         ██████████░░░░  65%  Decoding, spatial, effects all implemented
 Scripting     ████████░░░░░░  50%  Rhai engine, ECS bridge — needs hot-reload
 AI            ███████░░░░░░░  45%  Behavior trees, A* pathfinding, navmesh
-Editor UI     ████████████░░  80%  egui editor with full text rendering, panels, gizmos
+Editor UI     █████████████░░  85%  egui editor with full text rendering, panels, gizmos, offscreen viewport
 Game UI       █████░░░░░░░░░  20%  Button/slider/label stubs, no text rendering
 Asset System  ██████░░░░░░░░  30%  Handle system, glTF mesh import, hot-reload
 Engine Facade ██████████████  85%  Plugin trait, AppBuilder, Schedule
-Runtime       ████████████░░  70%  Editor UI, project mgmt, gizmos, undo/redo
+Runtime       █████████████░░  75%  Editor UI, project mgmt, gizmos, undo/redo, offscreen viewport
 Physics       ░░░░░░░░░░░░░░   0%  Rapier3D not integrated
 Animation     ░░░░░░░░░░░░░░   0%  Not started
 Networking    ░░░░░░░░░░░░░░   0%  Not started
@@ -298,7 +298,7 @@ OVERALL       ██████████████████░░░░
 
 ---
 
-## 10. Runtime / Editor (`apps/runtime`) — 70%
+## 10. Runtime / Editor (`apps/runtime`) — 75%
 
 ### Implemented
 - Custom egui Vulkan renderer (WGSL fragment shader, separate texture+sampler descriptor)
@@ -318,6 +318,7 @@ OVERALL       ██████████████████░░░░
 - Per-entity mesh rendering with GLB import (tinygltf → mesh registry)
 - Procedural mesh presets (cube, sphere, plane, torus, cylinder)
 - 3D scene grid overlay with entity position dots
+- Offscreen 3D scene rendering → Scene View panel (framebuffer → egui Image)
 - Vulkan synchronization: per-frame semaphores, proper fence ordering, resource cleanup (Drop impls)
 - Sprite editor with pixel manipulation (set_pixel, draw_line, fill_circle, 9-patch, etc.)
 - Waveform visualizer for audio editing
@@ -326,7 +327,6 @@ OVERALL       ██████████████████░░░░
 ### What's needed to reach 100%
 | Feature | Priority | What to build |
 |---------|----------|---------------|
-| **Offscreen 3D → Scene View** | **HIGH** | Render 3D scene to GpuTexture, display in egui Image |
 | **Entity selection** | **HIGH** | Raycast click in scene → highlight in hierarchy + inspector |
 | Multiple viewports | Medium | Side-by-side scene + debug views |
 | Docking / panel rearrangement | Medium | Drag panels to reorganize layout |
@@ -358,18 +358,17 @@ These crates compile but their `src/lib.rs` is a single blank line. Zero impleme
 
 ### High — Phase 1 blockers
 1. **PBR rendering pipeline** — Without this, there's no "real" rendering
-2. **Offscreen scene rendering** — The Scene View panel still renders to the swapchain directly
-3. **Entity selection** (raycast) — Core editor interaction missing
-4. **glTF full import + texture loading** — Needed to get user assets in-engine
-5. **Physics integration** — Rapier3D is the biggest remaining ECS feature
+2. **Entity selection** (raycast) — Core editor interaction missing
+3. **glTF full import + texture loading** — Needed to get user assets in-engine
+4. **Physics integration** — Rapier3D is the biggest remaining ECS feature
 
 ### Medium — Phase 1 scope
-6. **Input action system** — Gamepad + configurable key bindings
-7. **Full audio ECS integration** — Spatial audio in 3D scene
-8. **Hot-reload for scripts + shaders** — Iteration speed
-9. **Async asset loading** — Non-blocking IO
-10. **Rotate/scale gizmos** — Full transform editing
+5. **Input action system** — Gamepad + configurable key bindings
+6. **Full audio ECS integration** — Spatial audio in 3D scene
+7. **Hot-reload for scripts + shaders** — Iteration speed
+8. **Async asset loading** — Non-blocking IO
+9. **Rotate/scale gizmos** — Full transform editing
 
 ### Low — Post-Phase 1
-11. Animation system, terrain, world streaming, networking, AI ECS integration
-12. UI framework text rendering, editor docking, profiler panels
+10. Animation system, terrain, world streaming, networking, AI ECS integration
+11. UI framework text rendering, editor docking, profiler panels

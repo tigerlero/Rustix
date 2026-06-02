@@ -117,6 +117,9 @@ fn main() {
     let mut shadow_map: Option<rustix_render::GpuTexture> = None;
     let mut shadow_layout = vk::ImageLayout::UNDEFINED;
 
+    let mut viewport_framebuffers: [Option<rustix_render::Framebuffer>; 3] = std::array::from_fn(|_| None);
+    let mut viewport_fb_size: (u32, u32) = (0, 0);
+
     let mut pipeline_2d: Option<rustix_render::pipeline::GraphicsPipeline2D> = None;
     let mut ubo_2d: Option<rustix_render::memory::GpuBuffer> = None;
     let mut desc_set_2d: Option<vk::DescriptorSet> = None;
@@ -278,8 +281,46 @@ fn main() {
                             }
                         }
 
+                        // Determine viewport size from previous frame's egui rect
+                        let viewport_rect: Option<egui::Rect> = egui_ctx.data(|d| d.get_temp(egui::Id::new("viewport_rect")));
+                        let has_valid_vp_rect = viewport_rect.is_some();
+                        let (vp_w, vp_h) = viewport_rect.map(|r| (r.width().max(1.0) as u32, r.height().max(1.0) as u32))
+                            .unwrap_or((ww, wh));
+
+                        // Create/recreate viewport framebuffer when size changes (only when we have a valid rect)
+                        let frame_idx = renderer.frame_index() % 3;
+                        if screen == AppScreen::Editor && has_valid_vp_rect {
+                            if viewport_fb_size != (vp_w, vp_h) {
+                                tracing::trace!("main: recreating viewport framebuffers {}x{}", vp_w, vp_h);
+                                for fb in &mut viewport_framebuffers { *fb = None; }
+                                viewport_fb_size = (vp_w, vp_h);
+                            }
+                            if viewport_framebuffers[frame_idx].is_none() {
+                                match renderer.create_framebuffer(vp_w, vp_h, sc_format) {
+                                    Ok(fb) => {
+                                        viewport_framebuffers[frame_idx] = Some(fb);
+                                        tracing::trace!("main: viewport framebuffer {} created", frame_idx);
+                                    }
+                                    Err(e) => tracing::error!("viewport framebuffer create failed: {e}"),
+                                }
+                            }
+                        }
+
                         let shadow_layout_ref = if shadow_map.is_some() { Some(&mut shadow_layout) } else { None };
                         if scene_pipeline.is_some() && scene_depth_buffer.is_some() && scene_uniform_buffer.is_some() && scene_descriptor_set.is_some() {
+                            // Only render offscreen in Editor mode AND when we have a valid viewport rect
+                            let offscreen_fb = if screen == AppScreen::Editor && has_valid_vp_rect {
+                                viewport_framebuffers[frame_idx].as_ref()
+                            } else {
+                                None
+                            };
+                            
+                            // If rendering to offscreen, we must still clear the swapchain so egui has a clean background
+                            if offscreen_fb.is_some() {
+                                renderer.begin_scene_pass(cmd, scene_depth_buffer.as_ref().unwrap(), [0.05, 0.05, 0.05, 1.0]);
+                                renderer.end_scene_pass(cmd);
+                            }
+
                             render::render_3d_scene(
                                 &renderer, cmd,
                                 scene_pipeline.as_ref().unwrap(),
@@ -291,7 +332,22 @@ fn main() {
                                 scene_descriptor_set.unwrap(),
                                 shadow_descriptor_set,
                                 &meshes, &ecs_world, &cam,
+                                offscreen_fb,
                             );
+                            // Register offscreen framebuffer as egui user texture for viewport panel
+                            if let Some(ref fb) = viewport_framebuffers[frame_idx] {
+                                tracing::trace!("main: registering viewport framebuffer color_view={:?} as user texture", fb.color_view);
+                                egui_r.register_user_texture(
+                                    egui::TextureId::User(0),
+                                    fb.color_view,
+                                    egui_r.sampler(),
+                                );
+                                egui_ctx.data_mut(|d| d.insert_temp(egui::Id::new("viewport_offscreen_valid"), true));
+                                tracing::trace!("main: set viewport_offscreen_valid=true");
+                            } else {
+                                tracing::trace!("main: no viewport framebuffer, removing offscreen valid flag");
+                                egui_ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::new("viewport_offscreen_valid")));
+                            }
                         } else if renderer.frame_index() % 60 == 0 {
                             tracing::warn!("3D scene skipped: pipeline={} depth={} ubo={} desc={}",
                                 scene_pipeline.is_some(), scene_depth_buffer.is_some(),
