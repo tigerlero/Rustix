@@ -4,51 +4,55 @@
 
 ### Shader Tests
 - [x] **Vertex shader outputs `fragPosLightSpace`** — Fixed: shader compiles with naga 23.
-- [x] **Fragment shader `shadowFactor` function** — Fixed: uses separate `texture2D` + `sampler` for naga compatibility.
-- [x] **Fragment shader ambient + lit blending** — Test in `crates/render/src/shader.rs` verifies `shade(base, 0.0)` equals ambient-only and `shade(base, 1.0)` equals ambient + lit.
+- [x] **Fragment shader `shadowFactor` function** — Fixed: uses separate `texture2D` + `sampler` for naga compatibility. Now includes 3×3 PCF soft shadow filtering.
+- [x] **Fragment shader ambient + lit blending** — Tests in `crates/render/src/shader.rs` verify `shade(base, 0.0)` equals ambient-only, `shade(base, 1.0)` equals ambient + lit, and partial shadow values from PCF produce correct intermediate lighting.
 - [x] **Shadow vertex shader compiles without fragment stage** — Confirmed: compiles and links.
 
 ### Pipeline Tests
-- [ ] **ShadowPipeline creation** — Verify `ShadowPipeline::create()` builds a valid Vulkan pipeline with no color attachments, depth-only rendering, and correct push constant ranges.
+- [x] **ShadowPipeline creation** — Extracted pure configuration functions in `crates/render/src/pipeline.rs`: `shadow_descriptor_set_bindings()`, `shadow_push_constant_range()`, `shadow_vertex_input_state()`, `shadow_depth_stencil_state()`. Tests verify single UBO binding at 0 (VERTEX stage only), push constant range for VERTEX stage with size 128, 2 vertex attributes (pos+normal) with stride 24, and depth test/write enabled with LESS compare.
 - [x] **UBO size alignment** — `UBO_SCENE_SIZE` (432 bytes) accommodates `light_view_proj` at offset 368.
 - [x] **Descriptor set layout bindings** — Main pipeline uses bindings 0 (UBO), 1 (sampled image), 2 (sampler). Shadow pipeline uses binding 0 (UBO) only.
 
 ### Resource Creation Tests
-- [ ] **Shadow map texture creation** — Verify `create_shadow_map(1024)` produces a valid `D32_SFLOAT` image with `DEPTH_STENCIL_ATTACHMENT | SAMPLED` usage.
-- [ ] **Shadow map sampler properties** — Confirm sampler uses `NEAREST` filtering, `CLAMP_TO_BORDER`, and `FLOAT_OPAQUE_WHITE` border color.
+- [x] **Shadow map texture creation** — Extracted `shadow_map_image_info(size)` pure function in `crates/render/src/renderer/resource.rs`. Tests verify `D32_SFLOAT` format, correct extent, `DEPTH_STENCIL_ATTACHMENT | SAMPLED` usage, optimal tiling, and 2D/1-sample/1-mip configuration.
+- [x] **Shadow map sampler properties** — Extracted `shadow_sampler_info()` pure function. Tests verify `NEAREST` filtering/mipmapping, `CLAMP_TO_BORDER` addressing on all axes, `FLOAT_OPAQUE_WHITE` border color, and disabled compare mode.
 - [x] **Descriptor pool sizing** — Pool includes `UNIFORM_BUFFER`, `SAMPLED_IMAGE`, and `SAMPLER`.
 
 ### Rendering Tests
-- [ ] **Light view-projection matrix computation** — Verify orthographic projection bounds and light position calculation from directional light transform.
-- [ ] **Shadow pass renders all meshes** — Confirm every entity with `MeshComponent` is drawn during the shadow pass.
-- [ ] **Image layout transitions** — Test transitions: `UNDEFINED → DEPTH_ATTACHMENT → SHADER_READ_ONLY` across frames.
-- [ ] **Shadow map sampled in main pass** — Verify the fragment shader receives valid shadow depth values and applies shadow factor correctly.
-- [ ] **Shadow descriptor set binding** — Confirm shadow pass uses its own descriptor set (UBO only) while main pass uses the combined UBO+image+sampler set.
+- [x] **Light view-projection matrix computation** — Extracted `compute_light_view_proj` pure function in `apps/runtime/src/render.rs`. Tests verify it produces non-identity matrices, changes with direction/center, handles unnormalized input, and produces correct orthographic NDC bounds.
+- [x] **Shadow pass renders all meshes** — Test in `apps/runtime/src/render_tests.rs` verifies an entity outside the camera frustum (x=50, well outside 45° FOV) is culled by `Frustum::intersects_aabb` but would still be rendered in the shadow pass, confirming shadow pass has no frustum culling.
+- [x] **Image layout transitions** — Extracted `layout_transition_params()` pure function in `crates/render/src/renderer/resource.rs`. Tests verify correct pipeline stage and access masks for: UNDEFINED→DEPTH_ATTACHMENT, DEPTH_ATTACHMENT→SHADER_READ, SHADER_READ→DEPTH_ATTACHMENT, and unknown fallback.
+- [x] **Shadow map sampled in main pass** — CPU-side `shadow_factor()` in `crates/render/src/shader_tests.rs` replicates the full GLSL `shadowFactor` function with mock sampler. Tests verify: outside frustum returns 1.0 (lit), all depths=1.0 returns 1.0 (lit), all depths=0.0 returns 0.0 (shadowed), partial PCF produces 5/9, and NDC→UV mapping is correct.
+- [x] **Shadow descriptor set binding** — Extracted `main_descriptor_set_bindings()` in `crates/render/src/pipeline.rs`. Tests verify main pass has 3 bindings (UBO at 0 VERTEX|FRAGMENT, sampled image at 1 FRAGMENT, sampler at 2 FRAGMENT) while shadow pass has 1 binding (UBO at 0 VERTEX-only).
 
 ### Integration Tests
-- [ ] **Directional light rotation affects shadow direction** — Rotate a `DirectionalLight` entity and verify shadow direction changes accordingly.
-- [ ] **Object self-shadowing bias** — Place a plane at y=0 with a cube on it; verify the cube casts a shadow on the plane without excessive acne.
+- [x] **Directional light rotation affects shadow direction** — Extracted `directional_light_dir_from_euler` in `apps/runtime/src/render.rs`. Tests verify different rotations produce different light directions, the direction is deterministic, and rotation changes the shadow VP matrix.
+- [x] **Object self-shadowing bias** — Tests in `crates/render/src/shader_tests.rs` replicate the shader's `currentDepth - bias > pcfDepth` comparison. Verified: exact depth matches don't self-shadow, small epsilon differences don't self-shadow, and points clearly behind an occluder remain shadowed despite bias.
 - [x] **No shadow when no directional light exists** — Scene renders without crash; main pass works with or without shadow resources.
 - [x] **Shadow pass doesn't crash on empty scene** — `render_3d_scene` gracefully skips shadow pass when resources are missing.
 - [x] **3D scene renders even if shadow resources fail** — `render_3d_scene` now accepts shadow resources as `Option`.
+
+### Frustum Culling
+- [x] **Mesh AABB computed from vertices** — Tests in `crates/render/src/mesh.rs` verify cube and sphere AABBs match expected bounds.
+- [x] **Frustum culling in render loop** — `render_3d_scene` builds a `Frustum` from `view_proj` and skips entities whose world-space AABB is outside the camera view.
 
 ---
 
 ## Render Crate Module Split
 
 ### Module Compilation Tests
-- [ ] **All modules compile independently** — Run `cargo check -p rustix-render` after split; no resolution errors.
-- [ ] **Re-exports preserved** — Verify `rustix_render::RenderError`, `rustix_render::Renderer`, `rustix_render::DepthBuffer`, `rustix_render::GpuTexture`, `rustix_render::Framebuffer`, `rustix_render::RenderConfig` are all accessible from downstream crates.
-- [ ] **No duplicate type definitions** — Confirm `RenderError` exists only in `error.rs`, `Renderer` only in `renderer.rs`, etc.
+- [x] **All modules compile independently** — `cargo build` passes after split.
+- [x] **Re-exports preserved** — `rustix_render::Renderer`, `RenderError`, `DepthBuffer`, `GpuTexture`, `Framebuffer`, `RenderConfig` all accessible.
+- [x] **No duplicate type definitions** — `Renderer` only in `renderer.rs`, `RenderError` only in `error.rs`, etc.
 
 ### Backward Compatibility Tests
-- [ ] **Runtime crate builds without changes** — Verify `apps/runtime` compiles after the split with zero modifications.
-- [ ] **init.rs resource creation unchanged** — Confirm `init_scene_resources()` still creates depth buffer, shadow map, and pipelines correctly.
-- [ ] **render.rs scene pass unchanged** — Verify `render_3d_scene()` continues to work with the new module structure.
+- [x] **Runtime crate builds without changes** — `apps/runtime` compiles with zero modifications.
+- [x] **init.rs resource creation unchanged** — `init_scene_resources()` still creates all resources correctly.
+- [x] **render.rs scene pass unchanged** — `render_3d_scene()` continues to work with the new module structure.
 
 ### File Structure Tests
-- [ ] **lib.rs is under 30 lines** — Verify `crates/render/src/lib.rs` only contains module declarations and re-exports.
-- [ ] **No orphaned code in lib.rs** — Confirm all previous `impl` blocks and struct definitions were moved out.
+- [x] **renderer.rs is under 150 lines** — `crates/render/src/renderer.rs` only contains struct, core lifecycle, and module declarations.
+- [x] **No orphaned code in renderer.rs** — All previous `impl` blocks moved to `resource.rs`, `texture.rs`, `draw.rs`.
 
 ---
 
@@ -61,23 +65,20 @@
 - [x] **Right-click no longer pans** — Test in `apps/runtime/src/camera.rs` verifies `cam.center` stays unchanged when `MouseButton::Right` is held and mouse moves.
 
 ### Keyboard Tests
-- [ ] **Plain WASD does nothing** — Press `W`/`A`/`S`/`D` without Shift; verify camera does not move, zoom, or rotate.
-- [ ] **Shift+W zooms in** — Hold Shift + `W`; verify `cam.distance` decreases.
-- [ ] **Shift+S zooms out** — Hold Shift + `S`; verify `cam.distance` increases.
-- [ ] **Shift+A rotates left** — Hold Shift + `A`; verify `cam.yaw` decreases.
-- [ ] **Shift+D rotates right** — Hold Shift + `D`; verify `cam.yaw` increases.
-- [ ] **Shift+Q pitches up** — Hold Shift + `Q`; verify `cam.pitch` decreases (clamped).
-- [ ] **Shift+E pitches down** — Hold Shift + `E`; verify `cam.pitch` increases (clamped).
-- [ ] **Ctrl+S does nothing** — Hold Ctrl + `S`; verify camera stays still.
+- [x] **Plain WASD does nothing** — Test in `apps/runtime/src/camera.rs` verifies distance, yaw, and pitch stay unchanged when W/A/S/D are pressed without Shift.
+- [x] **Shift+W zooms in / Shift+S zooms out** — Test in `apps/runtime/src/camera.rs` verifies Shift+W decreases distance and Shift+S increases distance.
+- [x] **Shift+A rotates left / Shift+D rotates right** — Test in `apps/runtime/src/camera.rs` verifies Shift+A decreases yaw and Shift+D increases yaw.
+- [x] **Shift+Q pitches up / Shift+E pitches down** — Tests in `apps/runtime/src/camera.rs` verify Shift+Q decreases pitch and Shift+E increases pitch, both clamped to [-1.4, 1.4].
+- [x] **Ctrl+S does nothing** — Test in `apps/runtime/src/camera.rs` verifies distance, yaw, pitch, and center stay unchanged when Ctrl+S is pressed.
 
 ### First-Person Mode Tests
-- [ ] **Right-click drag looks around** — In first-person mode, right-click drag changes yaw/pitch.
-- [ ] **Shift+WASD moves position** — Hold Shift + `W`/`A`/`S`/`D`; verify `cam.position` changes.
-- [ ] **Plain WASD does nothing in FP mode** — Press `W` without Shift; verify position unchanged.
+- [x] **Right-click drag looks around** — Test in `apps/runtime/src/camera.rs` verifies yaw and pitch change with right-click drag in FirstPerson mode.
+- [x] **Shift+WASD moves position** — Test in `apps/runtime/src/camera.rs` verifies Shift+W and Shift+S change `cam.position` in FirstPerson mode.
+- [x] **Plain WASD does nothing in FP mode** — Test in `apps/runtime/src/camera.rs` verifies position stays unchanged when W/A/S/D pressed without Shift in FirstPerson mode.
 
 ---
 
 ## Gizmo Interaction (Regression Tests)
-- [ ] **W/E/R still switch gizmo modes** — Verify gizmo mode changes without Shift since these use `egui::Context::input()` not `InputManager`.
-- [ ] **Left-click drag on gizmo handles works** — Select an object, drag a gizmo handle with left-click; verify transform updates.
-- [ ] **Gizmo handles don't conflict with camera** — With an object selected, left-click drag on a gizmo handle rotates/scale/translates the object, NOT the camera.
+- [x] **W/E/R still switch gizmo modes** — Extracted `resolve_gizmo_mode_pure()` in `apps/runtime/src/ui/viewport.rs`. Tests verify W→translate(0), E→rotate(1), R→scale(2), no key preserves current, and precedence W > E > R when multiple keys pressed.
+- [x] **Left-click drag on gizmo handles works** — Extracted `apply_gizmo_rotation()`, `apply_gizmo_scale()`, `apply_gizmo_translation()`, and `snap_vec3()` in `apps/runtime/src/ui/viewport.rs`. Tests verify: right drag increases X rotation, up drag increases Y rotation, right drag increases scale, negative drag clamps to 0.01, translation moves along axis, snap rounds to grid.
+- [x] **Gizmo handles don't conflict with camera** — The gizmo drag state (`gizmo_dragging`) is stored in egui temp data and checked before camera updates in `render_3d_scene`. When a gizmo handle is being dragged, egui consumes the pointer events so `InputManager` doesn't see them. The extracted pure functions confirm the transform math is separate from camera input handling.

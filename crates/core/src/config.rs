@@ -260,3 +260,233 @@ pub fn find_and_load_config() -> EngineConfig {
 
     config
 }
+
+// ------------------------------------------------------------------
+// Runtime config reload
+// ------------------------------------------------------------------
+
+use std::time::{Duration, Instant, SystemTime};
+
+/// Watches a TOML config file and invokes a callback when it changes.
+///
+/// Uses lightweight polling (file mtime) rather than OS-level file watching
+/// so it works on every platform without extra dependencies.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// use std::time::Duration;
+/// use rustix_core::config::{ConfigWatcher, EngineConfig};
+///
+/// let mut watcher = ConfigWatcher::new("engine.toml", |cfg: &EngineConfig| {
+///     println!("config reloaded: {:?}", cfg.window.title);
+/// });
+/// watcher.set_interval(Duration::from_secs(2));
+///
+/// // Call once per frame / tick:
+/// let _ = watcher.update();
+/// ```
+pub struct ConfigWatcher<F> {
+    path: PathBuf,
+    last_mtime: Option<SystemTime>,
+    last_check: Instant,
+    interval: Duration,
+    on_change: F,
+}
+
+impl<F: FnMut(&EngineConfig)> ConfigWatcher<F> {
+    /// Create a new watcher for `path`.  The first call to `update()` will
+    /// always load the file so the callback receives the initial config.
+    pub fn new(path: impl AsRef<std::path::Path>, on_change: F) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+            last_mtime: None,
+            last_check: Instant::now() - Duration::from_secs(3600), // force first check
+            interval: Duration::from_secs(1),
+            on_change,
+        }
+    }
+
+    /// Set the polling interval (default: 1 second).
+    pub fn set_interval(&mut self, interval: Duration) {
+        self.interval = interval;
+    }
+
+    /// Check whether the file has changed since the last call.
+    ///
+    /// Returns `Ok(true)` if the file was reloaded, `Ok(false)` if no change
+    /// or not enough time has elapsed, `Err(ConfigError)` on I/O or parse
+    /// failure.
+    pub fn update(&mut self) -> Result<bool, ConfigError> {
+        let now = Instant::now();
+        if now.duration_since(self.last_check) < self.interval {
+            return Ok(false);
+        }
+        self.last_check = now;
+
+        let meta = match std::fs::metadata(&self.path) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(ConfigError::Io(self.path.clone(), e)),
+        };
+
+        let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+
+        if self.last_mtime == Some(mtime) {
+            return Ok(false);
+        }
+
+        let config = EngineConfig::from_file(&self.path)?;
+        self.last_mtime = Some(mtime);
+        (self.on_change)(&config);
+        Ok(true)
+    }
+
+    /// Path being watched.
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    /// Force a reload on the next `update()` call, ignoring the interval.
+    pub fn request_refresh(&mut self) {
+        self.last_check = Instant::now() - self.interval - Duration::from_millis(1);
+    }
+}
+
+#[cfg(test)]
+mod watcher_tests {
+    use super::*;
+    use std::io::Write;
+    use std::time::Duration;
+
+    fn temp_path(name: &str) -> std::path::PathBuf {
+        let mut p = std::env::temp_dir();
+        p.push(format!("rustix_config_test_{}_{}", std::process::id(), name));
+        p
+    }
+
+    fn make_toml(title: &str) -> String {
+        format!(
+            r#"[window]
+title = "{title}"
+width = 1920
+height = 1080
+fullscreen = false
+vsync = false
+backend = "auto"
+"#
+        )
+    }
+
+    #[test]
+    fn watcher_first_update_loads_config() {
+        let path = temp_path("first");
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            write!(f, "{}", make_toml("Test")).unwrap();
+        }
+
+        let mut reloaded = false;
+        {
+            let mut watcher = ConfigWatcher::new(&path, |cfg: &EngineConfig| {
+                assert_eq!(cfg.window.title, "Test");
+                reloaded = true;
+            });
+            watcher.set_interval(Duration::from_millis(0));
+            assert!(watcher.update().unwrap());
+        }
+        assert!(reloaded);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn watcher_no_change_returns_false() {
+        let path = temp_path("no_change");
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            write!(f, "{}", make_toml("Test")).unwrap();
+        }
+
+        let mut call_count = 0usize;
+        let mut watcher = ConfigWatcher::new(&path, |_cfg: &EngineConfig| {
+            call_count += 1;
+        });
+        watcher.set_interval(Duration::from_millis(0));
+
+        assert!(watcher.update().unwrap());   // first load
+        assert!(!watcher.update().unwrap());  // no change
+        assert_eq!(call_count, 1);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn watcher_detects_file_change() {
+        let path = temp_path("detect");
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            write!(f, "{}", make_toml("First")).unwrap();
+        }
+
+        let titles = std::cell::RefCell::new(Vec::new());
+        let mut watcher = ConfigWatcher::new(&path, |cfg: &EngineConfig| {
+            titles.borrow_mut().push(cfg.window.title.clone());
+        });
+        watcher.set_interval(Duration::from_millis(0));
+
+        assert!(watcher.update().unwrap());
+        assert_eq!(titles.borrow().as_slice(), &["First"]);
+
+        // Wait a tiny bit so the mtime actually changes
+        std::thread::sleep(Duration::from_millis(50));
+
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            write!(f, "{}", make_toml("Second")).unwrap();
+        }
+
+        assert!(watcher.update().unwrap());
+        assert_eq!(titles.borrow().as_slice(), &["First", "Second"]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn watcher_missing_file_returns_false() {
+        let path = std::path::PathBuf::from("/tmp/nonexistent_config_12345_rustix.toml");
+        let mut watcher = ConfigWatcher::new(&path, |_cfg: &EngineConfig| {
+            panic!("should not be called");
+        });
+        watcher.set_interval(Duration::from_millis(0));
+        assert!(!watcher.update().unwrap());
+    }
+
+    #[test]
+    fn watcher_request_refresh_forces_check() {
+        let path = temp_path("refresh");
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            write!(f, "{}", make_toml("A")).unwrap();
+        }
+
+        let titles = std::cell::RefCell::new(Vec::new());
+        let mut watcher = ConfigWatcher::new(&path, |cfg: &EngineConfig| {
+            titles.borrow_mut().push(cfg.window.title.clone());
+        });
+        watcher.set_interval(Duration::from_secs(3600)); // very long interval
+
+        assert!(watcher.update().unwrap());
+        assert_eq!(titles.borrow().as_slice(), &["A"]);
+
+        std::thread::sleep(Duration::from_millis(50));
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            write!(f, "{}", make_toml("B")).unwrap();
+        }
+
+        // Without request_refresh this would wait 1 hour
+        assert!(!watcher.update().unwrap());
+        watcher.request_refresh();
+        assert!(watcher.update().unwrap());
+        assert_eq!(titles.borrow().as_slice(), &["A", "B"]);
+        let _ = std::fs::remove_file(&path);
+    }
+}

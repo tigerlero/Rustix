@@ -126,10 +126,17 @@ float shadowFactor(vec4 fragLightSpace) {
     vec3 projCoords = fragLightSpace.xyz / fragLightSpace.w;
     projCoords = projCoords * 0.5 + 0.5;
     if (projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) return 1.0;
-    float closestDepth = texture(sampler2D(shadowMapTex, shadowMapSamp), projCoords.xy).r;
     float currentDepth = projCoords.z;
     float bias = 0.005;
-    return currentDepth - bias > closestDepth ? 0.0 : 1.0;
+    vec2 texelSize = vec2(1.0 / 1024.0);
+    float shadow = 0.0;
+    for(int x = -1; x <= 1; ++x) {
+        for(int y = -1; y <= 1; ++y) {
+            float pcfDepth = texture(sampler2D(shadowMapTex, shadowMapSamp), projCoords.xy + vec2(x, y) * texelSize).r;
+            shadow += currentDepth - bias > pcfDepth ? 0.0 : 1.0;
+        }
+    }
+    return shadow / 9.0;
 }
 
 void main() {
@@ -204,60 +211,5 @@ void main() {
 }
 
 #[cfg(test)]
-mod tests {
-    use glam::{Vec3, Vec4};
-
-    /// Replicates the fragment shader's `blinn_phong` + `ambient + shadow * lit` logic.
-    fn blinn_phong(
-        n: Vec3, l: Vec3, v: Vec3, light_color: Vec3, base: Vec3, roughness: f32, metallic: f32,
-    ) -> Vec3 {
-        let h = (l + v).normalize();
-        let ndotl = n.dot(l).max(0.0);
-        let ndoth = n.dot(h).max(0.0);
-        let spec_pow = 32.0 / (roughness * roughness + 0.001);
-        let spec = ndoth.powf(spec_pow);
-
-        let f0 = Vec3::splat(0.04).lerp(base, metallic);
-        let specular = spec * light_color * f0 * (1.0 - roughness) * 0.5;
-        let diffuse = ndotl * light_color * base * (1.0 - metallic);
-
-        diffuse + specular
-    }
-
-    fn shade(base: Vec3, shadow: f32, n: Vec3, l: Vec3, v: Vec3, light_color: Vec3, roughness: f32, metallic: f32) -> Vec4 {
-        let lit = blinn_phong(n, l, v, light_color, base, roughness, metallic);
-        let ambient = base * 0.1;
-        let color = ambient + shadow * lit;
-        Vec4::new(color.x, color.y, color.z, 1.0)
-    }
-
-    #[test]
-    fn fragment_ambient_lit_blending() {
-        let n = Vec3::new(0.0, 0.0, 1.0);
-        let l = Vec3::new(0.0, 0.0, 1.0);
-        let v = Vec3::new(0.0, 0.0, 1.0);
-        let light_color = Vec3::new(1.0, 1.0, 1.0);
-        let base = Vec3::new(0.5, 0.5, 0.5);
-        let roughness = 0.5;
-        let metallic = 0.0;
-
-        // When shadow = 0.0, only ambient remains.
-        let unlit = shade(base, 0.0, n, l, v, light_color, roughness, metallic);
-        let ambient = base * 0.1;
-        assert!((unlit.x - ambient.x).abs() < 0.001, "unlit R should be ambient");
-        assert!((unlit.y - ambient.y).abs() < 0.001, "unlit G should be ambient");
-        assert!((unlit.z - ambient.z).abs() < 0.001, "unlit B should be ambient");
-
-        // When shadow = 1.0, result is ambient + lit.
-        let lit = shade(base, 1.0, n, l, v, light_color, roughness, metallic);
-        let expected_lit = blinn_phong(n, l, v, light_color, base, roughness, metallic);
-        let expected = ambient + expected_lit;
-        assert!((lit.x - expected.x).abs() < 0.001, "lit R should be ambient + lit");
-        assert!((lit.y - expected.y).abs() < 0.001, "lit G should be ambient + lit");
-        assert!((lit.z - expected.z).abs() < 0.001, "lit B should be ambient + lit");
-
-        // Sanity: lit color should be noticeably brighter than ambient-only.
-        assert!(lit.x > unlit.x * 2.0, "lit color should be much brighter than ambient-only");
-    }
-}
-
+#[path = "shader_tests.rs"]
+mod tests;

@@ -332,3 +332,113 @@ impl StagingBufferPool {
         Ok(())
     }
 }
+
+/// A coherent, mapped ring-buffer for CPU → GPU uploads with fence tracking.
+///
+/// Wraps a [`GpuBuffer`] created with `MemoryLocation::CpuToGpu` and
+/// sub-allocates from it using [`GpuStagingRing`].  Each upload is
+/// tagged with a fence value; when the GPU signals completion the
+/// space is reclaimed automatically.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let mut staging = GpuStagingBuffer::new(&device, &mut allocator, 16 * 1024 * 1024)?;
+/// let (ptr, offset) = staging.allocate(256, 4, fence_value)?;
+/// unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, 256); }
+/// staging.flush(offset, 256)?;
+/// // Later, when GPU finishes the frame:
+/// staging.release_completed(newest_completed_fence);
+/// ```
+pub struct GpuStagingBuffer {
+    buffer: GpuBuffer,
+    ring: rustix_core::gpu_staging::GpuStagingRing,
+    device: *const ash::Device,
+}
+
+unsafe impl Send for GpuStagingBuffer {}
+unsafe impl Sync for GpuStagingBuffer {}
+
+impl GpuStagingBuffer {
+    /// Create a new staging buffer with the given capacity.
+    pub fn new(
+        device: &GpuDevice,
+        allocator: &mut GpuMemoryAllocator,
+        capacity: u64,
+    ) -> Result<Self, RenderError> {
+        let buffer = GpuBuffer::new(
+            device,
+            allocator,
+            "gpu_staging_ring",
+            capacity,
+            vk::BufferUsageFlags::TRANSFER_SRC,
+            MemoryLocation::CpuToGpu,
+        )?;
+        Ok(Self {
+            device: device.logical() as *const ash::Device,
+            ring: rustix_core::gpu_staging::GpuStagingRing::new(capacity),
+            buffer,
+        })
+    }
+
+    /// Allocate `size` bytes with `align` alignment, tagged with `fence_value`.
+    ///
+    /// Returns `(mapped_ptr, device_offset)` on success, or `None` if the
+    /// ring is full.
+    pub fn allocate(
+        &self,
+        size: u64,
+        align: u64,
+        fence_value: u64,
+    ) -> Option<(*mut u8, u64)> {
+        let (offset, _sz) = self.ring.allocate(size, align)?;
+        self.ring.set_fence_on_last(fence_value);
+        let ptr = self.buffer.mapped_ptr?;
+        let write_ptr = unsafe { ptr.add(offset as usize) };
+        Some((write_ptr, offset))
+    }
+
+    /// Flush a CPU-written range so the GPU sees it.
+    ///
+    /// Only needed when the backing memory is **not** `HOST_COHERENT`.
+    /// For `CpuToGpu` memory this is usually a no-op but is provided
+    /// for correctness.
+    pub fn flush(&self, offset: u64, size: u64) {
+        self.buffer.flush(offset, size);
+    }
+
+    /// Reclaim all regions whose fence is <= `completed_fence`.
+    pub fn release_completed(&self, completed_fence: u64) {
+        self.ring.release_completed(completed_fence);
+    }
+
+    /// Raw Vulkan buffer handle (for `vkCmdCopyBuffer`).
+    pub fn buffer_handle(&self) -> vk::Buffer {
+        self.buffer.buffer
+    }
+
+    /// Total capacity in bytes.
+    pub fn capacity(&self) -> u64 {
+        self.ring.capacity()
+    }
+
+    /// Bytes currently committed.
+    pub fn used(&self) -> u64 {
+        self.ring.used()
+    }
+
+    /// Bytes still free.
+    pub fn free(&self) -> u64 {
+        self.ring.free()
+    }
+
+    /// Number of in-flight regions.
+    pub fn region_count(&self) -> usize {
+        self.ring.region_count()
+    }
+
+    /// Wait until the ring is completely empty.
+    pub fn wait_idle(&self) {
+        self.ring.wait_idle();
+    }
+}

@@ -1,10 +1,29 @@
 use winit::dpi::{LogicalSize, Size};
 use winit::event_loop::EventLoop;
-use winit::window::{Window as WinitWindow, WindowAttributes, WindowButtons};
+use winit::window::{Fullscreen, Window as WinitWindow, WindowAttributes, WindowButtons};
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use crate::PlatformError;
+
+/// How the window should enter fullscreen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FullscreenMode {
+    /// Windowed mode (no fullscreen).
+    Windowed,
+    /// Exclusive fullscreen: acquires the display and switches video mode.
+    /// On Wayland this may degrade to borderless.
+    Exclusive,
+    /// Borderless fullscreen windowed: fills the screen without changing
+    /// the display video mode.
+    Borderless,
+}
+
+impl Default for FullscreenMode {
+    fn default() -> Self {
+        FullscreenMode::Windowed
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct WindowConfig {
@@ -12,6 +31,7 @@ pub struct WindowConfig {
     pub width: u32,
     pub height: u32,
     pub fullscreen: bool,
+    pub fullscreen_mode: FullscreenMode,
     pub resizable: bool,
     pub decorations: bool,
 }
@@ -23,6 +43,7 @@ impl Default for WindowConfig {
             width: 1280,
             height: 720,
             fullscreen: false,
+            fullscreen_mode: FullscreenMode::Windowed,
             resizable: true,
             decorations: true,
         }
@@ -68,11 +89,64 @@ impl WindowHandle {
 
         tracing::info!(window_id = ?inner.id(), "window created");
 
-        Ok(Self {
+        let mut handle = Self {
             inner,
             config: config.clone(),
             should_close: false,
-        })
+        };
+
+        // Apply fullscreen if requested.
+        if config.fullscreen {
+            handle.apply_fullscreen_mode(config.fullscreen_mode);
+        }
+
+        Ok(handle)
+    }
+
+    fn apply_fullscreen_mode(&mut self, mode: FullscreenMode) {
+        match mode {
+            FullscreenMode::Windowed => {
+                self.inner.set_fullscreen(None);
+            }
+            FullscreenMode::Borderless => {
+                let monitor = self.inner.current_monitor();
+                let fs = Fullscreen::Borderless(monitor);
+                self.inner.set_fullscreen(Some(fs));
+                tracing::info!("entered borderless fullscreen");
+            }
+            FullscreenMode::Exclusive => {
+                // Try to pick the best video mode on the current monitor.
+                if let Some(monitor) = self.inner.current_monitor() {
+                    let video_mode = monitor
+                        .video_modes()
+                        .max_by(|a, b| {
+                            let area_a = a.size().width * a.size().height;
+                            let area_b = b.size().width * b.size().height;
+                            let refresh_a = a.refresh_rate_millihertz();
+                            let refresh_b = b.refresh_rate_millihertz();
+                            // Prefer larger resolution, then higher refresh
+                            area_a
+                                .cmp(&area_b)
+                                .then_with(|| refresh_a.cmp(&refresh_b))
+                        });
+                    if let Some(vm) = video_mode {
+                        tracing::info!(
+                            resolution = ?(vm.size()),
+                            refresh = vm.refresh_rate_millihertz(),
+                            "entered exclusive fullscreen"
+                        );
+                        let fs = Fullscreen::Exclusive(vm);
+                        self.inner.set_fullscreen(Some(fs));
+                    } else {
+                        tracing::warn!("no video modes found; falling back to borderless fullscreen");
+                        let fs = Fullscreen::Borderless(Some(monitor));
+                        self.inner.set_fullscreen(Some(fs));
+                    }
+                } else {
+                    tracing::warn!("no monitor detected; cannot enter fullscreen");
+                }
+            }
+        }
     }
 
     pub fn raw_window_handle(&self) -> raw_window_handle::RawWindowHandle {
@@ -112,6 +186,41 @@ impl WindowHandle {
 
     pub fn inner(&self) -> &WinitWindow { &self.inner }
     pub fn config(&self) -> &WindowConfig { &self.config }
+
+    /// Set the fullscreen mode at runtime.
+    pub fn set_fullscreen_mode(&mut self, mode: FullscreenMode) {
+        self.config.fullscreen_mode = mode;
+        self.config.fullscreen = mode != FullscreenMode::Windowed;
+        self.apply_fullscreen_mode(mode);
+    }
+
+    /// Query the current fullscreen mode.
+    pub fn fullscreen_mode(&self) -> FullscreenMode {
+        self.config.fullscreen_mode
+    }
+
+    /// Whether the window is currently in any fullscreen mode.
+    pub fn is_fullscreen(&self) -> bool {
+        self.inner.fullscreen().is_some()
+    }
+
+    /// Toggle between windowed and the configured fullscreen mode.
+    /// Returns the new mode.
+    pub fn toggle_fullscreen(&mut self) -> FullscreenMode {
+        if self.is_fullscreen() {
+            self.set_fullscreen_mode(FullscreenMode::Windowed);
+            FullscreenMode::Windowed
+        } else {
+            let mode = self.config.fullscreen_mode;
+            if mode == FullscreenMode::Windowed {
+                self.set_fullscreen_mode(FullscreenMode::Exclusive);
+                FullscreenMode::Exclusive
+            } else {
+                self.set_fullscreen_mode(mode);
+                mode
+            }
+        }
+    }
 }
 
 unsafe impl Send for WindowHandle {}

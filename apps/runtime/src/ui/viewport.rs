@@ -39,10 +39,7 @@ pub fn show_viewport(
         
         let gizmo_mode_id = egui::Id::new("gizmo_mode");
         let mut gizmo_mode = ctx.data(|d| d.get_temp::<usize>(gizmo_mode_id).unwrap_or(0));
-        
-        if ctx.input(|i| i.key_pressed(egui::Key::W) && !i.modifiers.command) { gizmo_mode = 0; }
-        if ctx.input(|i| i.key_pressed(egui::Key::E) && !i.modifiers.command) { gizmo_mode = 1; }
-        if ctx.input(|i| i.key_pressed(egui::Key::R) && !i.modifiers.command) { gizmo_mode = 2; }
+        gizmo_mode = resolve_gizmo_mode(gizmo_mode, ctx);
         ctx.data_mut(|d| d.insert_temp(gizmo_mode_id, gizmo_mode));
         let gizmo_active_id = egui::Id::new("gizmo_active");
         let gizmo_drag_start_id = egui::Id::new("gizmo_drag_start");
@@ -346,20 +343,14 @@ pub fn show_viewport(
 
                                 match gizmo_drag_mode {
                                     1 => {
-                                        let angle = drag_delta.length() * 0.01;
-                                        let sign = if drag_delta.x.abs() > drag_delta.y.abs() { drag_delta.x.signum() } else { -drag_delta.y.signum() };
-                                        let s = sign * if gizmo_active == 0 { 1.0 } else if gizmo_active == 1 { 1.0 } else { 1.0 };
-                                        let mut new_rot = gizmo_entity_rot;
-                                        match gizmo_active { 0 => { new_rot.x += angle * s; } 1 => { new_rot.y += angle * s; } _ => { new_rot.z += angle * s; } }
-                                        deferred_new_rot = Some(new_rot);
+                                        deferred_new_rot = Some(apply_gizmo_rotation(
+                                            gizmo_entity_rot, gizmo_active, drag_delta,
+                                        ));
                                     }
                                     2 => {
-                                        let scale_delta = drag_delta.length() * 0.01;
-                                        let sign = if drag_delta.x.abs() > drag_delta.y.abs() { drag_delta.x.signum() } else { drag_delta.y.signum() };
-                                        let mut new_scale = gizmo_entity_scale;
-                                        let val = (new_scale.to_array()[gizmo_active] + scale_delta * sign).max(0.01);
-                                        match gizmo_active { 0 => { new_scale.x = val; } 1 => { new_scale.y = val; } _ => { new_scale.z = val; } }
-                                        deferred_new_scale = Some(new_scale);
+                                        deferred_new_scale = Some(apply_gizmo_scale(
+                                            gizmo_entity_scale, gizmo_active, drag_delta,
+                                        ));
                                     }
                                     _ => {
                                         if let (Some(tip), Some(base)) = (
@@ -369,14 +360,10 @@ pub fn show_viewport(
                                             let v = tip - base;
                                             let len = (v.x * v.x + v.y * v.y).sqrt();
                                             let axis_2d = if len > 0.0 { v / len } else { egui::Vec2::ZERO };
-                                            let along = (drag_delta.x * axis_2d.x + drag_delta.y * axis_2d.y) * cam.distance * 0.01;
-                                            let mut new_pos = gizmo_entity_pos + axis_dir * along;
-                                            if snap_enabled && snap_size > 0.0 {
-                                                new_pos.x = (new_pos.x / snap_size).round() * snap_size;
-                                                new_pos.y = (new_pos.y / snap_size).round() * snap_size;
-                                                new_pos.z = (new_pos.z / snap_size).round() * snap_size;
-                                            }
-                                            deferred_new_pos = Some(new_pos);
+                                            deferred_new_pos = Some(apply_gizmo_translation(
+                                                gizmo_entity_pos, axis_dir, drag_delta, axis_2d,
+                                                cam.distance, snap_enabled, snap_size,
+                                            ));
                                         }
                                     }
                                 }
@@ -532,3 +519,80 @@ pub fn show_viewport(
 
     });
 }
+
+/// Resolve gizmo mode from egui keyboard input.
+/// W → Translate (0), E → Rotate (1), R → Scale (2).
+/// Command-modified keys are ignored so they don't conflict with shortcuts.
+pub fn resolve_gizmo_mode(current: usize, ctx: &egui::Context) -> usize {
+    let w = ctx.input(|i| i.key_pressed(egui::Key::W) && !i.modifiers.command);
+    let e = ctx.input(|i| i.key_pressed(egui::Key::E) && !i.modifiers.command);
+    let r = ctx.input(|i| i.key_pressed(egui::Key::R) && !i.modifiers.command);
+    resolve_gizmo_mode_pure(current, w, e, r)
+}
+
+/// Apply rotation gizmo drag: rotates the entity around the active axis.
+/// `drag_delta` is in screen pixels; magnitude maps to rotation angle.
+pub fn apply_gizmo_rotation(entity_rot: Vec3, gizmo_active: usize, drag_delta: egui::Vec2) -> Vec3 {
+    let angle = drag_delta.length() * 0.01;
+    let sign = if drag_delta.x.abs() > drag_delta.y.abs() { drag_delta.x.signum() } else { -drag_delta.y.signum() };
+    let s = sign * if gizmo_active == 0 { 1.0 } else if gizmo_active == 1 { 1.0 } else { 1.0 };
+    let mut new_rot = entity_rot;
+    match gizmo_active {
+        0 => { new_rot.x += angle * s; }
+        1 => { new_rot.y += angle * s; }
+        _ => { new_rot.z += angle * s; }
+    }
+    new_rot
+}
+
+/// Apply scale gizmo drag: scales the entity along the active axis.
+/// Result clamped to minimum 0.01 to prevent zero/negative scale.
+pub fn apply_gizmo_scale(entity_scale: Vec3, gizmo_active: usize, drag_delta: egui::Vec2) -> Vec3 {
+    let scale_delta = drag_delta.length() * 0.01;
+    let sign = if drag_delta.x.abs() > drag_delta.y.abs() { drag_delta.x.signum() } else { drag_delta.y.signum() };
+    let mut new_scale = entity_scale;
+    let val = (new_scale.to_array()[gizmo_active] + scale_delta * sign).max(0.01);
+    match gizmo_active {
+        0 => { new_scale.x = val; }
+        1 => { new_scale.y = val; }
+        _ => { new_scale.z = val; }
+    }
+    new_scale
+}
+
+/// Snap a Vec3 to the nearest grid multiple of `snap_size`.
+pub fn snap_vec3(v: Vec3, snap_size: f32) -> Vec3 {
+    Vec3::new(
+        (v.x / snap_size).round() * snap_size,
+        (v.y / snap_size).round() * snap_size,
+        (v.z / snap_size).round() * snap_size,
+    )
+}
+
+/// Apply translation gizmo drag: moves entity along `axis_dir` by projected screen delta.
+/// `axis_2d` is the normalized screen-space direction of the axis.
+pub fn apply_gizmo_translation(
+    entity_pos: Vec3, axis_dir: Vec3, drag_delta: egui::Vec2, axis_2d: egui::Vec2,
+    cam_distance: f32, snap_enabled: bool, snap_size: f32,
+) -> Vec3 {
+    let along = (drag_delta.x * axis_2d.x + drag_delta.y * axis_2d.y) * cam_distance * 0.01;
+    let mut new_pos = entity_pos + axis_dir * along;
+    if snap_enabled && snap_size > 0.0 {
+        new_pos = snap_vec3(new_pos, snap_size);
+    }
+    new_pos
+}
+
+/// Pure function resolving gizmo mode from key press booleans.
+/// W → Translate (0), E → Rotate (1), R → Scale (2).
+/// If multiple keys are pressed, W takes precedence, then E, then R.
+pub fn resolve_gizmo_mode_pure(current: usize, w_pressed: bool, e_pressed: bool, r_pressed: bool) -> usize {
+    if w_pressed { 0 }
+    else if e_pressed { 1 }
+    else if r_pressed { 2 }
+    else { current }
+}
+
+#[cfg(test)]
+#[path = "viewport_tests.rs"]
+mod tests;

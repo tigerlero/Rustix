@@ -99,6 +99,16 @@ impl JobSystem {
     pub fn inner(&self) -> &ThreadPool {
         &self.pool
     }
+
+    /// Re-create the thread pool with a new configuration.
+    ///
+    /// Pending work in the old pool is dropped; call this only
+    /// when the system is idle.
+    pub fn rebuild(&mut self, config: &JobSystemConfig) -> Result<(), JobError> {
+        let new = Self::new(config)?;
+        *self = new;
+        Ok(())
+    }
 }
 
 /// Errors that can occur during job system creation.
@@ -122,6 +132,28 @@ fn num_cpus_for_workstealing() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(8)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn job_system_rebuild_changes_thread_count() {
+        let mut sys = JobSystem::new(&JobSystemConfig {
+            thread_count: Some(2),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(sys.thread_count(), 2);
+
+        sys.rebuild(&JobSystemConfig {
+            thread_count: Some(4),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(sys.thread_count(), 4);
+    }
 }
 
 

@@ -38,6 +38,31 @@ impl Transform {
     }
 }
 
+/// Parent component: `None` for a root entity, `Some(entity)` for a child.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Parent(pub Option<hecs::Entity>);
+
+impl Default for Parent {
+    fn default() -> Self {
+        Self(None)
+    }
+}
+
+/// Cached world-space transform matrix.
+/// Written by the hierarchy system each frame.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct LocalToWorld {
+    pub matrix: Mat4,
+}
+
+impl Default for LocalToWorld {
+    fn default() -> Self {
+        Self {
+            matrix: Mat4::IDENTITY,
+        }
+    }
+}
+
 /// Script component attached to entities for behavior logic.
 /// Contains inline Rhai script source for simplicity.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

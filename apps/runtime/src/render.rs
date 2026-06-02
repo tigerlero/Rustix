@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 use ash::vk;
 use rustix_core::ecs::{EcsWorld, Entity};
-use rustix_core::math::{Vec3, Vec4, Mat4, Quat, EulerRot};
+use rustix_core::math::{Vec3, Vec4, Mat4, Quat, EulerRot, Aabb, Frustum};
 use rustix_render::Renderer;
 use rustix_render::mesh::Mesh;
 use rustix_render::pipeline::GraphicsPipeline;
@@ -14,6 +14,23 @@ use rustix_render::DepthBuffer;
 use crate::camera::EditorCamera;
 use crate::scene::{Transform, MeshComponent, Material, world_transform};
 use rustix_render::{PointLight, SpotLight, DirectionalLight};
+
+/// Compute the light view-projection matrix for shadow mapping.
+/// The light is placed behind the target center looking toward it.
+pub fn compute_light_view_proj(light_dir: Vec3, center: Vec3) -> Mat4 {
+    let light_dir = light_dir.normalize();
+    let light_pos = center - light_dir * 20.0;
+    let light_view = Mat4::look_at_rh(light_pos, center, Vec3::Y);
+    let light_proj = Mat4::orthographic_rh_gl(-15.0, 15.0, -15.0, 15.0, 0.1, 50.0);
+    light_proj * light_view
+}
+
+/// Compute directional light direction from euler rotation (XYZ order).
+/// The light points along -Z in local space, rotated by the given euler angles.
+pub fn directional_light_dir_from_euler(rotation: Vec3) -> Vec3 {
+    let rot = Quat::from_euler(EulerRot::XYZ, rotation.x, rotation.y, rotation.z);
+    (rot * Vec3::NEG_Z).normalize()
+}
 
 pub fn render_3d_scene(
     renderer: &Renderer,
@@ -61,19 +78,14 @@ pub fn render_3d_scene(
         let mut d = Vec3::new(0.5, 0.8, 0.3);
         let mut c = Vec3::new(1.0, 0.95, 0.8);
         for (dirlight, xform) in ecs_world.query::<(&DirectionalLight, &Transform)>().iter() {
-            let rot = Quat::from_euler(EulerRot::XYZ, xform.rotation.x, xform.rotation.y, xform.rotation.z);
-            d = (rot * Vec3::NEG_Z).normalize();
+            d = directional_light_dir_from_euler(xform.rotation);
             c = Vec3::new(dirlight.color.x * dirlight.intensity, dirlight.color.y * dirlight.intensity, dirlight.color.z * dirlight.intensity);
             break;
         }
         (Vec4::new(d.x, d.y, d.z, 0.2), Vec4::new(c.x, c.y, c.z, 1.0))
     };
 
-    let light_dir_vec = Vec3::new(light_dir.x, light_dir.y, light_dir.z);
-    let light_pos = cam.center - light_dir_vec * 20.0;
-    let light_view = Mat4::look_at_rh(light_pos, cam.center, Vec3::Y);
-    let light_proj = Mat4::orthographic_rh_gl(-15.0, 15.0, -15.0, 15.0, 0.1, 50.0);
-    let light_view_proj = light_proj * light_view;
+    let light_view_proj = compute_light_view_proj(light_dir.truncate(), cam.center);
 
     let mut ubo_data = [0u8; 432];
     ubo_data[0..64].copy_from_slice(bytemuck::bytes_of(&view_proj));
@@ -124,9 +136,15 @@ pub fn render_3d_scene(
     let clear_color = [0.04, 0.04, 0.08, 1.0f32];
     renderer.begin_scene_pass(cmd, depth_buf, clear_color);
 
+    let frustum = Frustum::from_view_proj(&view_proj);
+
     for (entity, _transform, mesh_comp) in ecs_world.query::<(Entity, &Transform, &MeshComponent)>().iter() {
         if let Some(mesh) = meshes.get(&mesh_comp.0) {
             let model = world_transform(ecs_world, entity);
+            let world_aabb = mesh.aabb.transform(model);
+            if !frustum.intersects_aabb(&world_aabb) {
+                continue;
+            }
 
             let mat: Option<(Vec4, f32)> = ecs_world.get::<&Material>(entity).ok()
                 .map(|m| (Vec4::new(m.base_color.x, m.base_color.y, m.base_color.z, m.roughness), m.metallic));
@@ -182,3 +200,7 @@ pub fn render_2d_overlay(
     pc.copy_from_slice(bytemuck::bytes_of(&model));
     renderer.draw_2d(cmd, pipeline, quad_buffer, 4, &pc, desc_set);
 }
+
+#[cfg(test)]
+#[path = "render_tests.rs"]
+mod tests;

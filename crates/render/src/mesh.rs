@@ -1,5 +1,6 @@
 use ash::vk;
 use gpu_allocator::MemoryLocation;
+use rustix_core::math::{Vec3, Aabb};
 use crate::memory::GpuBuffer;
 use crate::{Renderer, RenderError};
 
@@ -9,6 +10,7 @@ pub struct Mesh {
     pub vertex_count: u32,
     pub index_count: u32,
     pub has_indices: bool,
+    pub aabb: Aabb,
 }
 
 impl Mesh {
@@ -19,7 +21,27 @@ impl Mesh {
             let ib = renderer.create_buffer(&format!("{name}_ib"), (idx_data.len() * 2) as u64, vk::BufferUsageFlags::INDEX_BUFFER, MemoryLocation::CpuToGpu)?;
             ib.write(bytemuck::cast_slice(idx_data)); (Some(ib), true, idx_count)
         } else { (None, false, 0) };
-        Ok(Self { vertex_buffer: vb, index_buffer: ib, vertex_count, index_count, has_indices })
+        let aabb = compute_aabb_from_vertices(vertices);
+        Ok(Self { vertex_buffer: vb, index_buffer: ib, vertex_count, index_count, has_indices, aabb })
+    }
+}
+
+fn compute_aabb_from_vertices(vertices: &[u8]) -> Aabb {
+    let mut min = Vec3::splat(f32::MAX);
+    let mut max = Vec3::splat(f32::MIN);
+    // Each vertex is 24 bytes: position[3*f32] + normal[3*f32]
+    let stride = 24usize;
+    for chunk in vertices.chunks_exact(stride) {
+        let x = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        let y = f32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]);
+        let z = f32::from_le_bytes([chunk[8], chunk[9], chunk[10], chunk[11]]);
+        min = min.min(Vec3::new(x, y, z));
+        max = max.max(Vec3::new(x, y, z));
+    }
+    if min.x == f32::MAX {
+        Aabb { min: Vec3::ZERO, max: Vec3::ZERO }
+    } else {
+        Aabb { min, max }
     }
 }
 
@@ -188,3 +210,7 @@ pub mod procedural {
         (verts, idx)
     }
 }
+
+#[cfg(test)]
+#[path = "mesh_tests.rs"]
+mod tests;

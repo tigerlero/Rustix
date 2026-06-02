@@ -9,6 +9,78 @@ pub const PUSH_CONSTANT_SIZE: u32 = 128; // Mat4(64) + dir_light(16) + dir_color
 pub const UBO_SCENE_SIZE: u64 = 432; // view_proj(64)+cam(16)+count(4)+pad(12)+8*PointLight(256)+fog(16)+light_view_proj(64)
 pub const PUSH_CONSTANT_SIZE_2D: u32 = 64;
 
+/// Pure function returning the descriptor set layout binding for the shadow pass UBO.
+pub fn shadow_descriptor_set_bindings() -> [vk::DescriptorSetLayoutBinding<'static>; 1] {
+    [vk::DescriptorSetLayoutBinding::default()
+        .binding(0)
+        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::VERTEX)]
+}
+
+/// Pure function returning the descriptor set layout bindings for the main graphics pass.
+/// UBO (binding 0), shadow sampled image (binding 1), shadow sampler (binding 2).
+pub fn main_descriptor_set_bindings() -> [vk::DescriptorSetLayoutBinding<'static>; 3] {
+    [
+        vk::DescriptorSetLayoutBinding::default()
+            .binding(0)
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .descriptor_count(1)
+            .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT),
+        vk::DescriptorSetLayoutBinding::default()
+            .binding(1)
+            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+            .descriptor_count(1)
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+        vk::DescriptorSetLayoutBinding::default()
+            .binding(2)
+            .descriptor_type(vk::DescriptorType::SAMPLER)
+            .descriptor_count(1)
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+    ]
+}
+
+/// Pure function returning the push constant range for the shadow pass.
+pub fn shadow_push_constant_range() -> vk::PushConstantRange {
+    vk::PushConstantRange::default()
+        .stage_flags(vk::ShaderStageFlags::VERTEX)
+        .offset(0)
+        .size(PUSH_CONSTANT_SIZE)
+}
+
+/// Pure function returning the vertex input configuration for the shadow pass.
+/// Position (location 0) and normal (location 1), stride 24 bytes.
+pub fn shadow_vertex_input_state() -> (
+    [vk::VertexInputBindingDescription; 1],
+    [vk::VertexInputAttributeDescription; 2],
+) {
+    let vb = [vk::VertexInputBindingDescription::default()
+        .binding(0)
+        .stride(24)
+        .input_rate(vk::VertexInputRate::VERTEX)];
+    let va = [
+        vk::VertexInputAttributeDescription::default()
+            .binding(0)
+            .location(0)
+            .format(vk::Format::R32G32B32_SFLOAT)
+            .offset(0),
+        vk::VertexInputAttributeDescription::default()
+            .binding(0)
+            .location(1)
+            .format(vk::Format::R32G32B32_SFLOAT)
+            .offset(12),
+    ];
+    (vb, va)
+}
+
+/// Pure function returning the depth-stencil state for the shadow pass.
+pub fn shadow_depth_stencil_state() -> vk::PipelineDepthStencilStateCreateInfo<'static> {
+    vk::PipelineDepthStencilStateCreateInfo::default()
+        .depth_test_enable(true)
+        .depth_write_enable(true)
+        .depth_compare_op(vk::CompareOp::LESS)
+}
+
 pub struct GraphicsPipeline {
     pub pipeline: vk::Pipeline,
     pub layout: vk::PipelineLayout,
@@ -24,16 +96,7 @@ impl GraphicsPipeline {
     ) -> Result<Self, RenderError> {
         let stages = [vs.stage_create_info(), fs.stage_create_info()];
 
-        let ubo_binding = vk::DescriptorSetLayoutBinding::default()
-            .binding(0).descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .descriptor_count(1).stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT);
-        let shadow_tex_binding = vk::DescriptorSetLayoutBinding::default()
-            .binding(1).descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
-            .descriptor_count(1).stage_flags(vk::ShaderStageFlags::FRAGMENT);
-        let shadow_samp_binding = vk::DescriptorSetLayoutBinding::default()
-            .binding(2).descriptor_type(vk::DescriptorType::SAMPLER)
-            .descriptor_count(1).stage_flags(vk::ShaderStageFlags::FRAGMENT);
-        let bindings = [ubo_binding, shadow_tex_binding, shadow_samp_binding];
+        let bindings = main_descriptor_set_bindings();
         let desc_layout = unsafe {
             device.logical().create_descriptor_set_layout(
                 &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings), None,
@@ -109,10 +172,7 @@ impl ShadowPipeline {
         let stages = [vs.stage_create_info()];
 
         // Same descriptor set layout as main pipeline (UBO binding 0 with light_view_proj)
-        let ubo_binding = vk::DescriptorSetLayoutBinding::default()
-            .binding(0).descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .descriptor_count(1).stage_flags(vk::ShaderStageFlags::VERTEX);
-        let bindings = [ubo_binding];
+        let bindings = shadow_descriptor_set_bindings();
         let desc_layout = unsafe {
             device.logical().create_descriptor_set_layout(
                 &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings), None,
@@ -120,10 +180,7 @@ impl ShadowPipeline {
         };
 
         let set_layouts = [desc_layout];
-        let push_range = vk::PushConstantRange::default()
-            .stage_flags(vk::ShaderStageFlags::VERTEX)
-            .offset(0)
-            .size(PUSH_CONSTANT_SIZE);
+        let push_range = shadow_push_constant_range();
         let push_ranges = [push_range];
 
         let layout = unsafe {
@@ -132,13 +189,7 @@ impl ShadowPipeline {
             ).map_err(|e| RenderError::PipelineCreation(format!("shadow layout: {e}")))?
         };
 
-        let stride = 24u32; // pos(12) + normal(12)
-        let vb = vk::VertexInputBindingDescription::default().binding(0).stride(stride).input_rate(vk::VertexInputRate::VERTEX);
-        let va = [
-            vk::VertexInputAttributeDescription::default().binding(0).location(0).format(vk::Format::R32G32B32_SFLOAT).offset(0),
-            vk::VertexInputAttributeDescription::default().binding(0).location(1).format(vk::Format::R32G32B32_SFLOAT).offset(12),
-        ];
-        let vbs = [vb];
+        let (vbs, va) = shadow_vertex_input_state();
         let vi = vk::PipelineVertexInputStateCreateInfo::default().vertex_binding_descriptions(&vbs).vertex_attribute_descriptions(&va);
         let ia = vk::PipelineInputAssemblyStateCreateInfo::default().topology(vk::PrimitiveTopology::TRIANGLE_LIST);
         let vps = [vk::Viewport::default()]; let scs = [vk::Rect2D::default()];
@@ -149,8 +200,7 @@ impl ShadowPipeline {
             .front_face(vk::FrontFace::CLOCKWISE)
             .line_width(1.0);
         let ms = vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(vk::SampleCountFlags::TYPE_1);
-        let ds = vk::PipelineDepthStencilStateCreateInfo::default()
-            .depth_test_enable(true).depth_write_enable(true).depth_compare_op(vk::CompareOp::LESS);
+        let ds = shadow_depth_stencil_state();
         let cb = vk::PipelineColorBlendStateCreateInfo::default();
         let dyns = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
         let dy = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dyns);
@@ -293,3 +343,7 @@ impl GraphicsPipeline2D {
         Ok(Self { pipeline, layout, desc_layout, desc_pool })
     }
 }
+
+#[cfg(test)]
+#[path = "pipeline_tests.rs"]
+mod tests;

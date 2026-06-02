@@ -37,7 +37,7 @@ fn main() {
     let log_buffer = rustix_core::init_log_capture(500);
     rustix_core::diagnostics::init_logging_with_capture(
         &rustix_core::diagnostics::LogConfig {
-            level: config.log_level(), crate_filters: vec![], json: false, thread_ids: true, targets: true, tracy_enabled: false,
+            level: config.log_level(), crate_filters: vec![], json: false, json_file_path: None, thread_ids: true, targets: true, tracy_enabled: false,
         },
         Some(log_buffer.clone()),
     );
@@ -47,7 +47,7 @@ fn main() {
         Ok(el) => el,
         Err(e) => { eprintln!("Failed to create event loop: {e}"); std::process::exit(1); }
     };
-    let wc = WindowConfig { title: "Rustix Editor".into(), width: 1600, height: 900, fullscreen: false, resizable: true, decorations: true };
+    let wc = WindowConfig { title: "Rustix Editor".into(), width: 1600, height: 900, fullscreen: false, fullscreen_mode: rustix_platform::FullscreenMode::Windowed, resizable: true, decorations: true };
     let mut window = match WindowHandle::new(&el, &wc) {
         Ok(w) => w,
         Err(e) => { eprintln!("Failed to create window: {e}"); std::process::exit(1); }
