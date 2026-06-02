@@ -433,7 +433,8 @@ pub fn show_viewport(
             cam.distance = 8.0;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Delete)) {
-            if let Some(sel) = *selected_entity.borrow() {
+            let sel = *selected_entity.borrow();
+            if let Some(sel) = sel {
                 if world.get::<&Name>(sel).is_ok() {
                     let snapshot = crate::scene::entity_to_scene_entity(world, sel);
                     let _ = world.despawn(sel);

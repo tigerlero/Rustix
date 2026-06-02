@@ -5,7 +5,7 @@ use rustix_core::ecs::EcsWorld;
 use rustix_core::job::JobSystem;
 use rustix_core::memory::FrameMemory;
 
-use crate::plugin::{AppBuilder, Plugin};
+use crate::plugin::AppBuilder;
 use crate::schedule::Schedule;
 
 pub const FIXED_DT: f32 = 1.0 / 120.0;
@@ -30,6 +30,7 @@ impl App {
             level: config.log_level(),
             crate_filters: config.logging.crate_filters.clone(),
             json: config.logging.json,
+            json_file_path: None,
             thread_ids: true,
             targets: true,
             tracy_enabled: cfg!(feature = "profiling"),

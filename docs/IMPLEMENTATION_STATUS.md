@@ -1,8 +1,8 @@
 # Rustix Engine — Implementation Status
 
-**Date:** 2026-05-24  
+**Date:** 2026-06-02  
 **Rust:** 1.95.0 stable  
-**Status:** Phase 0 complete + Phase 0.5 (Editor UI) in progress
+**Status:** Phase 0 + Phase 0.5 (Editor UI) complete. Phase 1 (Core systems expansion) in progress.
 
 ---
 
@@ -27,8 +27,23 @@ All 17 workspace crates compile without errors.
 | Jobs | `job.rs` | Done | `JobSystem` (rayon thread pool) + `JobSystemConfig` |
 | Math | `math.rs` | Done | `glam` re-export + `Aabb`, `Sphere`, `Frustum`, `Plane`, `Ray`, `Color`, `lerp`/`smoothstep` |
 | Memory | `memory.rs` | Done | `FrameAllocator` (bump), `PoolAllocator`, `FrameMemory`, `Aligned<T>` (64-byte) |
-| Diagnostics | `diagnostics.rs` | Done | `tracing` init + `LogConfig` + `profile_scope!`/`profile_frame!` macros |
-| Config | `config.rs` | Done | `EngineConfig` (TOML), `WindowConfig`, `RenderConfig`, `JobSystemConfig`, layered merging |
+| Thread-local Arena | `thread_local_arena.rs` | Done | Per-thread `FrameAllocator` via `thread_local!` for zero-contention allocation |
+| GPU Staging | `gpu_staging.rs` | Done | Coherent mapped ring buffer with fence tracking for async CPU→GPU uploads |
+| Diagnostics | `diagnostics.rs` | Done | `tracing` init + `LogConfig` + `JsonFileLayer` (JSON Lines file logging) + `profile_scope!`/`profile_frame!` macros |
+| Log Capture | `log_capture.rs` | Done | Tracing subscriber → circular ring buffer for runtime console inspection |
+| Config | `config.rs` | Done | `EngineConfig` (TOML), `WindowConfig`, `RenderConfig`, `JobSystemConfig`, layered merging + `ConfigWatcher` (polling file reload) |
+| Dev Toggles | `dev_toggles.rs` | Done | `DevToggles` atomic-bool resource + `HotkeyBindings` + `update_toggles` system (F1/F2/F3) |
+| Transform Hierarchy | `transform_hierarchy.rs` | Done | BFS world matrix computation from roots with cycle detection and topological ordering |
+| Component Registry | `component_registry.rs` | Done | Type-erased component storage via `TypeId` + vtable (default, clone, drop, insert, remove) |
+| Command Buffer | `command_buffer.rs` | Done | Deferred world mutation: `Spawn`, `Despawn`, `InsertBundle`, `Remove`, etc. |
+| Change Tracker | `change_tracker.rs` | Done | Dirty flags per component per tick (`flag<T>()`, `is_changed<T>()`, `changed_entities::<T>()`) |
+| Component Groups | `component_groups.rs` | Done | Named sets of `TypeId`s for cache-optimal archetype pre-warming |
+| World Registry | `world_registry.rs` | Done | Named `hecs::World` instances + active-world pointer + entity mapping between worlds |
+| Task Graph | `task_graph.rs` | Done | DAG of `TaskNode`s with Kahn's topological sort + parallel frontier execution |
+| Task Priority | `task_priority.rs` | Done | Dedicated threads with high/medium/low priority queues |
+| System Monitor | `system_monitor.rs` | Done | Frame timing + per-system CPU cost tracking |
+| Memory Tracker | `memory_tracker.rs` | Done | Allocation tracking + high-water mark reporting |
+| SOA Storage | `soa_storage.rs` | Done | Structure-of-arrays dense storage for cache-efficient iteration |
 
 **Deps:** `hecs 0.11`, `glam 0.29`, `rayon 1.10`, `tracing 0.1`, `tracing-subscriber 0.3`, `parking_lot 0.12`, `serde 1`, `toml 0.8`, `dirs 6`
 
@@ -36,7 +51,7 @@ All 17 workspace crates compile without errors.
 
 | Module | File | Status | What it provides |
 |--------|------|--------|-----------------|
-| Window | `window.rs` | Done | `WindowHandle` wrapping `winit 0.30` `Window`, raw handles access |
+| Window | `window.rs` | Done | `WindowHandle` wrapping `winit 0.30` `Window`, `FullscreenMode` (exclusive/borderless/windowed), raw handles access |
 | Input | `input.rs` | Done | `InputManager` + `KeyboardState`/`MouseState` + winit event forwarding |
 
 **Features enabled:** Wayland, X11, rwh_06 (raw window handles)  
@@ -72,16 +87,20 @@ Binary entry point with egui-based editor overlay:
 - [x] egui Vulkan renderer (custom backend, WGSL fragment shader, separate texture+sampler)
 - [x] Font rendering with correct coordinate system (Y-down throughout)
 - [x] Native file dialogs via `rfd` for project open/create
-- [x] Recent project tracking (in-memory, max 10, deduplicated) - now persisted to disk via `dirs` crate
+- [x] Recent project tracking (persisted to disk via `dirs` crate)
 - [x] Startup screen: "Project Hub" with recent projects + New/Open buttons
 - [x] Editor screen: menu bar, hierarchy, inspector, console, scene view panels
 - [x] Project switching (Back to Project Hub from File menu)
 - [x] ECS entity integration in hierarchy panel with `Transform` and `Name` components
+- [x] Real log capture via tracing → console panel (ring buffer + color-coded display)
+- [x] Asset browsing in console panel (file listing with type icons + coloring)
+- [x] Project serialization — save/load `.rustixproj` with full scene data
+- [x] Window resize handling (swapchain + depth buffer recreation)
+- [x] Undo/redo system (Ctrl+Z/Ctrl+Shift+Z)
+- [x] Gizmos (translate handles for X/Y/Z axes)
+- [x] Per-entity mesh rendering (mesh registry, GLB import, procedural presets)
+- [x] 3D scene grid overlay with entity position dots in scene view
 - [ ] Offscreen 3D scene rendering in scene view panel
-- [ ] Real log capture via tracing → console panel
-- [ ] Asset browsing
-- [ ] Project serialization (save/load `.rustixproj`) - find_project_dir added
-- [ ] Window resize handling
 
 ---
 

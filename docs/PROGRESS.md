@@ -1,22 +1,23 @@
 # Rustix Engine — Feature Progress & Completion
 
-**Last updated:** 2026-06-01  
+**Last updated:** 2026-06-02  
 **Rust:** 1.95.0 stable  
-**Total source:** ~12,000 lines across 16 crates + 1 binary  
+**Total source:** ~22,300 lines across 16 crates + 1 binary  
 
 ---
 
 ## Overall Status
 
 ```
-Core          ██████████░░░░  60%  ECS, jobs, math, memory, config, diagnostics
-Platform      ███████░░░░░░░  45%  Windowing, input (keyboard+mouse)
-Renderer      ██████░░░░░░░░  35%  Vulkan backend done, PBR/lighting not started
+Core          ██████████████░░  85%  ECS, jobs, math, memory, config, diagnostics
+Platform      ████████░░░░░░░░  55%  Windowing, input (keyboard+mouse), fullscreen
+Renderer      ███████░░░░░░░░░  40%  Vulkan backend done, staging, PBR/lighting not started
 Audio         ██████████░░░░  65%  Decoding, spatial, effects all implemented
 Scripting     ████████░░░░░░  50%  Rhai engine, ECS bridge — needs hot-reload
 AI            ███████░░░░░░░  45%  Behavior trees, A* pathfinding, navmesh
-UI Framework  █████░░░░░░░░░  20%  Button/slider/label stubs, no text rendering
-Asset System  ████░░░░░░░░░░  15%  Handle system, hot-reload stubs, no import
+Editor UI     ████████████░░  80%  egui editor with full text rendering, panels, gizmos
+Game UI       █████░░░░░░░░░  20%  Button/slider/label stubs, no text rendering
+Asset System  ██████░░░░░░░░  30%  Handle system, glTF mesh import, hot-reload
 Engine Facade ██████████████  85%  Plugin trait, AppBuilder, Schedule
 Runtime       ████████████░░  70%  Editor UI, project mgmt, gizmos, undo/redo
 Physics       ░░░░░░░░░░░░░░   0%  Rapier3D not integrated
@@ -26,48 +27,57 @@ Terrain       ░░░░░░░░░░░░░░   0%  Not started
 World         ░░░░░░░░░░░░░░   0%  Not started
 Editor Crate  ░░░░░░░░░░░░░░   0%  Not started
 
-OVERALL       ████████████████░░░░░░░░░░░░░░  25-30%
+OVERALL       ██████████████████░░░░░░░░░░░░  35-40%
 ```
 
 ---
 
-## 1. Core (`rustix-core`) — 60%
+## 1. Core (`rustix-core`) — 85%
 
 ### Implemented
 - ECS via `hecs` with custom `Schedule` + stage-based system ordering
 - `Transform` component with full translation/rotation/scale chain
 - `JobSystem` via rayon work-stealing pool
 - `FrameAllocator` (bump) + `PoolAllocator` + `FrameMemory`
+- `ThreadLocalArena` — per-thread bump allocator for zero-contention allocation
+- `GpuStagingBuffer` — coherent mapped ring buffer with fence tracking for CPU→GPU uploads
 - `Aligned<T>` (cache-line aligned, 64-byte)
 - Math: `Aabb`, `Sphere`, `Frustum`, `Plane`, `Ray`, `Color`, lerp/smoothstep
 - `EngineConfig` TOML loading with layered merge (default → project → user → CLI)
+- `ConfigWatcher` — polling file watcher for runtime config reload with callback
+- `DevToggles` + `HotkeyBindings` — atomic-bool toggles for dev/debug/profiling (F1/F2/F3)
 - Structured logging via `tracing` with level/per-crate filtering
+- `JsonFileLayer` — JSON Lines file logging with field escaping and rotation
 - `LogCapture` — tracing subscriber → ring buffer (used by editor Console)
+- `ComponentRegistry` — type-erased component storage via `TypeId` + vtable
+- `CommandBuffer` — deferred world mutation (`Spawn`, `Despawn`, `InsertBundle`, `Remove`, etc.)
+- `ChangeTracker` — dirty flags per component per tick
+- `ComponentGroup` / `GroupRegistry` — named component sets for cache-optimal archetypes
+- `WorldRegistry` — multi-world support (game, editor, preview) with entity mapping
+- `TransformHierarchy` — BFS world matrix computation with cycle detection + topological ordering
+- `TaskGraph` — DAG task dependency system with Kahn's sort + parallel execution
+- `PriorityTaskSystem` — high/medium/low priority worker threads
+- `SystemMonitor` — frame timing + per-system CPU cost tracking
+- `MemoryTracker` — allocation tracking + high-water mark reporting
+- `SoaStorage` — structure-of-arrays dense storage
 - `ScriptComponent` (stub for scripting integration)
 
 ### What's needed to reach 100%
 | Feature | Priority | What to build |
 |---------|----------|---------------|
-| Change detection | Medium | Dirty flags per component per tick for ECS |
-| Dynamic bundles | Medium | Runtime add/remove component groups |
-| Task graph with deps | Low | DAG of jobs with explicit edges, not just fork-join |
 | Thread affinity runtime | Low | `pthread_setaffinity_np` at pool start |
-| Task priorities | Low | High/medium/low queues in job system |
-| Profiling integration | Low | Tracy zones per task |
-| Thread-local arenas | Medium | `thread_local!` bump allocator for lock-free allocation |
-| Memory tracker | Low | Leak detection, allocation statistics |
-| Transform hierarchy | Medium | Local→world matrix compute, dirty propagation |
-| Runtime config reload | Low | File watcher → hot-reload engine config |
-| Hot-key debug toggles | Low | Dev mode, debug rendering, profiling toggles |
-| JSON log output | Low | Structured file logging for CI/analysis |
-| Log rotation | Low | File size limits, rotation in release builds |
+| Tracy profiling integration | Low | CPU/GPU zones per task |
+| Log rotation in release | Low | File size limits, auto-rotation |
+| Entity serialization | Medium | Save/load ECS world to disk format |
 
 ---
 
-## 2. Platform (`rustix-platform`) — 45%
+## 2. Platform (`rustix-platform`) — 55%
 
 ### Implemented
 - `WindowHandle` wrapping `winit 0.30` — Wayland + X11
+- `FullscreenMode` enum — exclusive (best video mode auto-select) + borderless + windowed
+- `WindowHandle::set_fullscreen_mode()` / `toggle_fullscreen()` — runtime fullscreen toggle
 - `InputManager` — keyboard (full keycode mapping), mouse (position/delta/scroll/buttons)
 - Raw window handle access for Vulkan surface creation
 - File dialog via `rfd` (native OS picker)
@@ -78,8 +88,6 @@ OVERALL       ████████████████░░░░░░
 | Gamepad input | Medium | `gilrs` integration, button/axis mapping |
 | Input action system | High | Abstract bindings ("Jump" → Space/A button) in config |
 | Text input (IME) | Medium | `winit` IME for Wayland text entry |
-| Fullscreen exclusive | Low | `winit` fullscreen API |
-| Borderless windowed | Low | Toggle borderless mode |
 | Multi-window support | Medium | N viewports for editor (scene + debug + tools) |
 | DPI-aware scaling | Medium | Handle `ScaleFactorChanged`, resize fonts |
 | Cursor modes | Low | Normal/hidden/captured/raw-delta |
@@ -159,7 +167,29 @@ OVERALL       ████████████████░░░░░░
 
 ---
 
-## 5. UI Framework (`rustix-ui`) — 20%
+## 5. Editor UI (egui in `apps/runtime`) — 80%
+
+### Implemented
+- Full egui-based editor with startup screen, editor panels, menu bar
+- Complete text rendering via egui font atlas (NotoSans, NotoSansMono, NotoEmoji)
+- Image widget (texture-backed via egui::Image)
+- Text input (cursor, selection, copy/paste)
+- Scrollable regions (clipped scrolling in hierarchy, inspector, console)
+- Custom dark theme with `RichText` color/size modifiers
+- Project Hub, Hierarchy, Inspector, Console, Asset Browser, Viewport panels
+- Gizmo controls (translate handles for X/Y/Z axes)
+- Undo/redo UI integration
+
+### What's needed to reach 100%
+| Feature | Priority | What to build |
+|---------|----------|---------------|
+| Flexbox/grid layout | Medium | Flex/grid layout engine for game UI |
+| CSS-like styling | Low | Color/font/border themes for game UI |
+| Accessibility | Low | Screen reader API |
+
+---
+
+## 5b. Game UI Framework (`rustix-ui` crate) — 20%
 
 ### Implemented
 - `UIContext` — immediate mode context
@@ -172,7 +202,7 @@ OVERALL       ████████████████░░░░░░
 ### What's needed to reach 100%
 | Feature | Priority | What to build |
 |---------|----------|---------------|
-| **Text rendering** | **HIGH** | Glyph atlas, font rasterization (ab_glyph), kerning, wrapping |
+| **Text rendering** | **HIGH** | Glyph atlas, font rasterization, kerning, wrapping |
 | Image widget | Medium | Texture-backed image display |
 | Text input | Medium | Cursor, selection, IME |
 | Flexbox/grid layout | Medium | Flex/grid layout engine |
@@ -225,7 +255,7 @@ OVERALL       ████████████████░░░░░░
 
 ---
 
-## 8. Asset System (`rustix-asset`) — 15%
+## 8. Asset System (`rustix-asset`) — 30%
 
 ### Implemented
 - `Handle<T>` — 8-byte asset handle
@@ -233,11 +263,12 @@ OVERALL       ████████████████░░░░░░
 - `HotReloadWatcher` — file watcher via `notify`
 - `LoadState` enum — unloaded/loading/loaded/error
 - `Importer` — RON/JSON import/export traits
+- glTF 2.0 mesh + material import (via `gltf_loader.rs` in runtime)
+- Asset file browser in console panel with type icons
 
 ### What's needed to reach 100%
 | Feature | Priority | What to build |
 |---------|----------|---------------|
-| **glTF 2.0 import** | **HIGH** | Full mesh + material + skeleton + animation loading |
 | **Texture loading** | **HIGH** | PNG/HDR/KTX2 → GPU upload pipeline |
 | **Async loading** | **HIGH** | tokio IO on worker threads, GPU upload via transfer queue |
 | Asset caching | Medium | Disk cache of cooked assets |
@@ -246,6 +277,7 @@ OVERALL       ████████████████░░░░░░
 | Mesh optimization | Low | Vertex cache reordering, stripification |
 | Asset dependency graph | Low | Material → texture hot-reload chain |
 | Shader compilation pipeline | Medium | GLSL → SPIR-V at build time |
+| glTF skeleton + animation | Medium | Skin, joints, animation clips |
 
 ---
 
