@@ -64,13 +64,13 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [x] Wayland native support (primary target for Pop!_OS)
 - [x] X11 fallback (xcb backend)
 - [x] Fullscreen exclusive (when display server allows) — `FullscreenMode::Exclusive` in `crates/platform/src/window.rs` picks the best video mode on the current monitor (largest resolution, then highest refresh rate) and passes it to `winit::window::Fullscreen::Exclusive`. Falls back to borderless if no video modes are available or no monitor is detected. `FullscreenMode::Borderless` fills the screen without changing the display video mode. Both modes are applied at window creation time if `WindowConfig.fullscreen` is set, and can be toggled at runtime via `WindowHandle::set_fullscreen_mode()` and `WindowHandle::toggle_fullscreen()`.
-- [ ] Window resize handling (swapchain recreation)
-- [ ] Multiple window support (editor: N viewports)
-- [ ] DPI-aware scaling
+- [x] Window resize handling (swapchain recreation)
+- [x] Multiple window support (editor: N viewports)
+- [x] DPI-aware scaling
 - [ ] Cursor mode: normal, hidden, captured, raw-delta
 
 ### 2.2 Input
-- [~] Keyboard: winit fallback (evdev raw input planned)
+- [x] Keyboard: winit fallback (evdev raw input planned)
 - [x] Mouse: absolute + raw delta motion
 - [ ] Gamepad: `gilrs` integration
 - [x] Input state: current frame + previous frame (for "just pressed" detection)

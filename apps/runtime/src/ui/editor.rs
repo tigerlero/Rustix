@@ -14,14 +14,14 @@ use super::menu_bar;
 use super::hierarchy;
 use super::inspector;
 use super::console;
-use super::viewport;
+use super::viewport::{self, ViewportManager};
 use super::dialogs;
 use super::undo_redo;
 
 #[allow(clippy::too_many_arguments)]
 pub fn editor_screen(
     ctx: &egui::Context,
-    cam: &mut EditorCamera,
+    viewport_manager: &mut ViewportManager,
     _window: &mut rustix_platform::window::WindowHandle,
     screen: &mut AppScreen,
     _input: &InputManager,
@@ -50,11 +50,12 @@ pub fn editor_screen(
     audio_instance: &mut Option<SoundInstance>,
     waveform_viewer: &mut waveform::WaveformViewer,
 ) {
-    menu_bar::show_menu_bar(ctx, cam, _input, target, screen, ww, wh, fps, open_project, new_project, project_name, current_project, project_dir, world, dirty, show_confirm, confirm_target, show_settings, sprite_editor, pending_mesh_load);
+    menu_bar::show_menu_bar(ctx, viewport_manager, _input, target, screen, ww, wh, fps, open_project, new_project, project_name, current_project, project_dir, world, dirty, show_confirm, confirm_target, show_settings, sprite_editor, pending_mesh_load);
     hierarchy::show_hierarchy(ctx, world, selected_entity, pending_delete, dirty, renaming, rename_buffer, undo_history);
+    let cam = viewport_manager.primary_camera_mut();
     inspector::show_inspector(ctx, cam, world, selected_entity, dirty, undo_history);
     console::show_console(ctx, project_dir, audio_engine, audio_instance, waveform_viewer);
-    viewport::show_viewport(ctx, cam, world, selected_entity, dirty, undo_history);
+    viewport::show_viewports(ctx, viewport_manager, world, selected_entity, dirty, undo_history);
     dialogs::show_dialogs(ctx, screen, target, current_project, dirty, show_confirm, confirm_target, show_settings, sprite_editor);
     undo_redo::handle_undo_redo(ctx, world, selected_entity, dirty, undo_history);
 
@@ -63,14 +64,15 @@ pub fn editor_screen(
             proj.settings.resolution_width = *ww;
             proj.settings.resolution_height = *wh;
             proj.scene = world_to_scene(world);
+            let primary = viewport_manager.primary_camera();
             proj.editor_camera = Some(EditorCameraState {
-                position: cam.position.into(),
-                center: cam.center.into(),
-                yaw: cam.yaw,
-                pitch: cam.pitch,
-                distance: cam.distance,
-                mode: cam.mode,
-                follow_target: cam.follow_target,
+                position: primary.position.into(),
+                center: primary.center.into(),
+                yaw: primary.yaw,
+                pitch: primary.pitch,
+                distance: primary.distance,
+                mode: primary.mode,
+                follow_target: primary.follow_target,
             });
             if let Some(ref dir) = project_dir {
                 let _ = write_project_file(Path::new(dir), proj);

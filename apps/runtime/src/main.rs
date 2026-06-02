@@ -78,8 +78,9 @@ fn main() {
         Err(e) => { eprintln!("Failed to create egui renderer: {e}"); std::process::exit(1); }
     };
 
-    let mut cam = EditorCamera::new();
+    let mut viewport_manager = ui::viewport::ViewportManager::new();
     let mut last = Instant::now();
+    let mut next_frame_time = Instant::now();
 
     let mut fc = 0u64;
     let mut ft = Instant::now();
@@ -117,8 +118,11 @@ fn main() {
     let mut shadow_map: Option<rustix_render::GpuTexture> = None;
     let mut shadow_layout = vk::ImageLayout::UNDEFINED;
 
-    let mut viewport_framebuffers: [Option<rustix_render::Framebuffer>; 3] = std::array::from_fn(|_| None);
-    let mut viewport_fb_size: (u32, u32) = (0, 0);
+    // Per-viewport offscreen framebuffers (each triple-buffered).
+    let mut viewport_framebuffers: Vec<[Option<rustix_render::Framebuffer>; 3]> = (0..ui::viewport::MAX_VIEWPORTS)
+        .map(|_| [None, None, None])
+        .collect();
+    let mut viewport_fb_sizes: Vec<(u32, u32)> = vec![(0, 0); ui::viewport::MAX_VIEWPORTS];
 
     let mut pipeline_2d: Option<rustix_render::pipeline::GraphicsPipeline2D> = None;
     let mut ubo_2d: Option<rustix_render::memory::GpuBuffer> = None;
@@ -168,20 +172,29 @@ fn main() {
                             needs_resize = true;
                         }
                     }
+                    winit::event::WindowEvent::ScaleFactorChanged { .. } => {
+                        // egui_winit updates pixels_per_point automatically.
+                        // Invalidate all viewport framebuffers so they are recreated at the new DPI.
+                        for vp_idx in 0..viewport_fb_sizes.len() {
+                            viewport_fb_sizes[vp_idx] = (0, 0);
+                            for fb in &mut viewport_framebuffers[vp_idx] { *fb = None; }
+                        }
+                        tracing::info!("DPI scale factor changed, invalidating viewport framebuffers");
+                    }
                     winit::event::WindowEvent::RedrawRequested => {
                         let now = Instant::now();
                         let dt = now.duration_since(last).as_secs_f32().min(0.1);
                         last = now;
 
                         input.poll();
-                        cam.update(&input, dt);
+                        viewport_manager.primary_camera_mut().update(&input, dt);
 
                         let follow_pos = selected_entity.borrow().and_then(|sel| {
                             let matrix = world_transform(&ecs_world, sel);
                             let (_scale, _rot, pos) = matrix.to_scale_rotation_translation();
                             Some(pos)
                         });
-                        cam.follow(follow_pos);
+                        viewport_manager.primary_camera_mut().follow(follow_pos);
 
                         // Update animations
                         {
@@ -281,72 +294,93 @@ fn main() {
                             }
                         }
 
-                        // Determine viewport size from previous frame's egui rect
-                        let viewport_rect: Option<egui::Rect> = egui_ctx.data(|d| d.get_temp(egui::Id::new("viewport_rect")));
-                        let has_valid_vp_rect = viewport_rect.is_some();
-                        let (vp_w, vp_h) = viewport_rect.map(|r| (r.width().max(1.0) as u32, r.height().max(1.0) as u32))
-                            .unwrap_or((ww, wh));
-
-                        // Create/recreate viewport framebuffer when size changes (only when we have a valid rect)
+                        // Multi-viewport: determine size and create framebuffers for each open viewport.
                         let frame_idx = renderer.frame_index() % 3;
-                        if screen == AppScreen::Editor && has_valid_vp_rect {
-                            if viewport_fb_size != (vp_w, vp_h) {
-                                tracing::trace!("main: recreating viewport framebuffers {}x{}", vp_w, vp_h);
-                                for fb in &mut viewport_framebuffers { *fb = None; }
-                                viewport_fb_size = (vp_w, vp_h);
-                            }
-                            if viewport_framebuffers[frame_idx].is_none() {
-                                match renderer.create_framebuffer(vp_w, vp_h, sc_format) {
-                                    Ok(fb) => {
-                                        viewport_framebuffers[frame_idx] = Some(fb);
-                                        tracing::trace!("main: viewport framebuffer {} created", frame_idx);
+                        let mut any_offscreen = false;
+                        let num_viewports = viewport_manager.viewports.len();
+
+                        let ppp = egui_ctx.pixels_per_point();
+                        for vp_idx in 0..num_viewports {
+                            let rect_key = egui::Id::new(format!("viewport_rect_{}", vp_idx));
+                            let viewport_rect: Option<egui::Rect> = egui_ctx.data(|d| d.get_temp(rect_key));
+                            let has_valid = viewport_rect.is_some();
+                            let (vp_w, vp_h) = viewport_rect.map(|r| {
+                                let w = (r.width() * ppp).ceil().max(1.0) as u32;
+                                let h = (r.height() * ppp).ceil().max(1.0) as u32;
+                                (w, h)
+                            }).unwrap_or((ww, wh));
+
+                            if (screen == AppScreen::Editor || screen == AppScreen::PlayTest) && has_valid {
+                                if viewport_fb_sizes[vp_idx] != (vp_w, vp_h) {
+                                    tracing::trace!("main: recreating viewport {} framebuffers {}x{}", vp_idx, vp_w, vp_h);
+                                    for fb in &mut viewport_framebuffers[vp_idx] { *fb = None; }
+                                    viewport_fb_sizes[vp_idx] = (vp_w, vp_h);
+                                }
+                                if viewport_framebuffers[vp_idx][frame_idx].is_none() {
+                                    match renderer.create_framebuffer(vp_w, vp_h, sc_format) {
+                                        Ok(fb) => {
+                                            viewport_framebuffers[vp_idx][frame_idx] = Some(fb);
+                                            tracing::trace!("main: viewport {} framebuffer {} created", vp_idx, frame_idx);
+                                        }
+                                        Err(e) => tracing::error!("viewport {} framebuffer create failed: {e}", vp_idx),
                                     }
-                                    Err(e) => tracing::error!("viewport framebuffer create failed: {e}"),
                                 }
                             }
                         }
 
-                        let shadow_layout_ref = if shadow_map.is_some() { Some(&mut shadow_layout) } else { None };
+                        let mut shadow_layout_opt = if shadow_map.is_some() { Some(shadow_layout) } else { None };
                         if scene_pipeline.is_some() && scene_depth_buffer.is_some() && scene_uniform_buffer.is_some() && scene_descriptor_set.is_some() {
-                            // Only render offscreen in Editor mode AND when we have a valid viewport rect
-                            let offscreen_fb = if screen == AppScreen::Editor && has_valid_vp_rect {
-                                viewport_framebuffers[frame_idx].as_ref()
-                            } else {
-                                None
-                            };
-                            
-                            // If rendering to offscreen, we must still clear the swapchain so egui has a clean background
-                            if offscreen_fb.is_some() {
-                                renderer.begin_scene_pass(cmd, scene_depth_buffer.as_ref().unwrap(), [0.05, 0.05, 0.05, 1.0]);
-                                renderer.end_scene_pass(cmd);
+                            // Clear swapchain once before any offscreen rendering.
+                            for vp_idx in 0..num_viewports {
+                                if let Some(ref fb) = viewport_framebuffers[vp_idx][frame_idx] {
+                                    any_offscreen = true;
+                                    if vp_idx == 0 {
+                                        renderer.begin_scene_pass(cmd, scene_depth_buffer.as_ref().unwrap(), [0.05, 0.05, 0.05, 1.0]);
+                                        renderer.end_scene_pass(cmd);
+                                    }
+                                    break;
+                                }
                             }
 
-                            render::render_3d_scene(
-                                &renderer, cmd,
-                                scene_pipeline.as_ref().unwrap(),
-                                shadow_pipeline.as_ref(),
-                                scene_depth_buffer.as_ref().unwrap(),
-                                shadow_map.as_ref(),
-                                shadow_layout_ref,
-                                scene_uniform_buffer.as_ref().unwrap(),
-                                scene_descriptor_set.unwrap(),
-                                shadow_descriptor_set,
-                                &meshes, &ecs_world, &cam,
-                                offscreen_fb,
-                            );
-                            // Register offscreen framebuffer as egui user texture for viewport panel
-                            if let Some(ref fb) = viewport_framebuffers[frame_idx] {
-                                tracing::trace!("main: registering viewport framebuffer color_view={:?} as user texture", fb.color_view);
-                                egui_r.register_user_texture(
-                                    egui::TextureId::User(0),
-                                    fb.color_view,
-                                    egui_r.sampler(),
-                                );
-                                egui_ctx.data_mut(|d| d.insert_temp(egui::Id::new("viewport_offscreen_valid"), true));
-                                tracing::trace!("main: set viewport_offscreen_valid=true");
-                            } else {
-                                tracing::trace!("main: no viewport framebuffer, removing offscreen valid flag");
-                                egui_ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::new("viewport_offscreen_valid")));
+                            // Render each viewport camera view to its own framebuffer.
+                            for vp_idx in 0..num_viewports {
+                                let rect_key = egui::Id::new(format!("viewport_rect_{}", vp_idx));
+                                let viewport_rect: Option<egui::Rect> = egui_ctx.data(|d| d.get_temp(rect_key));
+                                let has_valid = viewport_rect.is_some();
+                                let offscreen_fb = if (screen == AppScreen::Editor || screen == AppScreen::PlayTest) && has_valid {
+                                    viewport_framebuffers[vp_idx][frame_idx].as_ref()
+                                } else {
+                                    None
+                                };
+
+                                if let Some(ref fb) = offscreen_fb {
+                                    let cam = &viewport_manager.viewports[vp_idx].camera;
+                                    shadow_layout_opt = render::render_3d_scene(
+                                        &renderer, cmd,
+                                        scene_pipeline.as_ref().unwrap(),
+                                        shadow_pipeline.as_ref(),
+                                        scene_depth_buffer.as_ref().unwrap(),
+                                        shadow_map.as_ref(),
+                                        shadow_layout_opt,
+                                        scene_uniform_buffer.as_ref().unwrap(),
+                                        scene_descriptor_set.unwrap(),
+                                        shadow_descriptor_set,
+                                        &meshes, &ecs_world, cam,
+                                        Some(fb),
+                                    );
+                                    let tex_id = ui::viewport::viewport_texture_id(vp_idx);
+                                    tracing::trace!("main: registering viewport {} framebuffer color_view={:?} as user texture {:?}", vp_idx, fb.color_view, tex_id);
+                                    egui_r.register_user_texture(
+                                        tex_id,
+                                        fb.color_view,
+                                        egui_r.sampler(),
+                                    );
+                                    let valid_key = egui::Id::new(format!("viewport_offscreen_valid_{}", vp_idx));
+                                    egui_ctx.data_mut(|d| d.insert_temp(valid_key, true));
+                                } else {
+                                    let valid_key = egui::Id::new(format!("viewport_offscreen_valid_{}", vp_idx));
+                                    egui_ctx.data_mut(|d| d.remove_temp::<bool>(valid_key));
+                                }
                             }
                         } else if renderer.frame_index() % 60 == 0 {
                             tracing::warn!("3D scene skipped: pipeline={} depth={} ubo={} desc={}",
@@ -383,7 +417,13 @@ fn main() {
                                 AppScreen::Editor => {
                                     let proj_name = current_project.as_ref().map(|p| p.name.as_str()).unwrap_or("Untitled");
                                     let proj_name_owned = proj_name.to_string();
-                                    ui::editor_screen(ctx, &mut cam, &mut window, &mut screen, &input, target, &ww, &wh, &mut fps, &open_project, &new_project, &proj_name_owned, &mut current_project, &mut project_dir, &mut ecs_world, &*selected_entity, &*pending_delete, &*dirty, &*show_confirm, &*confirm_target, &*show_settings, &*renaming, &*rename_buffer, &*undo_history, &mut sprite_editor, &pending_mesh_load, &mut audio_engine, &mut audio_instance, &mut waveform_viewer);
+                                    ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut screen, &input, target, &ww, &wh, &mut fps, &open_project, &new_project, &proj_name_owned, &mut current_project, &mut project_dir, &mut ecs_world, &*selected_entity, &*pending_delete, &*dirty, &*show_confirm, &*confirm_target, &*show_settings, &*renaming, &*rename_buffer, &*undo_history, &mut sprite_editor, &pending_mesh_load, &mut audio_engine, &mut audio_instance, &mut waveform_viewer);
+                                }
+                                AppScreen::PlayTest => {
+                                    // TODO: replace with dedicated play-test UI once mode is fully wired.
+                                    let proj_name = current_project.as_ref().map(|p| p.name.as_str()).unwrap_or("Untitled");
+                                    let proj_name_owned = proj_name.to_string();
+                                    ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut screen, &input, target, &ww, &wh, &mut fps, &open_project, &new_project, &proj_name_owned, &mut current_project, &mut project_dir, &mut ecs_world, &*selected_entity, &*pending_delete, &*dirty, &*show_confirm, &*confirm_target, &*show_settings, &*renaming, &*rename_buffer, &*undo_history, &mut sprite_editor, &pending_mesh_load, &mut audio_engine, &mut audio_instance, &mut waveform_viewer);
                                 }
                             }
                         });
@@ -396,6 +436,7 @@ fn main() {
                                     scene_to_world(&mut ecs_world, &proj_info.scene);
                                 }
                                 if let Some(ref cam_state) = proj_info.editor_camera {
+                                    let cam = viewport_manager.primary_camera_mut();
                                     cam.position = cam_state.position.into();
                                     cam.center = cam_state.center.into();
                                     cam.yaw = cam_state.yaw;
@@ -464,7 +505,20 @@ fn main() {
                     _ => {}
                 }
             }
-            winit::event::Event::AboutToWait => window.request_redraw(),
+            winit::event::Event::AboutToWait => {
+                if screen == AppScreen::PlayTest {
+                    window.request_redraw();
+                } else {
+                    let now = Instant::now();
+                    let editor_interval = std::time::Duration::from_secs_f32(1.0 / 15.0);
+                    if now >= next_frame_time {
+                        next_frame_time = now + editor_interval;
+                        window.request_redraw();
+                    } else {
+                        target.set_control_flow(winit::event_loop::ControlFlow::WaitUntil(next_frame_time));
+                    }
+                }
+            }
             _ => {}
         }
     });

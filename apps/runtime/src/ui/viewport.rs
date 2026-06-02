@@ -8,7 +8,75 @@ use crate::camera::EditorCamera;
 use crate::scene::{Transform, Name, MeshComponent, Material, world_transform};
 use crate::undo::{UndoHistory, EditorAction};
 
-pub const VIEWPORT_TEXTURE_ID: egui::TextureId = egui::TextureId::User(0);
+pub const MAX_VIEWPORTS: usize = 4;
+pub const PRIMARY_VIEWPORT: usize = 0;
+
+/// Per-viewport texture IDs for offscreen rendering.
+pub fn viewport_texture_id(index: usize) -> egui::TextureId {
+    egui::TextureId::User(index as u64)
+}
+
+/// A single editor viewport with its own camera.
+#[derive(Clone)]
+pub struct Viewport {
+    pub camera: EditorCamera,
+    pub name: String,
+    pub open: bool,
+    pub is_primary: bool,
+}
+
+impl Viewport {
+    pub fn new(name: &str, is_primary: bool) -> Self {
+        Self {
+            camera: EditorCamera::new(),
+            name: name.to_string(),
+            open: true,
+            is_primary,
+        }
+    }
+}
+
+/// Manages up to `MAX_VIEWPORTS` viewports. Viewport 0 is always the primary.
+pub struct ViewportManager {
+    pub viewports: Vec<Viewport>,
+}
+
+impl ViewportManager {
+    pub fn new() -> Self {
+        let mut viewports = Vec::with_capacity(MAX_VIEWPORTS);
+        viewports.push(Viewport::new("Viewport", true));
+        Self { viewports }
+    }
+
+    pub fn primary_camera_mut(&mut self) -> &mut EditorCamera {
+        &mut self.viewports[PRIMARY_VIEWPORT].camera
+    }
+
+    pub fn primary_camera(&self) -> &EditorCamera {
+        &self.viewports[PRIMARY_VIEWPORT].camera
+    }
+
+    pub fn add_viewport(&mut self) -> Option<usize> {
+        if self.viewports.len() >= MAX_VIEWPORTS {
+            return None;
+        }
+        let idx = self.viewports.len();
+        let name = match idx {
+            1 => "Viewport 2".to_string(),
+            2 => "Viewport 3".to_string(),
+            3 => "Viewport 4".to_string(),
+            _ => format!("Viewport {}", idx + 1),
+        };
+        self.viewports.push(Viewport::new(&name, false));
+        Some(idx)
+    }
+
+    pub fn remove_viewport(&mut self, index: usize) {
+        if index > PRIMARY_VIEWPORT && index < self.viewports.len() {
+            self.viewports.remove(index);
+        }
+    }
+}
 
 pub fn show_viewport(
     ctx: &egui::Context,
@@ -26,13 +94,13 @@ pub fn show_viewport(
         let mut clicked_entity = None;
 
         // Store viewport rect for next frame's offscreen render sizing
-        ctx.data_mut(|d| d.insert_temp(egui::Id::new("viewport_rect"), rect));
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new("viewport_rect_0"), rect));
 
         // Display the offscreen-rendered 3D scene as an image filling the panel
         let has_offscreen = ctx.data(|d| d.get_temp::<bool>(egui::Id::new("viewport_offscreen_valid")).unwrap_or(false));
         tracing::trace!("show_viewport: has_offscreen={} rect={:?}", has_offscreen, rect);
         if has_offscreen {
-            let tex_id = VIEWPORT_TEXTURE_ID;
+            let tex_id = viewport_texture_id(0);
             let size = rect.size();
             if size.x > 0.0 && size.y > 0.0 {
                 let image_rect = egui::Rect::from_min_size(rect.min, size);
@@ -130,9 +198,9 @@ pub fn show_viewport(
                 ui.allocate_ui_at_rect(rect.shrink(4.0), |ui| {
                     ui.horizontal(|ui| {
                         ui.label(egui::RichText::new("Gizmo:").weak().size(11.0));
-                        if ui.selectable_label(gizmo_mode == 0, egui::RichText::new("T").size(12.0).strong()).clicked() { gizmo_mode = 0; }
+                        if ui.selectable_label(gizmo_mode == 0, egui::RichText::new("E").size(12.0).strong()).clicked() { gizmo_mode = 0; }
                         if ui.selectable_label(gizmo_mode == 1, egui::RichText::new("R").size(12.0).strong()).clicked() { gizmo_mode = 1; }
-                        if ui.selectable_label(gizmo_mode == 2, egui::RichText::new("S").size(12.0).strong()).clicked() { gizmo_mode = 2; }
+                        if ui.selectable_label(gizmo_mode == 2, egui::RichText::new("T").size(12.0).strong()).clicked() { gizmo_mode = 2; }
                         ui.add_space(4.0);
                         if ui.selectable_label(gizmo_space, egui::RichText::new("Local").size(11.0)).clicked() { gizmo_space = !gizmo_space; }
                         ui.add_space(4.0);
@@ -235,8 +303,12 @@ pub fn show_viewport(
                         (local_axes[2], egui::Color32::from_rgb(60, 100, 220)),
                     ];
                     let gizmo_len = 60.0;
-                    // Ctrl temporarily switches gizmos to scale mode when not already dragging.
-                    let effective_mode = if !gizmo_dragging && ui.input(|i| i.modifiers.ctrl) { 2 } else { gizmo_mode };
+                    // Ctrl → scale, Shift → rotate, default follows gizmo_mode.
+                    let effective_mode = if !gizmo_dragging {
+                        if ui.input(|i| i.modifiers.ctrl) { 2 }
+                        else if ui.input(|i| i.modifiers.shift) { 1 }
+                        else { gizmo_mode }
+                    } else { gizmo_mode };
 
                     for (axis_idx, (axis_dir, color)) in axis_colors.iter().enumerate() {
                         let is_active = gizmo_active == axis_idx;
@@ -538,14 +610,70 @@ pub fn show_viewport(
     });
 }
 
+/// Show a secondary viewport as a floating egui window.
+fn show_secondary_viewport(
+    ctx: &egui::Context,
+    vp: &mut Viewport,
+    index: usize,
+) {
+    let tex_id = viewport_texture_id(index);
+    let rect_key = egui::Id::new(format!("viewport_rect_{}", index));
+    let valid_key = egui::Id::new(format!("viewport_offscreen_valid_{}", index));
+
+    egui::Window::new(&vp.name)
+        .id(egui::Id::new(("viewport_win", index)))
+        .open(&mut vp.open)
+        .default_size([400.0, 300.0])
+        .show(ctx, |ui| {
+            let rect = ui.max_rect();
+            ctx.data_mut(|d| d.insert_temp(rect_key, rect));
+
+            let has_offscreen = ctx.data(|d| d.get_temp::<bool>(valid_key).unwrap_or(false));
+            if has_offscreen {
+                let size = rect.size();
+                if size.x > 0.0 && size.y > 0.0 {
+                    let image_rect = egui::Rect::from_min_size(rect.min, size);
+                    ui.painter().image(tex_id, image_rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+                }
+            }
+        });
+}
+
+/// Show all viewports managed by the ViewportManager.
+/// Primary viewport (index 0) uses CentralPanel with full interaction.
+/// Secondary viewports use floating egui::Window (view-only for MVP).
+pub fn show_viewports(
+    ctx: &egui::Context,
+    manager: &mut ViewportManager,
+    world: &mut EcsWorld,
+    selected_entity: &std::cell::RefCell<Option<hecs::Entity>>,
+    dirty: &std::cell::Cell<bool>,
+    undo_history: &std::cell::RefCell<UndoHistory>,
+) {
+    // Primary viewport always gets full interaction.
+    if let Some(vp) = manager.viewports.get_mut(PRIMARY_VIEWPORT) {
+        if vp.open {
+            show_viewport(ctx, &mut vp.camera, world, selected_entity, dirty, undo_history);
+        }
+    }
+
+    // Secondary viewports: simple window with offscreen texture.
+    for i in 1..manager.viewports.len() {
+        let vp = &mut manager.viewports[i];
+        if vp.open {
+            show_secondary_viewport(ctx, vp, i);
+        }
+    }
+}
+
 /// Resolve gizmo mode from egui keyboard input.
-/// W → Translate (0), E → Rotate (1), R → Scale (2).
+/// E → Translate (0), R → Rotate (1), T → Scale (2).
 /// Command-modified keys are ignored so they don't conflict with shortcuts.
 pub fn resolve_gizmo_mode(current: usize, ctx: &egui::Context) -> usize {
-    let w = ctx.input(|i| i.key_pressed(egui::Key::W) && !i.modifiers.command);
     let e = ctx.input(|i| i.key_pressed(egui::Key::E) && !i.modifiers.command);
     let r = ctx.input(|i| i.key_pressed(egui::Key::R) && !i.modifiers.command);
-    resolve_gizmo_mode_pure(current, w, e, r)
+    let t = ctx.input(|i| i.key_pressed(egui::Key::T) && !i.modifiers.command);
+    resolve_gizmo_mode_pure(current, e, r, t)
 }
 
 /// Apply rotation gizmo drag: rotates the entity around the active axis.
@@ -602,12 +730,12 @@ pub fn apply_gizmo_translation(
 }
 
 /// Pure function resolving gizmo mode from key press booleans.
-/// W → Translate (0), E → Rotate (1), R → Scale (2).
-/// If multiple keys are pressed, W takes precedence, then E, then R.
-pub fn resolve_gizmo_mode_pure(current: usize, w_pressed: bool, e_pressed: bool, r_pressed: bool) -> usize {
-    if w_pressed { 0 }
-    else if e_pressed { 1 }
-    else if r_pressed { 2 }
+/// E → Translate (0), R → Rotate (1), T → Scale (2).
+/// If multiple keys are pressed, E takes precedence, then R, then T.
+pub fn resolve_gizmo_mode_pure(current: usize, e_pressed: bool, r_pressed: bool, t_pressed: bool) -> usize {
+    if e_pressed { 0 }
+    else if r_pressed { 1 }
+    else if t_pressed { 2 }
     else { current }
 }
 

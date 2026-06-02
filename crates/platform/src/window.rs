@@ -187,6 +187,11 @@ impl WindowHandle {
     pub fn inner(&self) -> &WinitWindow { &self.inner }
     pub fn config(&self) -> &WindowConfig { &self.config }
 
+    /// Returns the window's current scale factor (DPI / 96).
+    pub fn scale_factor(&self) -> f64 {
+        self.inner.scale_factor()
+    }
+
     /// Set the fullscreen mode at runtime.
     pub fn set_fullscreen_mode(&mut self, mode: FullscreenMode) {
         self.config.fullscreen_mode = mode;

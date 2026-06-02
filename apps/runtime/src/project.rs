@@ -9,6 +9,7 @@ const RECENT_FILE: &str = "recent_projects.json";
 pub enum AppScreen {
     Startup,
     Editor,
+    PlayTest,
 }
 
 #[derive(Clone, Copy, PartialEq)]

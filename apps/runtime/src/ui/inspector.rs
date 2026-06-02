@@ -53,7 +53,8 @@ fn color_picker_button(ui: &mut egui::Ui, rgb: &mut [u8; 3], popup_id: egui::Id)
         .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
         .show(|ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
-                ui.set_min_width(250.0);
+                ui.set_min_width(180.0);
+                ui.set_max_width(220.0);
                 // Header row with X button
                 ui.horizontal(|ui| {
                     ui.label("Color");
@@ -64,9 +65,14 @@ fn color_picker_button(ui: &mut egui::Ui, rgb: &mut [u8; 3], popup_id: egui::Id)
                     });
                 });
                 ui.separator();
-                // Use the HSVA 2-D picker so no R/G/B text appears inside the popup.
-                let mut hsva = egui::epaint::Hsva::from(color);
+                // Persist HSVA in egui memory so the color survives frame changes / focus loss.
+                let hsva_id = popup_id.with("hsva_state");
+                let mut hsva: egui::epaint::Hsva = ui.ctx().data(|d| {
+                    d.get_temp(hsva_id).unwrap_or_else(|| egui::epaint::Hsva::from(color))
+                });
                 color_picker_hsva_2d(ui, &mut hsva, Alpha::Opaque);
+                // Write back to persistent memory AND the caller's RGB buffer.
+                ui.ctx().data_mut(|d| d.insert_temp(hsva_id, hsva));
                 let new_color = egui::Color32::from(hsva);
                 rgb[0] = new_color[0];
                 rgb[1] = new_color[1];

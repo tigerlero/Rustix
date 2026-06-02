@@ -7,6 +7,7 @@ pub enum CameraMode {
     FirstPerson,
 }
 
+#[derive(Clone)]
 pub struct EditorCamera {
     pub position: Vec3,
     pub center: Vec3,

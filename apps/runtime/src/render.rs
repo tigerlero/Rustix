@@ -39,7 +39,7 @@ pub fn render_3d_scene(
     shadow_pipeline: Option<&rustix_render::pipeline::ShadowPipeline>,
     depth_buf: &DepthBuffer,
     shadow_map: Option<&rustix_render::GpuTexture>,
-    shadow_layout: Option<&mut vk::ImageLayout>,
+    mut shadow_layout: Option<vk::ImageLayout>,
     ubo: &GpuBuffer,
     descriptor_set: vk::DescriptorSet,
     shadow_descriptor_set: Option<vk::DescriptorSet>,
@@ -47,7 +47,7 @@ pub fn render_3d_scene(
     ecs_world: &EcsWorld,
     cam: &EditorCamera,
     offscreen: Option<&rustix_render::Framebuffer>,
-) {
+) -> Option<vk::ImageLayout> {
     let (aspect, target_extent, color_image, color_view, fb_depth) = if let Some(fb) = offscreen {
         let ext = fb.extent;
         (
@@ -123,8 +123,8 @@ pub fn render_3d_scene(
     if let (Some(sp), Some(sm), Some(layout), Some(sds)) = (shadow_pipeline, shadow_map, shadow_layout, shadow_descriptor_set) {
         let shadow_size = 1024u32;
         renderer.update_descriptor_set(sds, ubo);
-        renderer.transition_image_layout(cmd, sm.image, vk::ImageAspectFlags::DEPTH, *layout, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-        *layout = vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        renderer.transition_image_layout(cmd, sm.image, vk::ImageAspectFlags::DEPTH, layout, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        shadow_layout = Some(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
         renderer.begin_shadow_pass(cmd, sm, shadow_size);
 
         for (entity, _transform, mesh_comp) in ecs_world.query::<(Entity, &Transform, &MeshComponent)>().iter() {
@@ -143,8 +143,8 @@ pub fn render_3d_scene(
         }
 
         renderer.end_shadow_pass(cmd);
-        renderer.transition_image_layout(cmd, sm.image, vk::ImageAspectFlags::DEPTH, *layout, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-        *layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+        renderer.transition_image_layout(cmd, sm.image, vk::ImageAspectFlags::DEPTH, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        shadow_layout = Some(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
         renderer.update_descriptor_set_with_shadow(descriptor_set, ubo, sm);
     } else {
@@ -196,6 +196,7 @@ pub fn render_3d_scene(
     } else {
         renderer.end_scene_pass(cmd);
     }
+    shadow_layout
 }
 
 pub fn render_2d_overlay(

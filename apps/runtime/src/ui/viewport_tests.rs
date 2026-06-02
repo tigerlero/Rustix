@@ -1,18 +1,18 @@
 use super::*;
 
 #[test]
-fn gizmo_mode_w_selects_translate() {
-    assert_eq!(resolve_gizmo_mode_pure(2, true, false, false), 0, "W should select translate (0)");
+fn gizmo_mode_e_selects_translate() {
+    assert_eq!(resolve_gizmo_mode_pure(2, true, false, false), 0, "E should select translate (0)");
 }
 
 #[test]
-fn gizmo_mode_e_selects_rotate() {
-    assert_eq!(resolve_gizmo_mode_pure(0, false, true, false), 1, "E should select rotate (1)");
+fn gizmo_mode_r_selects_rotate() {
+    assert_eq!(resolve_gizmo_mode_pure(0, false, true, false), 1, "R should select rotate (1)");
 }
 
 #[test]
-fn gizmo_mode_r_selects_scale() {
-    assert_eq!(resolve_gizmo_mode_pure(0, false, false, true), 2, "R should select scale (2)");
+fn gizmo_mode_t_selects_scale() {
+    assert_eq!(resolve_gizmo_mode_pure(0, false, false, true), 2, "T should select scale (2)");
 }
 
 #[test]
@@ -21,15 +21,15 @@ fn gizmo_mode_no_key_preserves_current() {
 }
 
 #[test]
-fn gizmo_mode_w_takes_precedence_over_e_and_r() {
-    // W pressed together with E and R → W wins (translate)
-    assert_eq!(resolve_gizmo_mode_pure(2, true, true, true), 0, "W should take precedence over E and R");
+fn gizmo_mode_e_takes_precedence_over_r_and_t() {
+    // E pressed together with R and T → E wins (translate)
+    assert_eq!(resolve_gizmo_mode_pure(2, true, true, true), 0, "E should take precedence over R and T");
 }
 
 #[test]
-fn gizmo_mode_e_takes_precedence_over_r() {
-    // E and R pressed without W → E wins (rotate)
-    assert_eq!(resolve_gizmo_mode_pure(0, false, true, true), 1, "E should take precedence over R");
+fn gizmo_mode_r_takes_precedence_over_t() {
+    // R and T pressed without E → R wins (rotate)
+    assert_eq!(resolve_gizmo_mode_pure(0, false, true, true), 1, "R should take precedence over T");
 }
 
 #[test]
@@ -37,9 +37,9 @@ fn gizmo_mode_keys_are_independent_of_shift() {
     // The pure function doesn't know about Shift — the caller (egui input check)
     // already filters out command-modified keys. Here we just verify the
     // mapping works regardless of what modifiers were pressed.
-    assert_eq!(resolve_gizmo_mode_pure(2, true, false, false), 0, "W→translate regardless of modifiers");
-    assert_eq!(resolve_gizmo_mode_pure(0, false, true, false), 1, "E→rotate regardless of modifiers");
-    assert_eq!(resolve_gizmo_mode_pure(0, false, false, true), 2, "R→scale regardless of modifiers");
+    assert_eq!(resolve_gizmo_mode_pure(2, true, false, false), 0, "E→translate regardless of modifiers");
+    assert_eq!(resolve_gizmo_mode_pure(0, false, true, false), 1, "R→rotate regardless of modifiers");
+    assert_eq!(resolve_gizmo_mode_pure(0, false, false, true), 2, "T→scale regardless of modifiers");
 }
 
 #[test]

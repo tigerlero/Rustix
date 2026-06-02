@@ -7,11 +7,12 @@ use crate::camera::{EditorCamera, CameraMode};
 use crate::project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo, write_project_file, EditorCameraState};
 use crate::scene::world_to_scene;
 use crate::sprite_editor;
+use crate::ui::viewport::{ViewportManager, MAX_VIEWPORTS};
 
 #[allow(clippy::too_many_arguments)]
 pub fn show_menu_bar(
     ctx: &egui::Context,
-    cam: &mut EditorCamera,
+    viewport_manager: &mut ViewportManager,
     _input: &InputManager,
     target: &winit::event_loop::ActiveEventLoop,
     screen: &mut AppScreen,
@@ -61,6 +62,7 @@ pub fn show_menu_bar(
                 if ui.button("Save").clicked() {
                     ui.close();
                     if let Some(ref mut proj) = current_project {
+                        let cam = viewport_manager.primary_camera();
                         proj.settings.resolution_width = *ww;
                         proj.settings.resolution_height = *wh;
                         proj.scene = world_to_scene(world);
@@ -87,6 +89,7 @@ pub fn show_menu_bar(
                     {
                         let dir = Path::new(&path);
                         if let Some(ref mut proj) = current_project {
+                            let cam = viewport_manager.primary_camera();
                             proj.settings.resolution_width = *ww;
                             proj.settings.resolution_height = *wh;
                             proj.scene = world_to_scene(world);
@@ -143,6 +146,25 @@ pub fn show_menu_bar(
             });
             let prefs_id = egui::Id::new("show_preferences");
             let mut show_prefs = ctx.data(|d| d.get_temp::<bool>(prefs_id).unwrap_or(false));
+            ui.menu_button("View", |ui| {
+                let count = viewport_manager.viewports.len();
+                if count < MAX_VIEWPORTS {
+                    if ui.button("New Viewport").clicked() {
+                        viewport_manager.add_viewport();
+                        ui.close();
+                    }
+                }
+                if count > 1 {
+                    ui.separator();
+                    for i in 1..count {
+                        let label = format!("Close {}", viewport_manager.viewports[i].name);
+                        if ui.button(&label).clicked() {
+                            viewport_manager.remove_viewport(i);
+                            ui.close();
+                        }
+                    }
+                }
+            });
             ui.menu_button("Edit", |ui| {
                 if ui.button("Preferences").clicked() {
                     show_prefs = true;
@@ -226,6 +248,7 @@ pub fn show_menu_bar(
                 }
                 ui.label(format!("FPS: {fps}"));
                 ui.separator();
+                let cam = viewport_manager.primary_camera_mut();
                 if ui.selectable_label(cam.follow_target, "Follow").clicked() {
                     cam.follow_target = !cam.follow_target;
                 }
