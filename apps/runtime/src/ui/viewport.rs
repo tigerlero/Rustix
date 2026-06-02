@@ -53,6 +53,7 @@ pub fn show_viewport(
         let gizmo_dragging_id = egui::Id::new("gizmo_dragging");
         let gizmo_space_id = egui::Id::new("gizmo_space");
         let gizmo_local_axes_id = egui::Id::new("gizmo_local_axes");
+        let gizmo_drag_mode_id = egui::Id::new("gizmo_drag_mode");
         let mut gizmo_active = ctx.data(|d| d.get_temp::<usize>(gizmo_active_id).unwrap_or(usize::MAX));
         let mut gizmo_drag_start = ctx.data(|d| d.get_temp::<egui::Vec2>(gizmo_drag_start_id).unwrap_or(egui::Vec2::ZERO));
         let mut gizmo_entity_pos = ctx.data(|d| d.get_temp::<Vec3>(gizmo_entity_pos_id).unwrap_or(Vec3::ZERO));
@@ -133,28 +134,45 @@ pub fn show_viewport(
         ctx.data_mut(|d| d.insert_temp(snap_size_id, snap_size));
         ctx.data_mut(|d| d.insert_temp(gizmo_space_id, gizmo_space));
 
-        for (entity, name, transform) in world.query::<(Entity, &Name, &Transform)>().iter() {
-            let is_selected = *selected_entity.borrow() == Some(entity);
+        let mut entities: Vec<(hecs::Entity, Transform, Vec3, f32)> = Vec::new();
+        for (entity, transform) in world.query::<(Entity, &Transform)>().iter() {
             let world_pos = {
                 let m = world_transform(world, entity);
                 let (_s, _r, pos) = m.to_scale_rotation_translation();
                 pos
             };
-            
+            let dist = (world_pos - cam.center).length();
+            entities.push((entity, *transform, world_pos, dist));
+        }
+        // Process closer entities first so their interaction rects take priority.
+        entities.sort_by(|a, b| a.3.partial_cmp(&b.3).unwrap_or(std::cmp::Ordering::Equal));
+
+        for (entity, transform, world_pos, _dist) in entities {
+            let is_selected = *selected_entity.borrow() == Some(entity);
+
             if let Some(screen_pos) = world_to_screen(world_pos) {
                 let entity_color = if is_selected {
                     egui::Color32::from_rgb(70, 150, 250)
                 } else {
                     egui::Color32::from_rgb(200, 200, 220)
                 };
-                
+                let hover_color = egui::Color32::from_rgb(255, 255, 100);
+
+                // Approximate screen-space radius from object scale and camera distance.
+                let avg_scale = (transform.scale.x + transform.scale.y + transform.scale.z) / 3.0;
+                let pick_radius = ((avg_scale / _dist.max(0.001)) * screen_rect.height() * 0.5).max(12.0).min(120.0);
+
+                let ent_hit_rect = egui::Rect::from_center_size(screen_pos, egui::vec2(pick_radius * 2.0, pick_radius * 2.0));
                 let ent_resp = ui.interact(
-                    egui::Rect::from_center_size(screen_pos, egui::vec2(12.0, 12.0)),
+                    ent_hit_rect,
                     egui::Id::new(("vp_ent", entity.to_bits().get())),
                     egui::Sense::click()
                 );
                 if ent_resp.clicked() { clicked_entity = Some(entity); }
-                ui.painter().circle_filled(screen_pos, 4.0, entity_color);
+
+                let dot_color = if ent_resp.hovered() { hover_color } else { entity_color };
+                ui.painter().circle_filled(screen_pos, 5.0, dot_color);
+                ui.painter().circle_stroke(screen_pos, 5.0, egui::Stroke::new(1.5, egui::Color32::WHITE));
 
                 if let Ok(aud) = world.get::<&AudioSource>(entity) {
                     let aud_min_color = egui::Color32::from_rgba_premultiplied(255, 120, 180, 80);
@@ -247,6 +265,7 @@ pub fn show_viewport(
                                         gizmo_entity_scale = transform.scale;
                                         gizmo_undo_transform = Some(Transform { position: transform.position, rotation: transform.rotation, scale: transform.scale });
                                         ctx.data_mut(|d| d.insert_temp(gizmo_local_axes_id, local_axes));
+                                        ctx.data_mut(|d| d.insert_temp(gizmo_drag_mode_id, effective_mode));
                                         gizmo_dragging = true;
                                     }
                                 }
@@ -278,6 +297,7 @@ pub fn show_viewport(
                                         gizmo_entity_scale = transform.scale;
                                         gizmo_undo_transform = Some(Transform { position: transform.position, rotation: transform.rotation, scale: transform.scale });
                                         ctx.data_mut(|d| d.insert_temp(gizmo_local_axes_id, local_axes));
+                                        ctx.data_mut(|d| d.insert_temp(gizmo_drag_mode_id, effective_mode));
                                         gizmo_dragging = true;
                                     }
                                 }
@@ -307,6 +327,7 @@ pub fn show_viewport(
                                         gizmo_entity_scale = transform.scale;
                                         gizmo_undo_transform = Some(Transform { position: transform.position, rotation: transform.rotation, scale: transform.scale });
                                         ctx.data_mut(|d| d.insert_temp(gizmo_local_axes_id, local_axes));
+                                        ctx.data_mut(|d| d.insert_temp(gizmo_drag_mode_id, effective_mode));
                                         gizmo_dragging = true;
                                     }
                                 }
@@ -321,8 +342,9 @@ pub fn show_viewport(
                                     .unwrap_or([Vec3::X, Vec3::Y, Vec3::Z]);
                                 let axis_dir = stored_axes[gizmo_active];
                                 let drag_delta = pointer_pos.to_vec2() - gizmo_drag_start;
+                                let gizmo_drag_mode = ctx.data(|d| d.get_temp::<usize>(gizmo_drag_mode_id)).unwrap_or(gizmo_mode);
 
-                                match effective_mode {
+                                match gizmo_drag_mode {
                                     1 => {
                                         let angle = drag_delta.length() * 0.01;
                                         let sign = if drag_delta.x.abs() > drag_delta.y.abs() { drag_delta.x.signum() } else { -drag_delta.y.signum() };
@@ -399,6 +421,7 @@ pub fn show_viewport(
             }
             gizmo_dragging = false;
             ctx.data_mut(|d| d.remove_temp::<[Vec3; 3]>(gizmo_local_axes_id));
+            ctx.data_mut(|d| d.remove_temp::<usize>(gizmo_drag_mode_id));
         }
 
         if let Some(e) = clicked_entity {
@@ -503,6 +526,9 @@ pub fn show_viewport(
         }
         ctx.data_mut(|d| d.insert_temp(gizmo_dragging_id, gizmo_dragging));
         ctx.data_mut(|d| d.insert_temp(gizmo_space_id, gizmo_space));
+        if !gizmo_dragging {
+            ctx.data_mut(|d| d.remove_temp::<usize>(gizmo_drag_mode_id));
+        }
 
     });
 }
