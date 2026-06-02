@@ -3,8 +3,11 @@ use std::path::Path;
 use std::time::Instant;
 
 mod camera;
+mod fonts;
 mod gltf_loader;
+mod init;
 mod project;
+mod render;
 mod scene;
 mod sprite_editor;
 mod ui;
@@ -15,66 +18,19 @@ mod waveform;
 use ash::vk;
 use rustix_core::config;
 use rustix_core::ecs::{EcsWorld, Entity};
-use rustix_core::math::{Vec2, Vec3, Vec4, Mat4, Quat, EulerRot};
+use rustix_core::math::Vec3;
 use rustix_platform::input::InputManager;
 use rustix_platform::window::{WindowConfig, WindowHandle};
-use rustix_render::{Renderer, DirectionalLight, PointLight, SpotLight};
+use rustix_render::{Renderer, DirectionalLight};
 use rustix_render::mesh::Mesh;
 use rustix_audio::{AudioEngine, SoundInstance};
 use rustix_animation::{Animator, AnimationClip, update_animators};
 use rustix_physics::{RigidBody, Collider, PhysicsWorld, step_physics};
-use rustix_terrain::{TerrainParams, generate_heightmap, build_terrain_mesh};
 
 use camera::EditorCamera;
-use project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo, load_project_file, create_project_file, add_recent_project, load_recent_projects};
-use scene::{Transform, Name, MeshComponent, Material, world_transform, scene_to_world};
+use project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo, load_project_file, create_project_file, add_recent_project, load_recent_projects, write_project_file};
+use scene::{Transform, Name, MeshComponent, Material, world_transform, scene_to_world, world_to_scene};
 use undo::UndoHistory;
-
-/// Configure egui fonts using bundled Noto fonts embedded via `include_bytes!`.
-///
-/// Fallback chain:
-///   Proportional: noto_sans → [Ubuntu-Light] → noto_emoji
-///   Monospace:    noto_mono → [Hack] → noto_emoji
-///
-/// noto_emoji catches emoji and symbols (▶ ⏹ 🔊); box-drawing (└ ─) and
-/// arrows (→) are covered by egui's built-in Ubuntu-Light / Hack.
-///
-/// Fonts are compiled into the binary, so rendering is deterministic across
-/// platforms (no dependency on OS-installed fonts).
-fn setup_fonts(ctx: &egui::Context) {
-    let mut fonts = egui::FontDefinitions::default();
-
-    let noto_sans = include_bytes!("../../../assets/fonts/NotoSans-Regular.ttf");
-    let noto_mono = include_bytes!("../../../assets/fonts/NotoSansMono-Regular.ttf");
-    let noto_emoji = include_bytes!("../../../assets/fonts/NotoEmoji-Regular.ttf");
-
-    fonts.font_data.insert(
-        "noto_sans".into(),
-        std::sync::Arc::new(egui::FontData::from_owned(noto_sans.to_vec())),
-    );
-    fonts.font_data.insert(
-        "noto_mono".into(),
-        std::sync::Arc::new(egui::FontData::from_owned(noto_mono.to_vec())),
-    );
-    fonts.font_data.insert(
-        "noto_emoji".into(),
-        std::sync::Arc::new(egui::FontData::from_owned(noto_emoji.to_vec())),
-    );
-
-    // Proportional: prefer Noto Sans, fall back to Noto Emoji for symbols/emoji
-    if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-        fam.insert(0, "noto_sans".into());
-        fam.push("noto_emoji".into());
-    }
-
-    // Monospace: prefer Noto Mono, fall back to Noto Emoji
-    if let Some(fam) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-        fam.insert(0, "noto_mono".into());
-        fam.push("noto_emoji".into());
-    }
-
-    ctx.set_fonts(fonts);
-}
 
 fn main() {
     let config = config::find_and_load_config();
@@ -101,7 +57,7 @@ fn main() {
     let mut input = InputManager::new();
 
     let egui_ctx = egui::Context::default();
-    setup_fonts(&egui_ctx);
+    fonts::setup_fonts(&egui_ctx);
     tracing::info!("fonts: bundled NotoSans + NotoMono + NotoEmoji");
     let mut egui_state = egui_winit::State::new(egui_ctx.clone(), egui_ctx.viewport_id(), window.inner(), None, None, None);
 
@@ -278,154 +234,17 @@ fn main() {
                             return;
                         }
 
-                        if scene_pipeline.is_none() {
-                            if let Ok(result) = gltf_loader::load_glb(&renderer, &gltf_loader::generate_cube_glb(), "Cube") {
-                                meshes.insert("Cube".into(), result.mesh);
-                            } else {
-                                tracing::error!("failed to load default cube mesh");
-                            }
-                            if let Ok((sp_verts, sp_idx)) = (|| -> Result<(Vec<rustix_render::mesh::Vertex>, Vec<u16>), rustix_render::RenderError> {
-                                Ok(rustix_render::mesh::procedural::uv_sphere(0.5, 16, 16))
-                            })() {
-                                let vb_slice = bytemuck::cast_slice(&sp_verts);
-                                if let Ok(sp_mesh) = Mesh::new(&renderer, "Sphere", vb_slice, sp_verts.len() as u32, Some((&sp_idx, sp_idx.len() as u32))) {
-                                    meshes.insert("Sphere".into(), sp_mesh);
-                                }
-                            }
-                            if let Ok((t_verts, t_idx)) = (|| -> Result<(Vec<rustix_render::mesh::Vertex>, Vec<u16>), rustix_render::RenderError> {
-                                Ok(rustix_render::mesh::procedural::torus(0.5, 0.15, 24, 12))
-                            })() {
-                                let vb_slice = bytemuck::cast_slice(&t_verts);
-                                if let Ok(t_mesh) = Mesh::new(&renderer, "Torus", vb_slice, t_verts.len() as u32, Some((&t_idx, t_idx.len() as u32))) {
-                                    meshes.insert("Torus".into(), t_mesh);
-                                }
-                            }
-                            if let Ok((c_verts, c_idx)) = (|| -> Result<(Vec<rustix_render::mesh::Vertex>, Vec<u16>), rustix_render::RenderError> {
-                                Ok(rustix_render::mesh::procedural::capsule(0.3, 0.6, 8, 16))
-                            })() {
-                                let vb_slice = bytemuck::cast_slice(&c_verts);
-                                if let Ok(c_mesh) = Mesh::new(&renderer, "Capsule", vb_slice, c_verts.len() as u32, Some((&c_idx, c_idx.len() as u32))) {
-                                    meshes.insert("Capsule".into(), c_mesh);
-                                }
-                            }
-                            if let Ok((ico_verts, ico_idx)) = (|| -> Result<(Vec<rustix_render::mesh::Vertex>, Vec<u16>), rustix_render::RenderError> {
-                                Ok(rustix_render::mesh::procedural::icosphere(0.5, 2))
-                            })() {
-                                let vb_slice = bytemuck::cast_slice(&ico_verts);
-                                if let Ok(ico_mesh) = Mesh::new(&renderer, "Icosphere", vb_slice, ico_verts.len() as u32, Some((&ico_idx, ico_idx.len() as u32))) {
-                                    meshes.insert("Icosphere".into(), ico_mesh);
-                                }
-                            }
-                            if let Ok((p_verts, p_idx)) = (|| -> Result<(Vec<rustix_render::mesh::Vertex>, Vec<u16>), rustix_render::RenderError> {
-                                Ok(rustix_render::mesh::procedural::quad(1.0, 1))
-                            })() {
-                                let vb_slice = bytemuck::cast_slice(&p_verts);
-                                if let Ok(p_mesh) = Mesh::new(&renderer, "Plane", vb_slice, p_verts.len() as u32, Some((&p_idx, p_idx.len() as u32))) {
-                                    meshes.insert("Plane".into(), p_mesh);
-                                }
-                            }
-                            {
-                                let params = TerrainParams { width: 32, depth: 32, scale: 2.0, height_scale: 4.0, ..Default::default() };
-                                let hm = generate_heightmap(&params);
-                                let (t_verts, t_idx) = build_terrain_mesh(&hm, params.scale);
-                                let mut tr_verts: Vec<rustix_render::mesh::Vertex> = Vec::with_capacity(t_verts.len());
-                                for v in &t_verts {
-                                    tr_verts.push(rustix_render::mesh::Vertex {
-                                        position: v.position,
-                                        normal: v.normal,
-                                    });
-                                }
-                                let vb_slice = bytemuck::cast_slice(&tr_verts);
-                                if let Ok(t_mesh) = Mesh::new(&renderer, "Terrain", vb_slice, tr_verts.len() as u32, Some((&t_idx, t_idx.len() as u32))) {
-                                    meshes.insert("Terrain".into(), t_mesh);
-                                }
-                            }
-                            let vs = rustix_render::shader::builtin::vertex_shader(renderer.device().logical());
-                            let fs = rustix_render::shader::builtin::fragment_shader(renderer.device().logical());
-                            if let (Ok(vs), Ok(fs)) = (vs, fs) {
-                                let sw = renderer.swapchain.lock();
-                                match rustix_render::pipeline::GraphicsPipeline::create(renderer.device(), &sw, &vs, &fs) {
-                                    Ok(p) => scene_pipeline = Some(p),
-                                    Err(e) => tracing::error!("scene pipeline creation failed: {e}"),
-                                }
-                                match renderer.create_descriptor_pool() {
-                                    Ok(dp) => scene_descriptor_pool = Some(dp),
-                                    Err(e) => tracing::error!("scene descriptor pool failed: {e}"),
-                                }
-                                drop(sw);
-                            } else {
-                                tracing::error!("failed to compile built-in shaders");
-                            }
-                            if let Some(ref pipeline) = scene_pipeline {
-                                if let Some(dp) = scene_descriptor_pool {
-                                    match renderer.alloc_descriptor_set(dp, pipeline.descriptor_set_layout) {
-                                        Ok(ds) => scene_descriptor_set = Some(ds),
-                                        Err(e) => tracing::error!("scene descriptor set alloc failed: {e}"),
-                                    }
-                                }
-                            }
-                            match renderer.create_buffer("scene_ubo", rustix_render::pipeline::UBO_SCENE_SIZE, vk::BufferUsageFlags::UNIFORM_BUFFER, gpu_allocator::MemoryLocation::CpuToGpu) {
-                                Ok(buf) => scene_uniform_buffer = Some(buf),
-                                Err(e) => tracing::error!("scene UBO creation failed: {e}"),
-                            }
-                            
-                            let sw = renderer.swapchain.lock();
-                            scene_depth_buffer = renderer.create_depth_buffer(sw.extent()).ok();
-                            drop(sw);
-                        }
+                        init::init_scene_resources(
+                            &renderer, &mut meshes,
+                            &mut scene_pipeline, &mut scene_descriptor_pool, &mut scene_descriptor_set,
+                            &mut scene_uniform_buffer, &mut scene_depth_buffer,
+                        );
 
-                        if pipeline_2d.is_none() {
-                            let vs_2d = rustix_render::shader::builtin::vertex_2d_shader(renderer.device().logical());
-                            let fs_2d = rustix_render::shader::builtin::fragment_2d_shader(renderer.device().logical());
-                            if let (Ok(vs), Ok(fs)) = (vs_2d, fs_2d) {
-                                let sw = renderer.swapchain.lock();
-                                match rustix_render::pipeline::GraphicsPipeline2D::create(renderer.device(), &sw, &vs, &fs) {
-                                    Ok(p) => {
-                                        match renderer.alloc_descriptor_set(p.desc_pool, p.desc_layout) {
-                                            Ok(ds) => desc_set_2d = Some(ds),
-                                            Err(e) => tracing::error!("2D desc set alloc failed: {e}"),
-                                        }
-                                        pipeline_2d = Some(p);
-                                    }
-                                    Err(e) => tracing::error!("2D pipeline creation failed: {e}"),
-                                }
-                                drop(sw);
-                            }
-                            match renderer.create_buffer("ubo_2d", 64, vk::BufferUsageFlags::UNIFORM_BUFFER, gpu_allocator::MemoryLocation::CpuToGpu) {
-                                Ok(buf) => ubo_2d = Some(buf),
-                                Err(e) => tracing::error!("2D UBO creation failed: {e}"),
-                            }
-
-                            let quad: [f32; 32] = [
-                                -0.5, -0.5,  0.0, 0.0,  1.0, 1.0, 1.0, 1.0,
-                                 0.5, -0.5,  1.0, 0.0,  1.0, 1.0, 1.0, 1.0,
-                                 0.5,  0.5,  1.0, 1.0,  1.0, 1.0, 1.0, 1.0,
-                                -0.5,  0.5,  0.0, 1.0,  1.0, 1.0, 1.0, 1.0,
-                            ];
-                            match renderer.create_buffer("quad_2d", 128, vk::BufferUsageFlags::VERTEX_BUFFER, gpu_allocator::MemoryLocation::CpuToGpu) {
-                                Ok(buf) => {
-                                    buf.write(bytemuck::bytes_of(&quad));
-                                    quad_buffer_2d = Some(buf);
-                                }
-                                Err(e) => tracing::error!("2D quad buffer creation failed: {e}"),
-                            }
-
-                            let tex_size = 64u32;
-                            let mut pixels = vec![0u8; (tex_size * tex_size * 4) as usize];
-                            for y in 0..tex_size {
-                                for x in 0..tex_size {
-                                    let is_white = (x / 8 + y / 8) % 2 == 0;
-                                    let idx = ((y * tex_size + x) * 4) as usize;
-                                    pixels[idx..idx+4].copy_from_slice(
-                                        if is_white { &[240, 240, 255, 255] } else { &[60, 60, 80, 255] }
-                                    );
-                                }
-                            }
-                            match renderer.create_texture(tex_size, tex_size, &pixels) {
-                                Ok(tex) => texture_2d = Some(tex),
-                                Err(e) => tracing::error!("2D texture creation failed: {e}"),
-                            }
-                        }
+                        init::init_2d_resources(
+                            &renderer,
+                            &mut pipeline_2d, &mut ubo_2d, &mut desc_set_2d,
+                            &mut quad_buffer_2d, &mut texture_2d,
+                        );
 
                         if let Some(path) = pending_mesh_load.borrow_mut().take() {
                             if let Ok(data) = std::fs::read(&path) {
@@ -452,121 +271,21 @@ fn main() {
                             }
                         }
 
-                        if let (Some(ref pipeline), Some(depth_buf)) = 
-                            (&scene_pipeline, &scene_depth_buffer) 
+                        if let (Some(ref pipeline), Some(depth_buf), Some(ubo), Some(set)) =
+                            (&scene_pipeline, &scene_depth_buffer, &scene_uniform_buffer, scene_descriptor_set)
                         {
-                            if let Some(ubo) = &scene_uniform_buffer {
-                                let aspect = {
-                                    let sw = renderer.swapchain.lock();
-                                    sw.extent().width as f32 / sw.extent().height as f32
-                                };
-                                let view_proj = cam.view_proj(aspect);
-                                let eye = cam.eye_pos();
-
-                                let mut point_lights: Vec<(Vec3, f32, Vec3, f32)> = Vec::new();
-                                for (_e, pl, xform) in ecs_world.query::<(Entity, &PointLight, &Transform)>().iter() {
-                                    point_lights.push((
-                                        xform.position,
-                                        pl.radius.max(0.1),
-                                        Vec3::new(pl.color.x * pl.intensity, pl.color.y * pl.intensity, pl.color.z * pl.intensity),
-                                        pl.intensity,
-                                    ));
-                                }
-                                for (_e, sl, xform) in ecs_world.query::<(Entity, &SpotLight, &Transform)>().iter() {
-                                    point_lights.push((
-                                        xform.position,
-                                        sl.radius.max(0.1),
-                                        Vec3::new(sl.color.x * sl.intensity, sl.color.y * sl.intensity, sl.color.z * sl.intensity),
-                                        sl.intensity,
-                                    ));
-                                }
-                                point_lights.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
-                                let light_count = point_lights.len().min(8) as u32;
-
-                                let mut ubo_data = [0u8; 368];
-                                ubo_data[0..64].copy_from_slice(bytemuck::bytes_of(&view_proj));
-                                ubo_data[64..80].copy_from_slice(bytemuck::bytes_of(&Vec4::new(eye.x, eye.y, eye.z, 0.0)));
-                                ubo_data[80..84].copy_from_slice(&light_count.to_ne_bytes());
-                                for (i, (pos, radius, color, _)) in point_lights.iter().take(8).enumerate() {
-                                    let off = 96 + i * 32;
-                                    ubo_data[off..off+16].copy_from_slice(bytemuck::bytes_of(&Vec4::new(pos.x, pos.y, pos.z, *radius)));
-                                    ubo_data[off+16..off+32].copy_from_slice(bytemuck::bytes_of(&Vec4::new(color.x, color.y, color.z, 1.0)));
-                                }
-                                let fog_color = Vec4::new(0.15, 0.18, 0.25, cam.distance * 3.0 + 10.0);
-                                ubo_data[352..368].copy_from_slice(bytemuck::bytes_of(&fog_color));
-                                ubo.write(&ubo_data);
-                                
-                                if let Some(set) = scene_descriptor_set {
-                                    renderer.update_descriptor_set(set, ubo);
-                                
-                                let (light_dir, light_color) = {
-                                    let mut d = Vec3::new(0.5, 0.8, 0.3);
-                                    let mut c = Vec3::new(1.0, 0.95, 0.8);
-                                    for (dirlight, xform) in ecs_world.query_mut::<(&DirectionalLight, &Transform)>() {
-                                        let rot = Quat::from_euler(EulerRot::XYZ, xform.rotation.x, xform.rotation.y, xform.rotation.z);
-                                        d = (rot * Vec3::NEG_Z).normalize();
-                                        c = Vec3::new(dirlight.color.x * dirlight.intensity, dirlight.color.y * dirlight.intensity, dirlight.color.z * dirlight.intensity);
-                                        break;
-                                    }
-                                    (Vec4::new(d.x, d.y, d.z, 0.2), Vec4::new(c.x, c.y, c.z, 1.0))
-                                };
-                                
-                                let clear_color = [0.04, 0.04, 0.08, 1.0f32];
-                                renderer.begin_scene_pass(cmd, depth_buf, clear_color);
-                                
-                                for (entity, _transform, mesh_comp) in ecs_world.query::<(Entity, &Transform, &MeshComponent)>().iter() {
-                                    if let Some(mesh) = meshes.get(&mesh_comp.0) {
-                                        let model = world_transform(&ecs_world, entity);
-
-                                        let mat: Option<(Vec4, f32)> = ecs_world.get::<&Material>(entity).ok()
-                                            .map(|m| (Vec4::new(m.base_color.x, m.base_color.y, m.base_color.z, m.roughness), m.metallic));
-                                        let (mat_v, metallic) = mat.unwrap_or((Vec4::new(0.7, 0.7, 0.7, 0.5), 0.0));
-                                        
-                                        let mut pc_data = [0u8; 128];
-                                        pc_data[0..64].copy_from_slice(bytemuck::bytes_of(&model));
-                                        pc_data[64..80].copy_from_slice(bytemuck::bytes_of(&light_dir));
-                                        pc_data[80..96].copy_from_slice(bytemuck::bytes_of(&light_color));
-                                        pc_data[96..112].copy_from_slice(bytemuck::bytes_of(&mat_v));
-                                        pc_data[112..128].copy_from_slice(bytemuck::bytes_of(&Vec4::new(metallic, 0.0, 0.0, 0.0)));
-                                        
-                                        renderer.draw_indexed_in_pass(
-                                            cmd, pipeline,
-                                            &mesh.vertex_buffer,
-                                            mesh.index_buffer.as_ref(), mesh.index_count,
-                                            &pc_data,
-                                            set,
-                                        );
-                                    }
-                                    let _ = entity;
-                                }
-                                
-                                renderer.end_scene_pass(cmd);
-                                } // end if let Some(set)
-                            }
+                            render::render_3d_scene(
+                                &renderer, cmd, pipeline, depth_buf, ubo, set,
+                                &meshes, &ecs_world, &cam,
+                            );
                         }
 
-                        if let (Some(ref ppl), Some(ref buf), Some(ref ubo), Some(ref tex), Some(ds)) = 
+                        if let (Some(ref ppl), Some(ref buf), Some(ref ubo), Some(ref tex), Some(ds)) =
                             (&pipeline_2d, &quad_buffer_2d, &ubo_2d, &texture_2d, desc_set_2d)
                         {
-                            let sw = renderer.swapchain.lock();
-                            let w = sw.extent().width as f32;
-                            let h = sw.extent().height as f32;
-                            drop(sw);
-                            let ortho = Mat4::orthographic_rh_gl(0.0, w, h, 0.0, -1.0, 1.0);
-                            ubo.write(bytemuck::bytes_of(&ortho));
-                            renderer.update_2d_descriptor_set(ds, ubo, tex);
-
-                            let t = start_time.elapsed().as_secs_f32();
-                            let pulse = (t * 2.0).sin() * 0.3 + 0.7;
-                            let s = 100.0 * pulse;
-                            let model = Mat4::from_scale_rotation_translation(
-                                Vec3::new(s, s, 1.0),
-                                Quat::from_rotation_z(t * 1.5),
-                                Vec3::new(w * 0.5, h * 0.5, 0.0),
+                            render::render_2d_overlay(
+                                &renderer, cmd, ppl, buf, ubo, tex, ds, start_time,
                             );
-                            let mut pc = [0u8; 64];
-                            pc.copy_from_slice(bytemuck::bytes_of(&model));
-                            renderer.draw_2d(cmd, ppl, buf, 4, &pc, ds);
                         }
 
                         // Process egui and upload textures DURING command buffer recording.
@@ -601,6 +320,15 @@ fn main() {
                                 if !proj_info.scene.entities.is_empty() {
                                     scene_to_world(&mut ecs_world, &proj_info.scene);
                                 }
+                                if let Some(ref cam_state) = proj_info.editor_camera {
+                                    cam.position = cam_state.position.into();
+                                    cam.center = cam_state.center.into();
+                                    cam.yaw = cam_state.yaw;
+                                    cam.pitch = cam_state.pitch;
+                                    cam.distance = cam_state.distance;
+                                    cam.mode = cam_state.mode;
+                                    cam.follow_target = cam_state.follow_target;
+                                }
                                 current_project = info;
                                 project_dir = Some(path.clone());
                                 add_recent_project(&mut recent_projects, path, &current_project);
@@ -611,8 +339,22 @@ fn main() {
                         if let Some(path) = new_project.borrow_mut().take() {
                             let dir = Path::new(&path);
                             let ptype = new_project_type.get();
-                            let info = create_project_file(dir, ptype);
-                            if info.is_some() {
+                            let mut info = create_project_file(dir, ptype);
+                            if let Some(ref mut proj) = info {
+                                ecs_world.clear();
+                                ecs_world.spawn((
+                                    Transform { position: Vec3::ZERO, rotation: Vec3::ZERO, scale: Vec3::ONE },
+                                    Name("Cube".into()),
+                                    MeshComponent("Cube".into()),
+                                    Material { base_color: Vec3::new(0.7, 0.7, 0.7), roughness: 0.5, metallic: 0.0 },
+                                ));
+                                ecs_world.spawn((
+                                    Transform { position: Vec3::new(5.0, 10.0, 5.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
+                                    Name("Light".into()),
+                                    DirectionalLight { color: Vec3::new(1.0, 1.0, 1.0), intensity: 1.0 },
+                                ));
+                                proj.scene = world_to_scene(&ecs_world);
+                                let _ = write_project_file(dir, proj);
                                 current_project = info;
                                 project_dir = Some(path.clone());
                                 add_recent_project(&mut recent_projects, path, &current_project);

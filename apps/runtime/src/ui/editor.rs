@@ -2,8 +2,10 @@ use rustix_core::ecs::EcsWorld;
 use rustix_platform::input::InputManager;
 use rustix_audio::{AudioEngine, SoundInstance};
 
+use std::path::Path;
 use crate::camera::EditorCamera;
-use crate::project::{AppScreen, ConfirmTarget, ProjectInfo};
+use crate::project::{AppScreen, ConfirmTarget, ProjectInfo, write_project_file, EditorCameraState};
+use crate::scene::world_to_scene;
 use crate::undo::UndoHistory;
 use crate::sprite_editor;
 use crate::waveform;
@@ -55,4 +57,25 @@ pub fn editor_screen(
     viewport::show_viewport(ctx, cam, world, selected_entity, dirty, undo_history);
     dialogs::show_dialogs(ctx, screen, target, current_project, dirty, show_confirm, confirm_target, show_settings, sprite_editor);
     undo_redo::handle_undo_redo(ctx, world, selected_entity, dirty, undo_history);
+
+    if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::S)) {
+        if let Some(ref mut proj) = current_project {
+            proj.settings.resolution_width = *ww;
+            proj.settings.resolution_height = *wh;
+            proj.scene = world_to_scene(world);
+            proj.editor_camera = Some(EditorCameraState {
+                position: cam.position.into(),
+                center: cam.center.into(),
+                yaw: cam.yaw,
+                pitch: cam.pitch,
+                distance: cam.distance,
+                mode: cam.mode,
+                follow_target: cam.follow_target,
+            });
+            if let Some(ref dir) = project_dir {
+                let _ = write_project_file(Path::new(dir), proj);
+            }
+        }
+        dirty.set(false);
+    }
 }

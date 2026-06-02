@@ -42,6 +42,17 @@ pub struct RecentProjectList {
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct EditorCameraState {
+    pub position: [f32; 3],
+    pub center: [f32; 3],
+    pub yaw: f32,
+    pub pitch: f32,
+    pub distance: f32,
+    pub mode: crate::camera::CameraMode,
+    pub follow_target: bool,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProjectInfo {
     pub name: String,
     pub description: String,
@@ -52,6 +63,8 @@ pub struct ProjectInfo {
     pub settings: ProjectSettings,
     #[serde(default)]
     pub scene: SceneData,
+    #[serde(default)]
+    pub editor_camera: Option<EditorCameraState>,
 }
 
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -92,6 +105,7 @@ pub fn create_project_file(dir: &Path, project_type: ProjectType) -> Option<Proj
         scenes: Vec::new(),
         settings,
         scene: SceneData::default(),
+        editor_camera: None,
     };
     write_project_file(dir, &info)?;
     tracing::info!("created project: {} at {} (type: {:?})", info.name, dir.display(), project_type);

@@ -10,7 +10,7 @@ pub mod components;
 pub mod graph;
 
 // Re-export commonly used component types
-pub use components::{Sprite, SpriteRenderer, DirectionalLight, PointLight, SpotLight};
+pub use components::{Sprite, SpriteRenderer, DirectionalLight, PointLight, SpotLight, Camera};
 
 use std::sync::Arc;
 

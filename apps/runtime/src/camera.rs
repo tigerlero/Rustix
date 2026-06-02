@@ -1,7 +1,7 @@
 use rustix_core::math::{Vec3, Mat4};
 use rustix_platform::input::{InputManager, KeyCode};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum CameraMode {
     Orbit,
     FirstPerson,

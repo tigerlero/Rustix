@@ -4,7 +4,7 @@ use rustix_core::ecs::EcsWorld;
 use rustix_platform::input::InputManager;
 
 use crate::camera::{EditorCamera, CameraMode};
-use crate::project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo, write_project_file};
+use crate::project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo, write_project_file, EditorCameraState};
 use crate::scene::world_to_scene;
 use crate::sprite_editor;
 
@@ -64,6 +64,15 @@ pub fn show_menu_bar(
                         proj.settings.resolution_width = *ww;
                         proj.settings.resolution_height = *wh;
                         proj.scene = world_to_scene(world);
+                        proj.editor_camera = Some(EditorCameraState {
+                            position: cam.position.into(),
+                            center: cam.center.into(),
+                            yaw: cam.yaw,
+                            pitch: cam.pitch,
+                            distance: cam.distance,
+                            mode: cam.mode,
+                            follow_target: cam.follow_target,
+                        });
                         if let Some(ref dir) = project_dir {
                             let _ = write_project_file(Path::new(dir), proj);
                         }
@@ -81,6 +90,15 @@ pub fn show_menu_bar(
                             proj.settings.resolution_width = *ww;
                             proj.settings.resolution_height = *wh;
                             proj.scene = world_to_scene(world);
+                            proj.editor_camera = Some(EditorCameraState {
+                                position: cam.position.into(),
+                                center: cam.center.into(),
+                                yaw: cam.yaw,
+                                pitch: cam.pitch,
+                                distance: cam.distance,
+                                mode: cam.mode,
+                                follow_target: cam.follow_target,
+                            });
                             let _ = write_project_file(dir, proj);
                             *project_dir = Some(path.to_string_lossy().to_string());
                             *open_project.borrow_mut() = Some(path.to_string_lossy().to_string());

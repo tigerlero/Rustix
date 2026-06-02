@@ -1,8 +1,9 @@
 use rustix_core::ecs::{EcsWorld, Entity};
 use rustix_core::math::Vec3;
-use rustix_render::{DirectionalLight, PointLight, SpotLight};
-use rustix_audio::AudioSource;
+use rustix_render::{DirectionalLight, PointLight, SpotLight, Camera};
+use rustix_audio::{AudioSource, AudioListener};
 use rustix_scripting::ScriptComponent;
+use rustix_physics::{RigidBody, Collider};
 
 use crate::scene::{Transform, Name, MeshComponent, Material};
 use crate::undo::{UndoHistory, EditorAction};
@@ -86,6 +87,31 @@ pub fn handle_undo_redo(
                         if e == entity { *s = old.clone(); break; }
                     }
                 }
+                EditorAction::RigidBodyChanged { entity, old } => {
+                    for (e, b) in world.query_mut::<(Entity, &mut RigidBody)>() {
+                        if e == entity { *b = old; break; }
+                    }
+                }
+                EditorAction::ColliderChanged { entity, old } => {
+                    for (e, c) in world.query_mut::<(Entity, &mut Collider)>() {
+                        if e == entity { *c = old; break; }
+                    }
+                }
+                EditorAction::MeshComponentChanged { entity, old } => {
+                    for (e, m) in world.query_mut::<(Entity, &mut MeshComponent)>() {
+                        if e == entity { m.0 = old.0.clone(); break; }
+                    }
+                }
+                EditorAction::AudioListenerChanged { entity, old } => {
+                    for (e, a) in world.query_mut::<(Entity, &mut AudioListener)>() {
+                        if e == entity { *a = old; break; }
+                    }
+                }
+                EditorAction::CameraChanged { entity, old } => {
+                    for (e, c) in world.query_mut::<(Entity, &mut Camera)>() {
+                        if e == entity { *c = old; break; }
+                    }
+                }
                 EditorAction::ComponentAdded { entity, old_snapshot, .. } => {
                     let _ = world.despawn(entity);
                     let e = crate::scene::spawn_entity(world, &old_snapshot);
@@ -105,7 +131,11 @@ pub fn handle_undo_redo(
         }
     }
 
-    if ctx.input(|i| i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::Z)) {
+    let redo_shortcut = ctx.input(|i| {
+        (i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::Z))
+        || (i.modifiers.command && i.key_pressed(egui::Key::Y))
+    });
+    if redo_shortcut {
         let (action, idx) = {
             let mut history = undo_history.borrow_mut();
             let idx = history.index;
@@ -171,6 +201,31 @@ pub fn handle_undo_redo(
                         if e == entity { *s = old.clone(); break; }
                     }
                 }
+                EditorAction::RigidBodyChanged { entity, old } => {
+                    for (e, b) in world.query_mut::<(Entity, &mut RigidBody)>() {
+                        if e == entity { *b = old; break; }
+                    }
+                }
+                EditorAction::ColliderChanged { entity, old } => {
+                    for (e, c) in world.query_mut::<(Entity, &mut Collider)>() {
+                        if e == entity { *c = old; break; }
+                    }
+                }
+                EditorAction::MeshComponentChanged { entity, old } => {
+                    for (e, m) in world.query_mut::<(Entity, &mut MeshComponent)>() {
+                        if e == entity { m.0 = old.0.clone(); break; }
+                    }
+                }
+                EditorAction::AudioListenerChanged { entity, old } => {
+                    for (e, a) in world.query_mut::<(Entity, &mut AudioListener)>() {
+                        if e == entity { *a = old; break; }
+                    }
+                }
+                EditorAction::CameraChanged { entity, old } => {
+                    for (e, c) in world.query_mut::<(Entity, &mut Camera)>() {
+                        if e == entity { *c = old; break; }
+                    }
+                }
                 EditorAction::ComponentAdded { entity, component, .. } => {
                     let comp = component.as_str();
                     if comp == "DirectionalLight" {
@@ -183,10 +238,18 @@ pub fn handle_undo_redo(
                         let _ = world.insert(entity, (default_material(),));
                     } else if comp == "MeshComponent" {
                         let _ = world.insert(entity, (MeshComponent("Cube".into()),));
+                    } else if comp == "AudioListener" {
+                        let _ = world.insert(entity, (AudioListener::default(),));
+                    } else if comp == "Camera" {
+                        let _ = world.insert(entity, (Camera::default(),));
                     } else if comp == "AudioSource" {
                         let _ = world.insert(entity, (default_audio_source(),));
                     } else if comp == "ScriptComponent" {
                         let _ = world.insert(entity, (ScriptComponent::default(),));
+                    } else if comp == "RigidBody" {
+                        let _ = world.insert(entity, (RigidBody::default(),));
+                    } else if comp == "Collider" {
+                        let _ = world.insert(entity, (Collider::default(),));
                     }
                 }
                 EditorAction::ComponentRemoved { entity, component, .. } => {
@@ -201,10 +264,18 @@ pub fn handle_undo_redo(
                         let _ = world.remove_one::<Material>(entity);
                     } else if comp == "MeshComponent" {
                         let _ = world.remove_one::<MeshComponent>(entity);
+                    } else if comp == "AudioListener" {
+                        let _ = world.remove_one::<AudioListener>(entity);
+                    } else if comp == "Camera" {
+                        let _ = world.remove_one::<Camera>(entity);
                     } else if comp == "AudioSource" {
                         let _ = world.remove_one::<AudioSource>(entity);
                     } else if comp == "ScriptComponent" {
                         let _ = world.remove_one::<ScriptComponent>(entity);
+                    } else if comp == "RigidBody" {
+                        let _ = world.remove_one::<RigidBody>(entity);
+                    } else if comp == "Collider" {
+                        let _ = world.remove_one::<Collider>(entity);
                     }
                 }
             }

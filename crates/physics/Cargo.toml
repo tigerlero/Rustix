@@ -8,5 +8,6 @@ description = "Rustix engine physics: Rapier integration"
 tracing = { workspace = true }
 thiserror = { workspace = true }
 hecs = { workspace = true }
+serde = { workspace = true }
 
 rustix-core = { path = "../core" }

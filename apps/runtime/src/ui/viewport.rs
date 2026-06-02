@@ -1,6 +1,8 @@
 use rustix_core::ecs::{EcsWorld, Entity};
 use rustix_core::math::{Vec3, Vec4, Mat4, Quat, EulerRot};
-use rustix_audio::AudioSource;
+use rustix_audio::{AudioSource, AudioListener};
+use rustix_physics::{RigidBody, Collider};
+use rustix_render::Camera;
 
 use crate::camera::EditorCamera;
 use crate::scene::{Transform, Name, MeshComponent, Material, world_transform};
@@ -18,19 +20,20 @@ pub fn show_viewport(
     frame.fill = egui::Color32::TRANSPARENT;
     egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
         let rect = ui.max_rect();
-        
-        let entity_count = world.query::<&Name>().iter().count();
+        let screen_rect = ctx.screen_rect();
+
         let mut clicked_entity = None;
-        
-        let aspect = rect.width() / rect.height().max(1.0);
+
+        // The 3D scene is rendered to the full window, so projection must match the window aspect.
+        let aspect = screen_rect.width() / screen_rect.height().max(1.0);
         let vp = cam.view_proj(aspect);
-        
+
         let world_to_screen = |wpos: Vec3| -> Option<egui::Pos2> {
             let clip = vp * Vec4::new(wpos.x, wpos.y, wpos.z, 1.0);
             if clip.w <= 0.0 { return None; }
             let ndc = clip.truncate() / clip.w;
-            let x = rect.min.x + (ndc.x * 0.5 + 0.5) * rect.width();
-            let y = rect.min.y + (1.0 - (ndc.y * 0.5 + 0.5)) * rect.height();
+            let x = screen_rect.min.x + (ndc.x * 0.5 + 0.5) * screen_rect.width();
+            let y = screen_rect.min.y + (1.0 - (ndc.y * 0.5 + 0.5)) * screen_rect.height();
             Some(egui::pos2(x, y))
         };
         
@@ -48,6 +51,8 @@ pub fn show_viewport(
         let gizmo_entity_scale_id = egui::Id::new("gizmo_entity_scale");
         let gizmo_undo_transform_id = egui::Id::new("gizmo_undo_transform");
         let gizmo_dragging_id = egui::Id::new("gizmo_dragging");
+        let gizmo_space_id = egui::Id::new("gizmo_space");
+        let gizmo_local_axes_id = egui::Id::new("gizmo_local_axes");
         let mut gizmo_active = ctx.data(|d| d.get_temp::<usize>(gizmo_active_id).unwrap_or(usize::MAX));
         let mut gizmo_drag_start = ctx.data(|d| d.get_temp::<egui::Vec2>(gizmo_drag_start_id).unwrap_or(egui::Vec2::ZERO));
         let mut gizmo_entity_pos = ctx.data(|d| d.get_temp::<Vec3>(gizmo_entity_pos_id).unwrap_or(Vec3::ZERO));
@@ -55,40 +60,79 @@ pub fn show_viewport(
         let mut gizmo_entity_scale = ctx.data(|d| d.get_temp::<Vec3>(gizmo_entity_scale_id).unwrap_or(Vec3::ONE));
         let mut gizmo_undo_transform: Option<Transform> = ctx.data(|d| d.get_temp::<Transform>(gizmo_undo_transform_id));
         let mut gizmo_dragging = ctx.data(|d| d.get_temp::<bool>(gizmo_dragging_id).unwrap_or(false));
+        let mut gizmo_space = ctx.data(|d| d.get_temp::<bool>(gizmo_space_id).unwrap_or(false));
         
         let mut deferred_new_pos: Option<Vec3> = None;
         let mut deferred_new_rot: Option<Vec3> = None;
         let mut deferred_new_scale: Option<Vec3> = None;
         
-        let grid_half = 20.0;
-        let grid_step = 1.0;
-        let major_step = 5.0;
-        let grid_color_minor = egui::Color32::from_rgba_premultiplied(100, 110, 130, 30);
-        let grid_color_major = egui::Color32::from_rgba_premultiplied(100, 110, 130, 70);
-        
-        let mut z = -grid_half;
-        while z <= grid_half {
-            let near = Vec3::new(-grid_half, 0.0, z);
-            let far = Vec3::new(grid_half, 0.0, z);
-            if let (Some(a), Some(b)) = (world_to_screen(near), world_to_screen(far)) {
-                let is_major = (z % major_step).abs() < 0.01;
-                let col = if is_major { grid_color_major } else { grid_color_minor };
-                ui.painter().line_segment([a, b], egui::Stroke::new(if is_major { 1.5 } else { 0.5 }, col));
+        let show_grid = ctx.data(|d| d.get_temp::<bool>(egui::Id::new("viewport_show_grid")).unwrap_or(true));
+        if show_grid {
+            let grid_half = 20.0;
+            let grid_step = 1.0;
+            let major_step = 5.0;
+            let grid_color_minor = egui::Color32::from_rgba_premultiplied(100, 110, 130, 30);
+            let grid_color_major = egui::Color32::from_rgba_premultiplied(100, 110, 130, 70);
+            
+            let mut z = -grid_half;
+            while z <= grid_half {
+                let near = Vec3::new(-grid_half, 0.0, z);
+                let far = Vec3::new(grid_half, 0.0, z);
+                if let (Some(a), Some(b)) = (world_to_screen(near), world_to_screen(far)) {
+                    let is_major = (z % major_step).abs() < 0.01;
+                    let col = if is_major { grid_color_major } else { grid_color_minor };
+                    ui.painter().line_segment([a, b], egui::Stroke::new(if is_major { 1.5 } else { 0.5 }, col));
+                }
+                z += grid_step;
             }
-            z += grid_step;
-        }
-        let mut x = -grid_half;
-        while x <= grid_half {
-            let near = Vec3::new(x, 0.0, -grid_half);
-            let far = Vec3::new(x, 0.0, grid_half);
-            if let (Some(a), Some(b)) = (world_to_screen(near), world_to_screen(far)) {
-                let is_major = (x % major_step).abs() < 0.01;
-                let col = if is_major { grid_color_major } else { grid_color_minor };
-                ui.painter().line_segment([a, b], egui::Stroke::new(if is_major { 1.5 } else { 0.5 }, col));
+            let mut x = -grid_half;
+            while x <= grid_half {
+                let near = Vec3::new(x, 0.0, -grid_half);
+                let far = Vec3::new(x, 0.0, grid_half);
+                if let (Some(a), Some(b)) = (world_to_screen(near), world_to_screen(far)) {
+                    let is_major = (x % major_step).abs() < 0.01;
+                    let col = if is_major { grid_color_major } else { grid_color_minor };
+                    ui.painter().line_segment([a, b], egui::Stroke::new(if is_major { 1.5 } else { 0.5 }, col));
+                }
+                x += grid_step;
             }
-            x += grid_step;
         }
-        
+
+        // Gizmo mode toolbar
+        let snap_id = egui::Id::new("gizmo_snap");
+        let snap_size_id = egui::Id::new("gizmo_snap_size");
+        let mut snap_enabled = ctx.data(|d| d.get_temp::<bool>(snap_id).unwrap_or(false));
+        let mut snap_size = ctx.data(|d| d.get_temp::<f32>(snap_size_id).unwrap_or(0.5));
+        ui.horizontal(|ui| {
+            ui.add_space(4.0);
+            ui.vertical(|ui| {
+                ui.add_space(4.0);
+                let toolbar_bg = egui::Color32::from_rgba_premultiplied(30, 30, 38, 220);
+                let toolbar_rect = ui.available_rect_before_wrap();
+                let rect = egui::Rect::from_min_size(toolbar_rect.min, egui::vec2(260.0, 28.0));
+                ui.painter().rect_filled(rect, 6.0, toolbar_bg);
+                ui.painter().rect_stroke(rect, 6.0, egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 75)), egui::StrokeKind::Inside);
+                ui.allocate_ui_at_rect(rect.shrink(4.0), |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new("Gizmo:").weak().size(11.0));
+                        if ui.selectable_label(gizmo_mode == 0, egui::RichText::new("T").size(12.0).strong()).clicked() { gizmo_mode = 0; }
+                        if ui.selectable_label(gizmo_mode == 1, egui::RichText::new("R").size(12.0).strong()).clicked() { gizmo_mode = 1; }
+                        if ui.selectable_label(gizmo_mode == 2, egui::RichText::new("S").size(12.0).strong()).clicked() { gizmo_mode = 2; }
+                        ui.add_space(4.0);
+                        if ui.selectable_label(gizmo_space, egui::RichText::new("Local").size(11.0)).clicked() { gizmo_space = !gizmo_space; }
+                        ui.add_space(4.0);
+                        if ui.selectable_label(snap_enabled, egui::RichText::new("Snap").size(11.0)).clicked() { snap_enabled = !snap_enabled; }
+                        if snap_enabled {
+                            ui.add(egui::DragValue::new(&mut snap_size).speed(0.1).range(0.01..=10.0).prefix("").suffix("").clamp_to_range(false));
+                        }
+                    });
+                });
+            });
+        });
+        ctx.data_mut(|d| d.insert_temp(snap_id, snap_enabled));
+        ctx.data_mut(|d| d.insert_temp(snap_size_id, snap_size));
+        ctx.data_mut(|d| d.insert_temp(gizmo_space_id, gizmo_space));
+
         for (entity, name, transform) in world.query::<(Entity, &Name, &Transform)>().iter() {
             let is_selected = *selected_entity.borrow() == Some(entity);
             let world_pos = {
@@ -106,18 +150,11 @@ pub fn show_viewport(
                 
                 let ent_resp = ui.interact(
                     egui::Rect::from_center_size(screen_pos, egui::vec2(12.0, 12.0)),
-                    ui.next_auto_id(),
+                    egui::Id::new(("vp_ent", entity.to_bits().get())),
                     egui::Sense::click()
                 );
                 if ent_resp.clicked() { clicked_entity = Some(entity); }
                 ui.painter().circle_filled(screen_pos, 4.0, entity_color);
-                ui.painter().text(
-                    egui::pos2(screen_pos.x + 8.0, screen_pos.y - 4.0),
-                    egui::Align2::LEFT_CENTER,
-                    &name.0,
-                    egui::FontId::proportional(11.0),
-                    egui::Color32::LIGHT_GRAY
-                );
 
                 if let Ok(aud) = world.get::<&AudioSource>(entity) {
                     let aud_min_color = egui::Color32::from_rgba_premultiplied(255, 120, 180, 80);
@@ -145,88 +182,147 @@ pub fn show_viewport(
                         }
                     }
 
-                    if let Some(label_pos) = world_to_screen(world_pos + Vec3::new(aud.max_distance, aud.max_distance * 0.3, 0.0)) {
-                        ui.painter().text(
-                            label_pos,
-                            egui::Align2::LEFT_BOTTOM,
-                            format!("max {:.0}m", aud.max_distance),
-                            egui::FontId::proportional(10.0),
-                            aud_label_color,
-                        );
-                    }
-                    if let Some(label_pos) = world_to_screen(world_pos + Vec3::new(aud.min_distance, -aud.min_distance * 0.3, 0.0)) {
-                        ui.painter().text(
-                            label_pos,
-                            egui::Align2::LEFT_TOP,
-                            format!("min {:.0}m", aud.min_distance),
-                            egui::FontId::proportional(10.0),
-                            aud_label_color,
-                        );
-                    }
-
-                    ui.painter().text(
-                        egui::pos2(screen_pos.x + 8.0, screen_pos.y - 16.0),
-                        egui::Align2::LEFT_CENTER,
-                        "\u{1f50a}",
-                        egui::FontId::proportional(12.0),
-                        aud_label_color,
-                    );
                 }
-                
+
                 if is_selected {
+                    // Small white cross at origin so the pivot point is visible.
+                    let o = screen_pos;
+                    ui.painter().line_segment([o - egui::vec2(5.0, 0.0), o + egui::vec2(5.0, 0.0)], egui::Stroke::new(1.0, egui::Color32::WHITE));
+                    ui.painter().line_segment([o - egui::vec2(0.0, 5.0), o + egui::vec2(0.0, 5.0)], egui::Stroke::new(1.0, egui::Color32::WHITE));
+
+                    let local_axes = if gizmo_space {
+                        let m = world_transform(world, entity);
+                        let (_s, rot, _p) = m.to_scale_rotation_translation();
+                        [rot * Vec3::X, rot * Vec3::Y, rot * Vec3::Z]
+                    } else {
+                        [Vec3::X, Vec3::Y, Vec3::Z]
+                    };
                     let axis_colors = [
-                        (Vec3::X, egui::Color32::from_rgb(220, 60, 60)),
-                        (Vec3::Y, egui::Color32::from_rgb(60, 200, 60)),
-                        (Vec3::Z, egui::Color32::from_rgb(60, 100, 220)),
+                        (local_axes[0], egui::Color32::from_rgb(220, 60, 60)),
+                        (local_axes[1], egui::Color32::from_rgb(60, 200, 60)),
+                        (local_axes[2], egui::Color32::from_rgb(60, 100, 220)),
                     ];
                     let gizmo_len = 60.0;
-                    
+                    // Ctrl temporarily switches gizmos to scale mode when not already dragging.
+                    let effective_mode = if !gizmo_dragging && ui.input(|i| i.modifiers.ctrl) { 2 } else { gizmo_mode };
+
                     for (axis_idx, (axis_dir, color)) in axis_colors.iter().enumerate() {
-                        let tip_world = world_pos + *axis_dir * 2.0;
-                        if let Some(tip_screen) = world_to_screen(tip_world) {
-                            let v = tip_screen - screen_pos;
-                            let len = (v.x * v.x + v.y * v.y).sqrt();
-                            let dir_2d = if len > 0.0 { v / len } else { egui::Vec2::ZERO };
-                            let handle_screen = screen_pos + dir_2d * gizmo_len;
-                            
-                            ui.painter().line_segment(
-                                [screen_pos, handle_screen],
-                                egui::Stroke::new(2.0, *color),
-                            );
-                            
-                            let handle_rect = egui::Rect::from_center_size(handle_screen, egui::vec2(14.0, 14.0));
-                            let handle_resp = ui.interact(handle_rect, ui.next_auto_id(), egui::Sense::click_and_drag());
-                            
-                            let is_active = gizmo_active == axis_idx;
-                            let handle_color = if is_active { egui::Color32::WHITE } else { *color };
-                            ui.painter().circle_filled(handle_screen, 6.0, handle_color);
-                            ui.painter().circle_stroke(handle_screen, 6.0, egui::Stroke::new(2.0, egui::Color32::WHITE));
-                            
-                            if handle_resp.drag_started() {
-                                gizmo_active = axis_idx;
-                                gizmo_drag_start = handle_resp.interact_pointer_pos().unwrap_or(handle_screen).to_vec2();
-                                gizmo_entity_pos = world_pos;
-                                gizmo_entity_rot = transform.rotation;
-                                gizmo_entity_scale = transform.scale;
-                                gizmo_undo_transform = Some(Transform {
-                                    position: transform.position,
-                                    rotation: transform.rotation,
-                                    scale: transform.scale,
-                                });
-                                gizmo_dragging = true;
+                        let is_active = gizmo_active == axis_idx;
+                        let handle_color = if is_active { egui::Color32::WHITE } else { *color };
+                        let handle_id = egui::Id::new(("gizmo_h", entity.to_bits().get(), axis_idx));
+
+                        match effective_mode {
+                            1 => {
+                                // Rotation: draw a ring in the plane perpendicular to the axis.
+                                let ring_world_r = cam.distance * 0.04;
+                                let (plane_a, plane_b) = match axis_idx {
+                                    0 => (local_axes[1], local_axes[2]),
+                                    1 => (local_axes[0], local_axes[2]),
+                                    _ => (local_axes[0], local_axes[1]),
+                                };
+                                let num_segments = 32;
+                                let mut last_screen: Option<egui::Pos2> = None;
+                                for i in 0..=num_segments {
+                                    let angle = (i as f32 / num_segments as f32) * std::f32::consts::TAU;
+                                    let pt_world = world_pos + ring_world_r * (angle.cos() * plane_a + angle.sin() * plane_b);
+                                    if let Some(pt_screen) = world_to_screen(pt_world) {
+                                        if let Some(last) = last_screen {
+                                            ui.painter().line_segment([last, pt_screen], egui::Stroke::new(1.5, *color));
+                                        }
+                                        last_screen = Some(pt_screen);
+                                    }
+                                }
+                                // Handle at 45 degrees on the ring.
+                                let handle_world = world_pos + ring_world_r * (0.707 * plane_a + 0.707 * plane_b);
+                                if let Some(handle_screen) = world_to_screen(handle_world) {
+                                    let handle_rect = egui::Rect::from_center_size(handle_screen, egui::vec2(32.0, 32.0));
+                                    let handle_resp = ui.interact(handle_rect, handle_id, egui::Sense::drag());
+                                    ui.painter().circle_filled(handle_screen, 4.0, handle_color);
+                                    ui.painter().circle_stroke(handle_screen, 4.0, egui::Stroke::new(1.5, egui::Color32::WHITE));
+                                    if handle_resp.drag_started() {
+                                        gizmo_active = axis_idx;
+                                        gizmo_drag_start = handle_resp.interact_pointer_pos().unwrap_or(handle_screen).to_vec2();
+                                        gizmo_entity_pos = world_pos;
+                                        gizmo_entity_rot = transform.rotation;
+                                        gizmo_entity_scale = transform.scale;
+                                        gizmo_undo_transform = Some(Transform { position: transform.position, rotation: transform.rotation, scale: transform.scale });
+                                        ctx.data_mut(|d| d.insert_temp(gizmo_local_axes_id, local_axes));
+                                        gizmo_dragging = true;
+                                    }
+                                }
+                            }
+                            2 => {
+                                // Scale: line + square handle.
+                                let tip_world = world_pos + *axis_dir * 2.0;
+                                if let Some(tip_screen) = world_to_screen(tip_world) {
+                                    let v = tip_screen - screen_pos;
+                                    let len = (v.x * v.x + v.y * v.y).sqrt();
+                                    let dir_2d = if len > 0.0 { v / len } else { egui::Vec2::ZERO };
+                                    let handle_screen = screen_pos + dir_2d * gizmo_len;
+
+                                    ui.painter().line_segment([screen_pos, handle_screen], egui::Stroke::new(1.5, *color));
+
+                                    let handle_rect = egui::Rect::from_center_size(handle_screen, egui::vec2(32.0, 32.0));
+                                    let handle_resp = ui.interact(handle_rect, handle_id, egui::Sense::drag());
+
+                                    let half = 5.0;
+                                    let square_rect = egui::Rect::from_center_size(handle_screen, egui::vec2(half * 2.0, half * 2.0));
+                                    ui.painter().rect_filled(square_rect, 0.0, handle_color);
+                                    ui.painter().rect_stroke(square_rect, 0.0, egui::Stroke::new(1.5, egui::Color32::WHITE), egui::StrokeKind::Inside);
+
+                                    if handle_resp.drag_started() {
+                                        gizmo_active = axis_idx;
+                                        gizmo_drag_start = handle_resp.interact_pointer_pos().unwrap_or(handle_screen).to_vec2();
+                                        gizmo_entity_pos = world_pos;
+                                        gizmo_entity_rot = transform.rotation;
+                                        gizmo_entity_scale = transform.scale;
+                                        gizmo_undo_transform = Some(Transform { position: transform.position, rotation: transform.rotation, scale: transform.scale });
+                                        ctx.data_mut(|d| d.insert_temp(gizmo_local_axes_id, local_axes));
+                                        gizmo_dragging = true;
+                                    }
+                                }
+                            }
+                            _ => {
+                                // Translate: line + circle handle.
+                                let tip_world = world_pos + *axis_dir * 2.0;
+                                if let Some(tip_screen) = world_to_screen(tip_world) {
+                                    let v = tip_screen - screen_pos;
+                                    let len = (v.x * v.x + v.y * v.y).sqrt();
+                                    let dir_2d = if len > 0.0 { v / len } else { egui::Vec2::ZERO };
+                                    let handle_screen = screen_pos + dir_2d * gizmo_len;
+
+                                    ui.painter().line_segment([screen_pos, handle_screen], egui::Stroke::new(1.5, *color));
+
+                                    let handle_rect = egui::Rect::from_center_size(handle_screen, egui::vec2(32.0, 32.0));
+                                    let handle_resp = ui.interact(handle_rect, handle_id, egui::Sense::drag());
+
+                                    ui.painter().circle_filled(handle_screen, 4.0, handle_color);
+                                    ui.painter().circle_stroke(handle_screen, 4.0, egui::Stroke::new(1.5, egui::Color32::WHITE));
+
+                                    if handle_resp.drag_started() {
+                                        gizmo_active = axis_idx;
+                                        gizmo_drag_start = handle_resp.interact_pointer_pos().unwrap_or(handle_screen).to_vec2();
+                                        gizmo_entity_pos = world_pos;
+                                        gizmo_entity_rot = transform.rotation;
+                                        gizmo_entity_scale = transform.scale;
+                                        gizmo_undo_transform = Some(Transform { position: transform.position, rotation: transform.rotation, scale: transform.scale });
+                                        ctx.data_mut(|d| d.insert_temp(gizmo_local_axes_id, local_axes));
+                                        gizmo_dragging = true;
+                                    }
+                                }
                             }
                         }
                     }
                     
                     if gizmo_active != usize::MAX {
-                        if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
+                        if let Some(pointer_pos) = ui.ctx().input(|i| i.pointer.latest_pos()) {
                             if ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary)) {
-                                let axis_dir = match gizmo_active {
-                                    0 => Vec3::X, 1 => Vec3::Y, _ => Vec3::Z,
-                                };
+                                let stored_axes = ctx.data(|d| d.get_temp::<[Vec3; 3]>(gizmo_local_axes_id))
+                                    .unwrap_or([Vec3::X, Vec3::Y, Vec3::Z]);
+                                let axis_dir = stored_axes[gizmo_active];
                                 let drag_delta = pointer_pos.to_vec2() - gizmo_drag_start;
-                                
-                                match gizmo_mode {
+
+                                match effective_mode {
                                     1 => {
                                         let angle = drag_delta.length() * 0.01;
                                         let sign = if drag_delta.x.abs() > drag_delta.y.abs() { drag_delta.x.signum() } else { -drag_delta.y.signum() };
@@ -252,7 +348,13 @@ pub fn show_viewport(
                                             let len = (v.x * v.x + v.y * v.y).sqrt();
                                             let axis_2d = if len > 0.0 { v / len } else { egui::Vec2::ZERO };
                                             let along = (drag_delta.x * axis_2d.x + drag_delta.y * axis_2d.y) * cam.distance * 0.01;
-                                            deferred_new_pos = Some(gizmo_entity_pos + axis_dir * along);
+                                            let mut new_pos = gizmo_entity_pos + axis_dir * along;
+                                            if snap_enabled && snap_size > 0.0 {
+                                                new_pos.x = (new_pos.x / snap_size).round() * snap_size;
+                                                new_pos.y = (new_pos.y / snap_size).round() * snap_size;
+                                                new_pos.z = (new_pos.z / snap_size).round() * snap_size;
+                                            }
+                                            deferred_new_pos = Some(new_pos);
                                         }
                                     }
                                 }
@@ -296,11 +398,12 @@ pub fn show_viewport(
                 undo_history.borrow_mut().push(EditorAction::TransformEntity { entity: target, old_transform: old });
             }
             gizmo_dragging = false;
+            ctx.data_mut(|d| d.remove_temp::<[Vec3; 3]>(gizmo_local_axes_id));
         }
-        
+
         if let Some(e) = clicked_entity {
             *selected_entity.borrow_mut() = Some(e);
-        } else if ui.interact(rect, ui.next_auto_id(), egui::Sense::click()).clicked() {
+        } else if ui.interact(rect, egui::Id::new("vp_bg_click"), egui::Sense::click()).clicked() {
             *selected_entity.borrow_mut() = None;
             gizmo_active = usize::MAX;
         }
@@ -340,6 +443,10 @@ pub fn show_viewport(
                 let pointlight = world.get::<&rustix_render::PointLight>(sel).ok().map(|r| (*r).clone());
                 let spotlight = world.get::<&rustix_render::SpotLight>(sel).ok().map(|r| (*r).clone());
                 let audio = world.get::<&AudioSource>(sel).ok().map(|r| (*r).clone());
+                let rigidbody = world.get::<&RigidBody>(sel).ok().map(|r| *r);
+                let collider = world.get::<&Collider>(sel).ok().map(|r| *r);
+                let audiolistener = world.get::<&AudioListener>(sel).ok().map(|r| *r);
+                let camera = world.get::<&Camera>(sel).ok().map(|r| *r);
 
                 let mut new_transform = transform;
                 new_transform.position.x += 1.0;
@@ -353,6 +460,10 @@ pub fn show_viewport(
                 if let Some(l) = pointlight { builder.add(l); }
                 if let Some(l) = spotlight { builder.add(l); }
                 if let Some(a) = audio { builder.add(a); }
+                if let Some(rb) = rigidbody { builder.add(rb); }
+                if let Some(c) = collider { builder.add(c); }
+                if let Some(al) = audiolistener { builder.add(al); }
+                if let Some(cam) = camera { builder.add(cam); }
                 let new_entity = world.spawn(builder.build());
 
                 let snapshot = crate::scene::entity_to_scene_entity(world, new_entity);
@@ -361,7 +472,25 @@ pub fn show_viewport(
                 dirty.set(true);
             }
         }
-        
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::C)) {
+            if let Some(sel) = *selected_entity.borrow() {
+                let snapshot = crate::scene::entity_to_scene_entity(world, sel);
+                ctx.data_mut(|d| d.insert_temp(egui::Id::new("copied_entity"), snapshot));
+            }
+        }
+        if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::V)) {
+            if let Some(copied) = ctx.data(|d| d.get_temp::<crate::scene::SceneEntity>(egui::Id::new("copied_entity"))) {
+                let mut pasted = copied.clone();
+                pasted.name = format!("{} (Pasted)", pasted.name);
+                pasted.position[0] += 1.0;
+                let new_entity = crate::scene::spawn_entity(world, &pasted);
+                let snapshot = crate::scene::entity_to_scene_entity(world, new_entity);
+                undo_history.borrow_mut().push(EditorAction::AddEntity { entity: new_entity, snapshot });
+                *selected_entity.borrow_mut() = Some(new_entity);
+                dirty.set(true);
+            }
+        }
+
         ctx.data_mut(|d| d.insert_temp(gizmo_active_id, gizmo_active));
         ctx.data_mut(|d| d.insert_temp(gizmo_drag_start_id, gizmo_drag_start));
         ctx.data_mut(|d| d.insert_temp(gizmo_entity_pos_id, gizmo_entity_pos));
@@ -373,15 +502,7 @@ pub fn show_viewport(
             ctx.data_mut(|d| d.remove_temp::<Transform>(gizmo_undo_transform_id));
         }
         ctx.data_mut(|d| d.insert_temp(gizmo_dragging_id, gizmo_dragging));
-        
-        let mode_label = match gizmo_mode { 1 => "Rotate", 2 => "Scale", _ => "Translate" };
-        let hud = format!("[{mode_label}]  {} entities", entity_count);
-        ui.painter().text(
-            egui::pos2(rect.right() - 8.0, rect.bottom() - 8.0),
-            egui::Align2::RIGHT_BOTTOM,
-            hud,
-            egui::FontId::proportional(11.0),
-            egui::Color32::from_rgba_premultiplied(180, 200, 220, 160),
-        );
+        ctx.data_mut(|d| d.insert_temp(gizmo_space_id, gizmo_space));
+
     });
 }

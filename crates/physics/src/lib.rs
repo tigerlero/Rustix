@@ -2,7 +2,7 @@ use rustix_core::math::Vec3;
 use std::collections::HashMap;
 
 /// Type of rigid body.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum BodyType {
     Static,
     Dynamic,
@@ -14,7 +14,7 @@ impl Default for BodyType {
 }
 
 /// Rigid body component for physics simulation.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RigidBody {
     pub body_type: BodyType,
     pub mass: f32,
@@ -42,7 +42,7 @@ impl Default for RigidBody {
 }
 
 /// Collider shape types.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum ColliderShape {
     Sphere { radius: f32 },
     Box { half_extents: Vec3 },
@@ -50,7 +50,7 @@ pub enum ColliderShape {
 }
 
 /// Collider component defining collision geometry.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Collider {
     pub shape: ColliderShape,
     pub is_trigger: bool,

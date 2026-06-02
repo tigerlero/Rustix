@@ -2,6 +2,7 @@ use rustix_core::ecs::EcsWorld;
 use rustix_core::math::{Vec3, Mat4, Quat, EulerRot};
 use rustix_render::{DirectionalLight, PointLight, SpotLight};
 use rustix_scripting::ScriptComponent;
+use rustix_physics::{RigidBody, Collider};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Transform {
@@ -19,7 +20,7 @@ impl Default for Transform {
 #[derive(Debug, Clone)]
 pub struct Name(pub String);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MeshComponent(pub String);
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -50,6 +51,14 @@ pub struct SceneEntity {
     pub material: Option<Material>,
     #[serde(default)]
     pub script: Option<ScriptComponent>,
+    #[serde(default)]
+    pub rigidbody: Option<RigidBody>,
+    #[serde(default)]
+    pub collider: Option<Collider>,
+    #[serde(default)]
+    pub audiolistener: Option<rustix_audio::AudioListener>,
+    #[serde(default)]
+    pub camera: Option<rustix_render::Camera>,
     #[serde(default)]
     pub parent_idx: Option<usize>,
 }
@@ -85,6 +94,10 @@ pub fn entity_to_scene_entity(world: &EcsWorld, entity: hecs::Entity) -> SceneEn
     let pointlight = world.get::<&PointLight>(entity).ok().map(|r| *r);
     let spotlight = world.get::<&SpotLight>(entity).ok().map(|r| *r);
     let script = world.get::<&ScriptComponent>(entity).ok().map(|r| (*r).clone());
+    let rigidbody = world.get::<&RigidBody>(entity).ok().map(|r| *r);
+    let collider = world.get::<&Collider>(entity).ok().map(|r| *r);
+    let audiolistener = world.get::<&rustix_audio::AudioListener>(entity).ok().map(|r| *r);
+    let camera = world.get::<&rustix_render::Camera>(entity).ok().map(|r| *r);
     SceneEntity {
         name,
         position: t.position.into(),
@@ -96,6 +109,10 @@ pub fn entity_to_scene_entity(world: &EcsWorld, entity: hecs::Entity) -> SceneEn
         spotlight,
         material,
         script,
+        rigidbody,
+        collider,
+        audiolistener,
+        camera,
         parent_idx: None,
     }
 }
@@ -127,6 +144,18 @@ pub fn spawn_entity(world: &mut EcsWorld, e: &SceneEntity) -> hecs::Entity {
     if let Some(ref sc) = e.script {
         let _ = world.insert(entity, (sc.clone(),));
     }
+    if let Some(ref rb) = e.rigidbody {
+        let _ = world.insert(entity, (*rb,));
+    }
+    if let Some(ref col) = e.collider {
+        let _ = world.insert(entity, (*col,));
+    }
+    if let Some(ref al) = e.audiolistener {
+        let _ = world.insert(entity, (*al,));
+    }
+    if let Some(ref cam) = e.camera {
+        let _ = world.insert(entity, (*cam,));
+    }
     entity
 }
 
@@ -143,6 +172,10 @@ pub fn world_to_scene(world: &EcsWorld) -> SceneData {
         let mesh = world.get::<&MeshComponent>(*entity).ok().map(|r| r.0.clone());
         let material = world.get::<&Material>(*entity).ok().map(|r| (*r).clone());
         let script = world.get::<&ScriptComponent>(*entity).ok().map(|r| (*r).clone());
+        let rigidbody = world.get::<&RigidBody>(*entity).ok().map(|r| *r);
+        let collider = world.get::<&Collider>(*entity).ok().map(|r| *r);
+        let audiolistener = world.get::<&rustix_audio::AudioListener>(*entity).ok().map(|r| *r);
+        let camera = world.get::<&rustix_render::Camera>(*entity).ok().map(|r| *r);
         let parent_idx = world.get::<&Parent>(*entity).ok()
             .and_then(|p| p.0.and_then(|pe| entity_to_idx.get(&pe).copied()));
         entities.push(SceneEntity {
@@ -156,6 +189,10 @@ pub fn world_to_scene(world: &EcsWorld) -> SceneData {
             spotlight,
             material,
             script,
+            rigidbody,
+            collider,
+            audiolistener,
+            camera,
             parent_idx,
         });
     }
@@ -192,6 +229,18 @@ pub fn scene_to_world(world: &mut EcsWorld, data: &SceneData) {
         }
         if let Some(ref sc) = e.script {
             let _ = world.insert(entity, (sc.clone(),));
+        }
+        if let Some(ref rb) = e.rigidbody {
+            let _ = world.insert(entity, (*rb,));
+        }
+        if let Some(ref col) = e.collider {
+            let _ = world.insert(entity, (*col,));
+        }
+        if let Some(ref al) = e.audiolistener {
+            let _ = world.insert(entity, (*al,));
+        }
+        if let Some(ref cam) = e.camera {
+            let _ = world.insert(entity, (*cam,));
         }
         idx_to_entity.push(entity);
     }

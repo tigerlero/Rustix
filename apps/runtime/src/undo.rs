@@ -1,7 +1,8 @@
-use rustix_render::{DirectionalLight, PointLight, SpotLight};
-use rustix_audio::AudioSource;
+use rustix_render::{DirectionalLight, PointLight, SpotLight, Camera};
+use rustix_audio::{AudioSource, AudioListener};
 use rustix_scripting::ScriptComponent;
-use super::scene::{Transform, Material, SceneEntity};
+use rustix_physics::{RigidBody, Collider};
+use super::scene::{Transform, Material, MeshComponent, SceneEntity};
 
 #[derive(Clone)]
 pub enum EditorAction {
@@ -15,6 +16,11 @@ pub enum EditorAction {
     MaterialChanged { entity: hecs::Entity, old: Material },
     AudioSourceChanged { entity: hecs::Entity, old: AudioSource },
     ScriptComponentChanged { entity: hecs::Entity, old: ScriptComponent },
+    RigidBodyChanged { entity: hecs::Entity, old: RigidBody },
+    ColliderChanged { entity: hecs::Entity, old: Collider },
+    MeshComponentChanged { entity: hecs::Entity, old: MeshComponent },
+    AudioListenerChanged { entity: hecs::Entity, old: AudioListener },
+    CameraChanged { entity: hecs::Entity, old: Camera },
     ComponentAdded { entity: hecs::Entity, component: String, old_snapshot: SceneEntity },
     ComponentRemoved { entity: hecs::Entity, component: String, old_snapshot: SceneEntity },
 }

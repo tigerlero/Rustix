@@ -42,7 +42,7 @@ pub struct MaterialComponent {
 }
 
 /// Marks the entity as the active camera.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Camera {
     pub fov_degrees: f32,
     pub near: f32,
