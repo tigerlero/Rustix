@@ -6,7 +6,7 @@ use crate::swapchain::Swapchain;
 use crate::RenderError;
 
 pub const PUSH_CONSTANT_SIZE: u32 = 128; // Mat4(64) + dir_light(16) + dir_color(16) + base_color(16) + rough_metal(16)
-pub const UBO_SCENE_SIZE: u64 = 368; // view_proj(64)+cam(16)+count(4)+pad(12)+8*PointLight(256)+fog(16)
+pub const UBO_SCENE_SIZE: u64 = 432; // view_proj(64)+cam(16)+count(4)+pad(12)+8*PointLight(256)+fog(16)+light_view_proj(64)
 pub const PUSH_CONSTANT_SIZE_2D: u32 = 64;
 
 pub struct GraphicsPipeline {
@@ -26,8 +26,14 @@ impl GraphicsPipeline {
 
         let ubo_binding = vk::DescriptorSetLayoutBinding::default()
             .binding(0).descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
-            .descriptor_count(1).stage_flags(vk::ShaderStageFlags::VERTEX);
-        let bindings = [ubo_binding];
+            .descriptor_count(1).stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT);
+        let shadow_tex_binding = vk::DescriptorSetLayoutBinding::default()
+            .binding(1).descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+            .descriptor_count(1).stage_flags(vk::ShaderStageFlags::FRAGMENT);
+        let shadow_samp_binding = vk::DescriptorSetLayoutBinding::default()
+            .binding(2).descriptor_type(vk::DescriptorType::SAMPLER)
+            .descriptor_count(1).stage_flags(vk::ShaderStageFlags::FRAGMENT);
+        let bindings = [ubo_binding, shadow_tex_binding, shadow_samp_binding];
         let desc_layout = unsafe {
             device.logical().create_descriptor_set_layout(
                 &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings), None,
@@ -89,6 +95,88 @@ impl GraphicsPipeline {
     }
 }
 
+pub struct ShadowPipeline {
+    pub pipeline: vk::Pipeline,
+    pub layout: vk::PipelineLayout,
+    pub descriptor_set_layout: vk::DescriptorSetLayout,
+}
+
+impl ShadowPipeline {
+    pub fn create(
+        device: &GpuDevice,
+        vs: &ShaderModule,
+    ) -> Result<Self, RenderError> {
+        let stages = [vs.stage_create_info()];
+
+        // Same descriptor set layout as main pipeline (UBO binding 0 with light_view_proj)
+        let ubo_binding = vk::DescriptorSetLayoutBinding::default()
+            .binding(0).descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+            .descriptor_count(1).stage_flags(vk::ShaderStageFlags::VERTEX);
+        let bindings = [ubo_binding];
+        let desc_layout = unsafe {
+            device.logical().create_descriptor_set_layout(
+                &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings), None,
+            ).map_err(|e| RenderError::PipelineCreation(format!("shadow desc_layout: {e}")))?
+        };
+
+        let set_layouts = [desc_layout];
+        let push_range = vk::PushConstantRange::default()
+            .stage_flags(vk::ShaderStageFlags::VERTEX)
+            .offset(0)
+            .size(PUSH_CONSTANT_SIZE);
+        let push_ranges = [push_range];
+
+        let layout = unsafe {
+            device.logical().create_pipeline_layout(
+                &vk::PipelineLayoutCreateInfo::default().set_layouts(&set_layouts).push_constant_ranges(&push_ranges), None,
+            ).map_err(|e| RenderError::PipelineCreation(format!("shadow layout: {e}")))?
+        };
+
+        let stride = 24u32; // pos(12) + normal(12)
+        let vb = vk::VertexInputBindingDescription::default().binding(0).stride(stride).input_rate(vk::VertexInputRate::VERTEX);
+        let va = [
+            vk::VertexInputAttributeDescription::default().binding(0).location(0).format(vk::Format::R32G32B32_SFLOAT).offset(0),
+            vk::VertexInputAttributeDescription::default().binding(0).location(1).format(vk::Format::R32G32B32_SFLOAT).offset(12),
+        ];
+        let vbs = [vb];
+        let vi = vk::PipelineVertexInputStateCreateInfo::default().vertex_binding_descriptions(&vbs).vertex_attribute_descriptions(&va);
+        let ia = vk::PipelineInputAssemblyStateCreateInfo::default().topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+        let vps = [vk::Viewport::default()]; let scs = [vk::Rect2D::default()];
+        let vp = vk::PipelineViewportStateCreateInfo::default().viewports(&vps).scissors(&scs);
+        let rs = vk::PipelineRasterizationStateCreateInfo::default()
+            .polygon_mode(vk::PolygonMode::FILL)
+            .cull_mode(vk::CullModeFlags::BACK)
+            .front_face(vk::FrontFace::CLOCKWISE)
+            .line_width(1.0);
+        let ms = vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(vk::SampleCountFlags::TYPE_1);
+        let ds = vk::PipelineDepthStencilStateCreateInfo::default()
+            .depth_test_enable(true).depth_write_enable(true).depth_compare_op(vk::CompareOp::LESS);
+        let cb = vk::PipelineColorBlendStateCreateInfo::default();
+        let dyns = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+        let dy = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dyns);
+
+        let depth_fmt = vk::Format::D32_SFLOAT;
+        let mut dr = vk::PipelineRenderingCreateInfoKHR::default().depth_attachment_format(depth_fmt);
+
+        let ci = vk::GraphicsPipelineCreateInfo::default()
+            .stages(&stages).vertex_input_state(&vi).input_assembly_state(&ia)
+            .viewport_state(&vp).rasterization_state(&rs).multisample_state(&ms)
+            .depth_stencil_state(&ds).color_blend_state(&cb).dynamic_state(&dy)
+            .layout(layout).base_pipeline_handle(vk::Pipeline::null()).base_pipeline_index(-1)
+            .push_next(&mut dr);
+
+        let pipeline = unsafe {
+            device.logical().create_graphics_pipelines(device.pipeline_cache(), &[ci], None)
+                .map_err(|(_, e)| RenderError::PipelineCreation(format!("shadow pipeline: {e}")))?
+                .into_iter().next().ok_or_else(|| RenderError::PipelineCreation("no shadow pipeline created".into()))?
+        };
+
+        tracing::info!("shadow depth pipeline created");
+
+        Ok(Self { pipeline, layout, descriptor_set_layout: desc_layout })
+    }
+}
+
 pub struct GraphicsPipeline2D {
     pub pipeline: vk::Pipeline,
     pub layout: vk::PipelineLayout,
@@ -105,13 +193,16 @@ impl GraphicsPipeline2D {
     ) -> Result<Self, RenderError> {
         let stages = [vs.stage_create_info(), fs.stage_create_info()];
 
-        // Binding 0: UBO (view-proj), Binding 1: combined image sampler
+        // Binding 0: UBO (view-proj), Binding 1: sampled image, Binding 2: sampler
         let bindings = [
             vk::DescriptorSetLayoutBinding::default()
                 .binding(0).descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
                 .descriptor_count(1).stage_flags(vk::ShaderStageFlags::VERTEX),
             vk::DescriptorSetLayoutBinding::default()
-                .binding(1).descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .binding(1).descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .descriptor_count(1).stage_flags(vk::ShaderStageFlags::FRAGMENT),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(2).descriptor_type(vk::DescriptorType::SAMPLER)
                 .descriptor_count(1).stage_flags(vk::ShaderStageFlags::FRAGMENT),
         ];
         let desc_layout = unsafe {
@@ -120,10 +211,11 @@ impl GraphicsPipeline2D {
             ).map_err(|e| RenderError::PipelineCreation(format!("2d desc_layout: {e}")))?
         };
 
-        // Descriptor pool: 1 UBO + 1 sampler
+        // Descriptor pool: 1 UBO + 1 sampled image + 1 sampler
         let pool_sizes = [
             vk::DescriptorPoolSize { ty: vk::DescriptorType::UNIFORM_BUFFER, descriptor_count: 1 },
-            vk::DescriptorPoolSize { ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER, descriptor_count: 1 },
+            vk::DescriptorPoolSize { ty: vk::DescriptorType::SAMPLED_IMAGE, descriptor_count: 1 },
+            vk::DescriptorPoolSize { ty: vk::DescriptorType::SAMPLER, descriptor_count: 1 },
         ];
         let desc_pool = unsafe {
             device.logical().create_descriptor_pool(

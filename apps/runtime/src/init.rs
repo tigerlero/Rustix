@@ -11,6 +11,10 @@ pub fn init_scene_resources(
     scene_descriptor_set: &mut Option<vk::DescriptorSet>,
     scene_uniform_buffer: &mut Option<rustix_render::memory::GpuBuffer>,
     scene_depth_buffer: &mut Option<rustix_render::DepthBuffer>,
+    shadow_pipeline: &mut Option<rustix_render::pipeline::ShadowPipeline>,
+    shadow_descriptor_pool: &mut Option<vk::DescriptorPool>,
+    shadow_descriptor_set: &mut Option<vk::DescriptorSet>,
+    shadow_map: &mut Option<rustix_render::GpuTexture>,
 ) {
     if scene_pipeline.is_some() { return; }
 
@@ -76,21 +80,24 @@ pub fn init_scene_resources(
         }
     }
 
-    let vs = rustix_render::shader::builtin::vertex_shader(renderer.device().logical());
-    let fs = rustix_render::shader::builtin::fragment_shader(renderer.device().logical());
-    if let (Ok(vs), Ok(fs)) = (vs, fs) {
-        let sw = renderer.swapchain.lock();
-        match rustix_render::pipeline::GraphicsPipeline::create(renderer.device(), &sw, &vs, &fs) {
-            Ok(p) => *scene_pipeline = Some(p),
-            Err(e) => tracing::error!("scene pipeline creation failed: {e}"),
+    match (
+        rustix_render::shader::builtin::vertex_shader(renderer.device().logical()),
+        rustix_render::shader::builtin::fragment_shader(renderer.device().logical()),
+    ) {
+        (Ok(vs), Ok(fs)) => {
+            let sw = renderer.swapchain.lock();
+            match rustix_render::pipeline::GraphicsPipeline::create(renderer.device(), &sw, &vs, &fs) {
+                Ok(p) => *scene_pipeline = Some(p),
+                Err(e) => tracing::error!("scene pipeline creation failed: {e}"),
+            }
+            match renderer.create_descriptor_pool() {
+                Ok(dp) => *scene_descriptor_pool = Some(dp),
+                Err(e) => tracing::error!("scene descriptor pool failed: {e}"),
+            }
+            drop(sw);
         }
-        match renderer.create_descriptor_pool() {
-            Ok(dp) => *scene_descriptor_pool = Some(dp),
-            Err(e) => tracing::error!("scene descriptor pool failed: {e}"),
-        }
-        drop(sw);
-    } else {
-        tracing::error!("failed to compile built-in shaders");
+        (Err(e), _) => tracing::error!("vertex shader compile failed: {e}"),
+        (_, Err(e)) => tracing::error!("fragment shader compile failed: {e}"),
     }
     if let Some(ref pipeline) = scene_pipeline {
         if let Some(dp) = scene_descriptor_pool {
@@ -108,6 +115,36 @@ pub fn init_scene_resources(
     let sw = renderer.swapchain.lock();
     *scene_depth_buffer = renderer.create_depth_buffer(sw.extent()).ok();
     drop(sw);
+
+    if let Ok(sv) = rustix_render::shader::builtin::shadow_vertex_shader(renderer.device().logical()) {
+        match rustix_render::pipeline::ShadowPipeline::create(renderer.device(), &sv) {
+            Ok(p) => {
+                let ps = [
+                    vk::DescriptorPoolSize { ty: vk::DescriptorType::UNIFORM_BUFFER, descriptor_count: 1 },
+                ];
+                let pool = unsafe {
+                    renderer.device().logical().create_descriptor_pool(
+                        &vk::DescriptorPoolCreateInfo::default().pool_sizes(&ps).max_sets(1), None
+                    )
+                };
+                match pool {
+                    Ok(dp) => {
+                        *shadow_descriptor_pool = Some(dp);
+                        match renderer.alloc_descriptor_set(dp, p.descriptor_set_layout) {
+                            Ok(ds) => *shadow_descriptor_set = Some(ds),
+                            Err(e) => tracing::error!("shadow desc set alloc failed: {e}"),
+                        }
+                    }
+                    Err(e) => tracing::error!("shadow desc pool failed: {e}"),
+                }
+                *shadow_pipeline = Some(p);
+            }
+            Err(e) => tracing::error!("shadow pipeline creation failed: {e}"),
+        }
+    } else {
+        tracing::error!("failed to compile shadow vertex shader");
+    }
+    *shadow_map = renderer.create_shadow_map(1024).ok();
 }
 
 pub fn init_2d_resources(

@@ -19,9 +19,13 @@ pub fn render_3d_scene(
     renderer: &Renderer,
     cmd: vk::CommandBuffer,
     pipeline: &GraphicsPipeline,
+    shadow_pipeline: Option<&rustix_render::pipeline::ShadowPipeline>,
     depth_buf: &DepthBuffer,
+    shadow_map: Option<&rustix_render::GpuTexture>,
+    shadow_layout: Option<&mut vk::ImageLayout>,
     ubo: &GpuBuffer,
     descriptor_set: vk::DescriptorSet,
+    shadow_descriptor_set: Option<vk::DescriptorSet>,
     meshes: &HashMap<String, Mesh>,
     ecs_world: &EcsWorld,
     cam: &EditorCamera,
@@ -53,21 +57,6 @@ pub fn render_3d_scene(
     point_lights.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
     let light_count = point_lights.len().min(8) as u32;
 
-    let mut ubo_data = [0u8; 368];
-    ubo_data[0..64].copy_from_slice(bytemuck::bytes_of(&view_proj));
-    ubo_data[64..80].copy_from_slice(bytemuck::bytes_of(&Vec4::new(eye.x, eye.y, eye.z, 0.0)));
-    ubo_data[80..84].copy_from_slice(&light_count.to_ne_bytes());
-    for (i, (pos, radius, color, _)) in point_lights.iter().take(8).enumerate() {
-        let off = 96 + i * 32;
-        ubo_data[off..off+16].copy_from_slice(bytemuck::bytes_of(&Vec4::new(pos.x, pos.y, pos.z, *radius)));
-        ubo_data[off+16..off+32].copy_from_slice(bytemuck::bytes_of(&Vec4::new(color.x, color.y, color.z, 1.0)));
-    }
-    let fog_color = Vec4::new(0.15, 0.18, 0.25, cam.distance * 3.0 + 10.0);
-    ubo_data[352..368].copy_from_slice(bytemuck::bytes_of(&fog_color));
-    ubo.write(&ubo_data);
-
-    renderer.update_descriptor_set(descriptor_set, ubo);
-
     let (light_dir, light_color) = {
         let mut d = Vec3::new(0.5, 0.8, 0.3);
         let mut c = Vec3::new(1.0, 0.95, 0.8);
@@ -79,6 +68,58 @@ pub fn render_3d_scene(
         }
         (Vec4::new(d.x, d.y, d.z, 0.2), Vec4::new(c.x, c.y, c.z, 1.0))
     };
+
+    let light_dir_vec = Vec3::new(light_dir.x, light_dir.y, light_dir.z);
+    let light_pos = cam.center - light_dir_vec * 20.0;
+    let light_view = Mat4::look_at_rh(light_pos, cam.center, Vec3::Y);
+    let light_proj = Mat4::orthographic_rh_gl(-15.0, 15.0, -15.0, 15.0, 0.1, 50.0);
+    let light_view_proj = light_proj * light_view;
+
+    let mut ubo_data = [0u8; 432];
+    ubo_data[0..64].copy_from_slice(bytemuck::bytes_of(&view_proj));
+    ubo_data[64..80].copy_from_slice(bytemuck::bytes_of(&Vec4::new(eye.x, eye.y, eye.z, 0.0)));
+    ubo_data[80..84].copy_from_slice(&light_count.to_ne_bytes());
+    for (i, (pos, radius, color, _)) in point_lights.iter().take(8).enumerate() {
+        let off = 96 + i * 32;
+        ubo_data[off..off+16].copy_from_slice(bytemuck::bytes_of(&Vec4::new(pos.x, pos.y, pos.z, *radius)));
+        ubo_data[off+16..off+32].copy_from_slice(bytemuck::bytes_of(&Vec4::new(color.x, color.y, color.z, 1.0)));
+    }
+    let fog_color = Vec4::new(0.15, 0.18, 0.25, cam.distance * 3.0 + 10.0);
+    ubo_data[352..368].copy_from_slice(bytemuck::bytes_of(&fog_color));
+    ubo_data[368..432].copy_from_slice(bytemuck::bytes_of(&light_view_proj));
+    ubo.write(&ubo_data);
+
+    // --- Shadow pass ---
+    if let (Some(sp), Some(sm), Some(layout), Some(sds)) = (shadow_pipeline, shadow_map, shadow_layout, shadow_descriptor_set) {
+        let shadow_size = 1024u32;
+        renderer.update_descriptor_set(sds, ubo);
+        renderer.transition_image_layout(cmd, sm.image, vk::ImageAspectFlags::DEPTH, *layout, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        *layout = vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        renderer.begin_shadow_pass(cmd, sm, shadow_size);
+
+        for (entity, _transform, mesh_comp) in ecs_world.query::<(Entity, &Transform, &MeshComponent)>().iter() {
+            if let Some(mesh) = meshes.get(&mesh_comp.0) {
+                let model = world_transform(ecs_world, entity);
+                let mut pc_data = [0u8; 128];
+                pc_data[0..64].copy_from_slice(bytemuck::bytes_of(&model));
+                renderer.draw_shadow_in_pass(
+                    cmd, sp,
+                    &mesh.vertex_buffer,
+                    mesh.index_buffer.as_ref(), mesh.index_count,
+                    &pc_data,
+                    sds,
+                );
+            }
+        }
+
+        renderer.end_shadow_pass(cmd);
+        renderer.transition_image_layout(cmd, sm.image, vk::ImageAspectFlags::DEPTH, *layout, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        *layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+
+        renderer.update_descriptor_set_with_shadow(descriptor_set, ubo, sm);
+    } else {
+        renderer.update_descriptor_set(descriptor_set, ubo);
+    }
 
     let clear_color = [0.04, 0.04, 0.08, 1.0f32];
     renderer.begin_scene_pass(cmd, depth_buf, clear_color);

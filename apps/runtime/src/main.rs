@@ -111,6 +111,11 @@ fn main() {
     let mut scene_descriptor_set: Option<vk::DescriptorSet> = None;
     let mut scene_uniform_buffer: Option<rustix_render::memory::GpuBuffer> = None;
     let mut scene_depth_buffer: Option<rustix_render::DepthBuffer> = None;
+    let mut shadow_pipeline: Option<rustix_render::pipeline::ShadowPipeline> = None;
+    let mut shadow_descriptor_pool: Option<vk::DescriptorPool> = None;
+    let mut shadow_descriptor_set: Option<vk::DescriptorSet> = None;
+    let mut shadow_map: Option<rustix_render::GpuTexture> = None;
+    let mut shadow_layout = vk::ImageLayout::UNDEFINED;
 
     let mut pipeline_2d: Option<rustix_render::pipeline::GraphicsPipeline2D> = None;
     let mut ubo_2d: Option<rustix_render::memory::GpuBuffer> = None;
@@ -238,6 +243,8 @@ fn main() {
                             &renderer, &mut meshes,
                             &mut scene_pipeline, &mut scene_descriptor_pool, &mut scene_descriptor_set,
                             &mut scene_uniform_buffer, &mut scene_depth_buffer,
+                            &mut shadow_pipeline, &mut shadow_descriptor_pool, &mut shadow_descriptor_set,
+                            &mut shadow_map,
                         );
 
                         init::init_2d_resources(
@@ -271,22 +278,34 @@ fn main() {
                             }
                         }
 
-                        if let (Some(ref pipeline), Some(depth_buf), Some(ubo), Some(set)) =
-                            (&scene_pipeline, &scene_depth_buffer, &scene_uniform_buffer, scene_descriptor_set)
-                        {
+                        let shadow_layout_ref = if shadow_map.is_some() { Some(&mut shadow_layout) } else { None };
+                        if scene_pipeline.is_some() && scene_depth_buffer.is_some() && scene_uniform_buffer.is_some() && scene_descriptor_set.is_some() {
                             render::render_3d_scene(
-                                &renderer, cmd, pipeline, depth_buf, ubo, set,
+                                &renderer, cmd,
+                                scene_pipeline.as_ref().unwrap(),
+                                shadow_pipeline.as_ref(),
+                                scene_depth_buffer.as_ref().unwrap(),
+                                shadow_map.as_ref(),
+                                shadow_layout_ref,
+                                scene_uniform_buffer.as_ref().unwrap(),
+                                scene_descriptor_set.unwrap(),
+                                shadow_descriptor_set,
                                 &meshes, &ecs_world, &cam,
                             );
+                        } else if renderer.frame_index() % 60 == 0 {
+                            tracing::warn!("3D scene skipped: pipeline={} depth={} ubo={} desc={}",
+                                scene_pipeline.is_some(), scene_depth_buffer.is_some(),
+                                scene_uniform_buffer.is_some(), scene_descriptor_set.is_some());
                         }
 
-                        if let (Some(ref ppl), Some(ref buf), Some(ref ubo), Some(ref tex), Some(ds)) =
-                            (&pipeline_2d, &quad_buffer_2d, &ubo_2d, &texture_2d, desc_set_2d)
-                        {
-                            render::render_2d_overlay(
-                                &renderer, cmd, ppl, buf, ubo, tex, ds, start_time,
-                            );
-                        }
+                        // 2D debug overlay disabled — viewport is for 3D scene only.
+                        // if let (Some(ref ppl), Some(ref buf), Some(ref ubo), Some(ref tex), Some(ds)) =
+                        //     (&pipeline_2d, &quad_buffer_2d, &ubo_2d, &texture_2d, desc_set_2d)
+                        // {
+                        //     render::render_2d_overlay(
+                        //         &renderer, cmd, ppl, buf, ubo, tex, ds, start_time,
+                        //     );
+                        // }
 
                         // Process egui and upload textures DURING command buffer recording.
                         // update_textures now waits for GPU idle before partial updates to avoid
