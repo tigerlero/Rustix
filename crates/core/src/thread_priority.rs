@@ -44,7 +44,10 @@ impl Default for ThreadPriority {
 ///   `setpriority(PRIO_PROCESS, 0, nice)` for `High`/`Normal`/`Low`.
 ///   Real-time policies require `CAP_SYS_NICE` or root; falls back to
 ///   `Normal` with a warning if permission is denied.
-/// - **macOS / Windows:** No-op (returns `Ok(())`).
+/// - **Windows:** Uses `SetThreadPriority`. `Realtime` → `THREAD_PRIORITY_TIME_CRITICAL`,
+///   `High` → `THREAD_PRIORITY_HIGHEST`, `Normal` → `THREAD_PRIORITY_NORMAL`,
+///   `Low` → `THREAD_PRIORITY_LOWEST`.
+/// - **macOS:** No-op (returns `Ok(())`).
 /// - **Other:** No-op.
 pub fn set_current_thread_priority(p: ThreadPriority) -> Result<(), String> {
     #[cfg(target_os = "linux")]
@@ -98,9 +101,33 @@ pub fn set_current_thread_priority(p: ThreadPriority) -> Result<(), String> {
         }
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::io::AsRawHandle;
+        let handle = std::thread::current().as_raw_handle();
+        let priority_val = match p {
+            ThreadPriority::Realtime { .. } => 15, // THREAD_PRIORITY_TIME_CRITICAL
+            ThreadPriority::High => 2,               // THREAD_PRIORITY_HIGHEST
+            ThreadPriority::Normal => 0,             // THREAD_PRIORITY_NORMAL
+            ThreadPriority::Low => -2,               // THREAD_PRIORITY_LOWEST
+        };
+        // SAFETY: handle is valid (current thread). SetThreadPriority is a standard Windows API.
+        let result = unsafe { SetThreadPriority(handle, priority_val) };
+        if result != 0 {
+            Ok(())
+        } else {
+            Err(format!("SetThreadPriority failed: {}", std::io::Error::last_os_error()))
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
     {
         let _ = p;
         Ok(())
     }
+}
+
+#[cfg(target_os = "windows")]
+extern "system" {
+    fn SetThreadPriority(hThread: *mut std::ffi::c_void, nPriority: i32) -> i32;
 }

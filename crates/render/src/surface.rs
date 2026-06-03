@@ -57,6 +57,22 @@ pub fn create_surface(
                     .map_err(|e| RenderError::SurfaceCreation(format!("XCB: {e}")))?
             }
         }
+        (
+            raw_window_handle::RawDisplayHandle::Windows(_display),
+            raw_window_handle::RawWindowHandle::Win32(window),
+        ) => {
+            tracing::info!("creating Win32 Vulkan surface");
+            let win32_loader =
+                ash::khr::win32_surface::Instance::new(instance.entry(), instance.inner());
+            let create_info = vk::Win32SurfaceCreateInfoKHR::default()
+                .hinstance(window.hinstance.map(|n| n.get()).unwrap_or(0) as vk::HINSTANCE)
+                .hwnd(window.hwnd.get() as vk::HWND);
+            unsafe {
+                win32_loader
+                    .create_win32_surface(&create_info, None)
+                    .map_err(|e| RenderError::SurfaceCreation(format!("Win32: {e}")))?
+            }
+        }
         _ => {
             return Err(RenderError::SurfaceCreation(
                 "unsupported windowing backend for Vulkan surface".into(),

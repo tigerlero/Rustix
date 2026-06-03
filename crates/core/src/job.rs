@@ -63,6 +63,10 @@ impl JobSystem {
         }
 
         let priority = config.thread_priority;
+        let affinity = config.affinity;
+        let num_cpus = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(thread_count);
         let prefix = config.thread_name.clone().unwrap_or_else(|| "rx-worker".into());
         let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let builder = builder.spawn_handler(move |thread| {
@@ -72,6 +76,26 @@ impl JobSystem {
                 .spawn(move || {
                     if let Err(e) = set_current_thread_priority(priority) {
                         tracing::warn!("failed to set thread priority: {e}");
+                    }
+                    #[cfg(target_os = "linux")]
+                    if affinity {
+                        let cpu = idx % num_cpus;
+                        unsafe {
+                            let mut cpuset: libc::cpu_set_t = std::mem::zeroed();
+                            libc::CPU_ZERO(&mut cpuset);
+                            libc::CPU_SET(cpu, &mut cpuset);
+                            let result = libc::pthread_setaffinity_np(
+                                libc::pthread_self(),
+                                std::mem::size_of::<libc::cpu_set_t>(),
+                                &cpuset,
+                            );
+                            if result != 0 {
+                                let err = std::io::Error::last_os_error();
+                                tracing::warn!("failed to set affinity for worker {idx} to CPU {cpu}: {err}");
+                            } else {
+                                tracing::debug!("pinned worker {idx} to CPU {cpu}");
+                            }
+                        }
                     }
                     thread.run();
                 })

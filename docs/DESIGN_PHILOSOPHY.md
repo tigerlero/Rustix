@@ -68,9 +68,9 @@ Pop!_OS is the primary development target. Windows support comes later, but the 
 **Linux-specific decisions:**
 - Wayland primary → X11 fallback (via winit features)
 - evdev for raw input (bypasses window system latency)
-- Thread pinning (pthread_setaffinity_np on AMD)
+- Thread pinning (configured but not yet functional — `pthread_setaffinity_np` on Linux)
 - Vulkan only (no GL/D3D abstraction — no reason to support them)
-- ALSA/pulse for audio
+- `rodio` + `symphonia` for audio playback (pure Rust, no system audio libs at build time)
 
 **Cross-platform hooks:**
 - winit abstracts windowing
@@ -114,7 +114,29 @@ The engine is designed to be editor-hosting from the start:
 - Asset pipeline has import/export stages (editor modifies → reimport)
 - Scene serialization built into ECS component model
 
-### 9. Build for the Hardware
+### 9. Cache-Centric Resource Management
+
+Vulkan object creation is expensive. The engine caches aggressively and reuses handles keyed by creation parameters.
+
+**Caches implemented:**
+- `DescriptorSetLayoutCache` — keyed by binding configuration
+- `SamplerCache` — keyed by `SamplerCreateInfo` parameters
+- `ComputePipelineCache` — keyed by shader module + layout + push constants
+- `GraphicsPipelineVariantCache` — keyed by `PipelineVariantKey` (render path, quality, raster state)
+
+**Principle:** If you can create it once and reuse it, cache it. Per-frame allocations are unacceptable in the hot path.
+
+### 10. Stable Addresses for Raw Pointers
+
+When raw pointers to Vulkan objects (or the `ash::Device` itself) are stored in caches or long-lived structs, the target must remain at a **stable memory address** for the pointer's entire lifetime.
+
+**Lesson learned (2026-06-03):** `SamplerCache` stored `*const ash::Device` to the local variable `logical` during `GpuDevice::new()`. After the function returned, `logical` moved into the struct, then into an `Arc<>` — the cached pointer became dangling. `vkCreateSampler` segfaulted inside the NVIDIA driver.
+
+**Fix:** Box the device (`Box<ash::Device>`) so the heap address is stable regardless of struct moves.
+
+**Rule:** Any `*const ash::Device` or `*const T` stored in a cache or struct must point to a heap allocation (`Box`, `Arc`, or `static`) that outlives the cache.
+
+### 11. Build for the Hardware
 
 | Hardware | Strategy |
 |----------|----------|
@@ -123,7 +145,7 @@ The engine is designed to be editor-hosting from the start:
 | NVMe SSD | Direct IO where possible, async readahead for streaming |
 | 16+ GB RAM | Aggressive caching, large staging buffer pools |
 
-### 10. Practical Over Trendy
+### 12. Practical Over Trendy
 
 We use proven technology, not the latest hype:
 
@@ -134,7 +156,7 @@ We use proven technology, not the latest hype:
 - `rapier` (production physics) over custom (not worth the effort)
 - `tracing` (structured, composable) over `log` (basic, unstructured)
 
-### 11. Actual Crate Versions (Phase 0)
+### 13. Actual Crate Versions (Phase 0)
 
 The following versions are locked and tested for Phase 0:
 
@@ -151,7 +173,7 @@ The following versions are locked and tested for Phase 0:
 | `serde` | 1 | Serialization framework |
 | `toml` | 0.8 | Configuration format |
 
-### 12. API Migration Debt (Fall 2024 → Spring 2026)
+### 14. API Migration Debt (Fall 2024 → Spring 2026)
 
 Both ash and winit underwent significant breaking API changes between their 2024 and 2026 releases. The Rustix codebase absorbed these migrations during Phase 0:
 

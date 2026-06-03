@@ -45,7 +45,7 @@ fn main() {
     let log_buffer = rustix_core::init_log_capture(500);
     rustix_core::diagnostics::init_logging_with_capture(
         &rustix_core::diagnostics::LogConfig {
-            level: config.log_level(), crate_filters: vec![], json: false, json_file_path: None, thread_ids: true, targets: true, tracy_enabled: false,
+            level: config.log_level(), crate_filters: vec![], json: false, json_file_path: None, json_max_size_mb: 10, json_max_backups: 3, thread_ids: true, targets: true, tracy_enabled: false,
         },
         Some(log_buffer.clone()),
     );

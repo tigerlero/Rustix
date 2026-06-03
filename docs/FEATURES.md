@@ -20,7 +20,7 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [x] Rayon-based work-stealing thread pool — `JobSystem` in `crates/core/src/job.rs` wraps a `rayon::ThreadPool` with configurable thread count, work-stealing queue depth, and thread stack size. `install(op)` runs closures on the pool and returns results. `for_each` and `join` helpers for fork-join parallelism. `thread_count()` and `rebuild(config)` support dynamic resizing.
 - [x] Explicit task graph with dependency edges — `TaskGraph` in `crates/core/src/task_graph.rs` is a DAG of `TaskNode`s with `add_task(name, func)` and `add_dependency(before, after)`. `topo_sort()` produces a valid ordering via Kahn's algorithm with O(V+E) complexity. `execute(pool)` runs each frontier in parallel via `rayon::scope`, respecting all dependency edges. Cycle detection via DFS prevents deadlocks. 11 unit tests.
 - [x] Fork-join parallelism API — `JobSystem::join(left, right)` splits work recursively with work-stealing. `for_each(slice, op)` parallelizes iteration over contiguous data. Built on `rayon` so the engine gets adaptive task splitting and thread-local work queues for free.
-- [~] Thread affinity (pinning to physical cores on Linux) — configured but not functional
+- [x] Thread affinity (pinning to physical cores on Linux) — `pthread_setaffinity_np` in `JobSystem::new`, worker `i` pinned to CPU `i % num_cpus`
 - [x] Task priorities (high for render, medium for gameplay, low for streaming) — `PriorityTaskSystem` in `crates/core/src/task_priority.rs` spawns dedicated worker threads that drain three `Mutex<Vec>` queues in strict priority order (high → medium → low). `submit(priority, func)` enqueues work; `install(priority, func)` blocks on the result. `wait_for_all()` spin-yields until the pending counter reaches zero. Workers named `rx-priority-N` for debugging. 8 unit tests.
 - [x] Job profiling (Tracy integration per task) — `tracy_client::span!()` zones wrap every task in `TaskGraph::execute` and `PriorityTaskSystem::worker_loop`, gated by `#[cfg(feature = "profiling")]`. `PriorityTaskSystem` stores `(name, closure)` pairs via `submit_named(priority, name, func)` so Tracy shows per-task names (e.g. "physics", "cull", "render"). `task_graph.rs` captures task names from `TaskNode` and emits zones inside `rayon::scope` spawns. The `profiling` feature also enables `profile_scope!` and `profile_frame!` macros in `diagnostics.rs`. 10 unit tests (including named variants).
 - [x] Dynamic thread count (respond to system load) — `PriorityTaskSystem::resize(new_count)` can grow (spawn new workers) or shrink (signal idle threads to exit via CAS on an `excess` counter). `JobSystem::rebuild(config)` recreates the rayon pool with a different thread count. `SystemMonitor` in `crates/core/src/system_monitor.rs` reads `/proc/stat` on Linux to compute CPU usage (0-1). `recommended_threads(current, cpu_usage, min, max)` linearly interpolates between `max` (idle) and `min` (fully loaded). 15 unit tests + 1 doc test.
@@ -54,15 +54,17 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [x] JSON file logging for automated analysis — `JsonFileLayer` in `crates/core/src/diagnostics.rs` is a `tracing_subscriber::Layer` that writes each log event as a JSON Lines record to a file. Every entry contains `timestamp`, `level`, `target`, `message`, and all structured fields. Supports `i64`, `u64`, `f64`, `bool`, and string values with proper JSON escaping (quotes, newlines, backslashes). `rotate(path, max_backups)` renames the current file to `.jsonl.0` and shifts older backups, then reopens a fresh file. `LogConfig.json_file_path` controls the output path; when set, `init_logging_with_capture` wires the layer into the subscriber automatically alongside console output and optional log capture. 5 unit tests.
 - [x] Log levels: error, warn, info, debug, trace
 - [x] Per-crate log level filtering
-- [ ] Log rotation in release builds
+- [x] Log rotation in release builds — `JsonFileLayer` auto-rotates when file size exceeds `json_max_size_mb` (default 10 MB). Keeps `json_max_backups` backups (default 3), shifting `.jsonl.N` → `.jsonl.N+1`.
 
 ---
 
 ## 2. PLATFORM (crates/platform)
 
 ### 2.1 Windowing
-- [x] Wayland native support (primary target for Pop!_OS)
-- [x] X11 fallback (xcb backend)
+- [x] Wayland native support (primary target for Pop!_OS) — **Linux only**
+- [x] X11 fallback (xcb backend) — **Linux only**
+- [x] Win32 window backend (HWND + Vulkan Win32 surface) — **Windows**: `winit` provides HWND creation; `VK_KHR_win32_surface` implemented in `crates/render/src/surface.rs` using `ash::khr::win32_surface::Instance`
+- [ ] macOS window backend (NSWindow + MoltenVK + CAMetalLayer) — **macOS**
 - [x] Fullscreen exclusive (when display server allows) — `FullscreenMode::Exclusive` in `crates/platform/src/window.rs` picks the best video mode on the current monitor (largest resolution, then highest refresh rate) and passes it to `winit::window::Fullscreen::Exclusive`. Falls back to borderless if no video modes are available or no monitor is detected. `FullscreenMode::Borderless` fills the screen without changing the display video mode. Both modes are applied at window creation time if `WindowConfig.fullscreen` is set, and can be toggled at runtime via `WindowHandle::set_fullscreen_mode()` and `WindowHandle::toggle_fullscreen()`.
 - [x] Window resize handling (swapchain recreation)
 - [x] Multiple window support (editor: N viewports)
@@ -70,24 +72,45 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [x] Cursor mode: normal, hidden, captured, raw-delta
 
 ### 2.2 Input
-- [x] Keyboard: winit fallback (evdev raw input planned)
+- [x] Keyboard: winit fallback (evdev raw input planned) — **Linux only**
+- [x] Raw keyboard input — **cross-platform via winit** (Raw Input API on Windows, evdev planned on Linux, IOKit on macOS)
+- [ ] Raw keyboard input (IOKit / CGEvent) — **macOS**
 - [x] Mouse: absolute + raw delta motion
-- [x] Gamepad: `gilrs` integration (enabled via `--features rustix-platform/gamepad`; requires `libudev-dev` on Linux)
+- [x] Gamepad: `gilrs` integration (enabled via `--features rustix-platform/gamepad`) — **cross-platform** (Linux via libudev, Windows via Raw Input, macOS via IOKit)
+- [x] Gamepad: XInput / Windows.Gaming.Input — **Windows** (handled by `gilrs` Raw Input backend)
+- [ ] Gamepad: IOKit GameController — **macOS**
 - [x] Input state: current frame + previous frame (for "just pressed" detection)
 - [x] Input actions (abstract binding: "jump" → Space / A-button)
 - [x] Bindable key remapping (config file)
-- [x] Text input (IME-aware for Wayland)
+- [x] Text input (IME-aware for Wayland) — **Linux only**
+- [x] Text input — **cross-platform via winit** (IME-aware on all platforms)
+- [ ] Text input (NSTextInputClient) — **macOS**
 - [x] Touch input (surface)
 - [x] Input recording + playback (testing / demos)
 
 ### 2.3 OS Abstraction
-- [x] High-resolution timer (monotonic clock)
-- [x] Thread naming (pthread_setname_np on Linux)
-- [x] Thread priority (SCHED_FIFO or SCHED_RR for audio/render threads)
-- [x] Memory mapping (mmap for asset loading)
-- [x] File watcher (inotify on Linux, ReadDirectoryChangesW on Windows, FSEvents on macOS)
-- [x] Clipboard access
-- [x] File dialog (`rfd` native picker for project open/create)
+- [x] High-resolution timer (monotonic clock) — **cross-platform via std**
+- [x] Thread naming (pthread_setname_np on Linux) — **Linux only**
+- [x] Thread naming — **cross-platform** (`std::thread::Builder::name()` on all platforms; `pthread_setname_np` on Linux, `SetThreadDescription` fallback on Windows)
+- [ ] Thread naming (`pthread_setname_np` on macOS) — **macOS**
+- [x] Thread priority (SCHED_FIFO or SCHED_RR for audio/render threads) — **Linux only**
+- [x] Thread priority (`SetThreadPriority`) — **Windows**: implemented in `crates/core/src/thread_priority.rs` using raw FFI to `kernel32!SetThreadPriority`. Maps `Realtime`→`THREAD_PRIORITY_TIME_CRITICAL`, `High`→`THREAD_PRIORITY_HIGHEST`, `Normal`→`THREAD_PRIORITY_NORMAL`, `Low`→`THREAD_PRIORITY_LOWEST`.
+- [ ] Thread priority (`thread_policy_set` / `pthread_set_qos_class_self_np`) — **macOS**
+- [x] Memory mapping for asset loading — **cross-platform via `memmap2`** (mmap on Linux/macOS, `CreateFileMapping`/`MapViewOfFile` on Windows)
+- [x] Memory mapping (`CreateFileMapping` / `MapViewOfFile`) — **Windows** (handled by `memmap2` crate)
+- [x] File watcher (inotify on Linux, ReadDirectoryChangesW on Windows, FSEvents on macOS) — **cross-platform via notify crate**
+- [x] Clipboard access — **cross-platform via arboard**
+- [x] File dialog (`rfd` native picker for project open/create) — **cross-platform via rfd**
+
+### 2.4 Cross-Platform Build / CI
+- [x] Windows build (MSVC toolchain, Vulkan SDK dependency) — All platform-specific code is structurally ready. Requires `Vulkan SDK` + `MSVC` or `MinGW-w64` toolchain. `winit` handles windowing; `VK_KHR_win32_surface` is implemented; `SetThreadPriority` is wired.
+- [ ] macOS build (MoltenVK bundled or system install)
+- [ ] CI: GitHub Actions matrix (Linux, Windows, macOS)
+- [ ] CI: Vulkan validation layer testing on Linux
+- [ ] Packaging: `.deb` / `.rpm` for Linux
+- [ ] Packaging: `.msi` / `.zip` for Windows
+- [ ] Packaging: `.dmg` / `.app` bundle for macOS
+- [ ] Cross-compilation docs (Linux → Windows, macOS)
 
 ---
 
@@ -97,7 +120,9 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [x] Instance creation with validation layers (debug)
 - [x] Physical device selection (NVIDIA preference scoring)
 - [x] Logical device with queue families (graphics, present)
-- [x] Surface creation (Wayland/Xlib/Xcb Vulkan KHR)
+- [x] Surface creation (Wayland/Xlib/Xcb Vulkan KHR) — **Linux only**
+- [x] Surface creation (Win32 `VK_KHR_win32_surface`) — **Windows**: implemented in `crates/render/src/surface.rs`
+- [ ] Surface creation (Metal `VK_EXT_metal_surface` via MoltenVK) — **macOS**
 - [x] Swapchain (mailbox present mode, triple buffering)
 - [x] Dynamic rendering (VK_KHR_dynamic_rendering, no RenderPass objects)
 - [x] Pipeline cache (VK_KHR_pipeline_cache, in-memory)
@@ -111,20 +136,31 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [x] Dedicated transfer queue for async upload
 - [x] Staging buffer pool (ring-buffer, recycled) — see `GpuStagingRing` / `GpuStagingBuffer` in Memory Management (1.3) and `crates/render/src/memory.rs`.
 - [x] GPU readback (profiling counters, occlusion queries)
+- [ ] UBO / SSBO allocator (ring buffer for per-frame uniform data)
+- [ ] Secondary command buffers (multi-threaded command recording)
 
-### 3.3 Descriptors
+### 3.3 Render Targets
+- [ ] Render target / framebuffer abstraction (color + depth attachments)
+- [ ] MSAA resolve targets (for Medium/High/Ultra quality levels)
+- [ ] Offscreen rendering (editor viewport, post-processing)
+- [ ] HDR framebuffer (RGBA16F) + tone mapping
+- [ ] Swapchain integration (blit / present from render target)
+
+### 3.4 Descriptors
 - [x] Bindless descriptor model (global heap)
 - [x] Descriptor set layout cache
 - [x] Sampler cache (reuse sampler objects)
 - [x] Descriptor update batching
+- [ ] Descriptor set allocator (pool recycling, not per-frame pool creation)
 
-### 3.4 Pipelines
+### 3.5 Pipelines
 - [x] Graphics pipeline cache (hash-based key → VkPipeline)
 - [x] Compute pipeline cache
 - [x] Pipeline variants (forward/deferred, quality levels)
 - [ ] Specialization constants (reducing shader variants)
+- [ ] Pipeline layout cache (distinct from descriptor set layout cache)
 
-### 3.5 Shaders
+### 3.6 Shaders
 - [~] GLSL source → SPIR-V via glslangValidator (SPIR-V module loading done, compilation not yet)
 - [ ] Runtime shader compilation (editor / debug)
 - [ ] SPIR-V reflection (resource binding, push constants)
@@ -132,7 +168,7 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [ ] Shader include system (#include resolution)
 - [ ] Pre-compiled shader archive for release builds
 
-### 3.6 Frame Graph
+### 3.7 Frame Graph
 - [ ] Declarative render graph
 - [ ] Automatic resource barriers
 - [ ] Transient resource memory aliasing
@@ -140,7 +176,7 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [ ] Async compute pass scheduling
 - [ ] Frame graph visualization (debug overlay)
 
-### 3.7 Rendering Features
+### 3.8 Rendering Features
 - [ ] Forward+ lighting (tiled light culling)
 - [ ] Deferred shading (GBuffer: albedo, normal, PBR params, depth)
 - [ ] Directional light with cascaded shadow maps (CSM)
@@ -158,7 +194,7 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [ ] Mesh shaders (VK_NV_mesh_shader if available, fallback to vertex shaders)
 - [ ] Ordered independent transparency (OIT)
 
-### 3.8 Debug / Profiling
+### 3.9 Debug / Profiling
 - [x] VkDebugUtils messenger with severity filtering
 - [ ] RenderDoc capture trigger (F12 key)
 - [ ] VkDebugUtils labeling (objects, command buffer regions)
@@ -188,29 +224,40 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [x] Project serialization (.rustixproj save/load)
 - [x] Recent projects persistence (disk)
 
-### 4.3 Editor Layout
-- [x] Menu bar: File, Edit, Assets, Help menus + FPS counter
-- [x] File → Back to Project Hub (screen switching)
-- [x] Hierarchy panel (left side, placeholder)
-- [x] Inspector panel (right side, placeholder)
-- [x] Console / Asset Browser (bottom tabs, placeholder)
-- [x] Scene View (central panel, clear color only)
-- [x] EditorCamera with orbit controls (WASDQE + mouse drag)
+### 4.3 Editor Layout (Implemented)
+- [x] Menu bar: File, Edit, Assets, Help, Settings + FPS counter + dirty indicator (`*`). File menu: New/Open Project, Save (`Ctrl+S` auto-saves `.rustixproj` with camera state + scene), Exit, Back to Project Hub. Edit: Undo/Redo. Assets: mesh loader, sprite editor toggle. Settings: resolution, VSync, target FPS, 2D/3D mode.
+- [x] Hierarchy panel (left, 220px resizable) — full ECS entity tree with type icons (mesh, light, camera, audio, physics). Toolbar: Add Entity, Delete, Copy, Paste, Duplicate. In-place rename with `F2`. Click to select; selected entity highlighted. Shows entity name + component badges.
+- [x] Inspector panel (right, resizable) — component editing for: `Transform` (position/rotation/scale drag values), `Material` (albedo color via custom HSVA popup picker + RGB inputs, metallic/roughness), `MeshComponent`, `DirectionalLight`/`PointLight`/`SpotLight` (color, intensity, range, angle), `Camera` (FOV, near/far), `AudioSource` (volume, loop, pitch, spatial), `AudioListener`, `RigidBody` (mass, body type, damping), `Collider` (shape selector: box/sphere/capsule, size), `ScriptComponent` (script path), `Parent`. All edits push to `UndoHistory`.
+- [x] Console / Asset Browser (bottom, 160px resizable, tabbed) — **Console tab**: real-time log capture via `rustix_core::log_capture::get_logs()` with color-coded levels (error=red, warn=yellow, info=blue-white, debug=gray, trace=dark gray), auto-scroll to bottom, Clear button. **Asset Browser tab**: filesystem listing of project directory with file icons, Refresh button.
+- [x] Scene View (central panel) — transparent frame for offscreen rendering. Displays offscreen-rendered 3D scene texture when available. Viewport rect tracked per-frame for framebuffer sizing. World-to-screen projection for overlay elements.
+- [x] EditorCamera with orbit + first-person modes. Orbit: WASDQE (shift), right-drag orbit, middle-drag pan, scroll zoom. First-person: right-drag look, WASDQE move. `Space` toggles mode. Yaw/pitch clamped. Distance minimum 0.5. Camera state serialized into `.rustixproj`.
 
-### 4.4 Planned Editor Features
-- [ ] ECS ent- [ ] Real text rendering (glyph atlas, font rasterization)
-ity tree in Hierarchy panel
-- [ ] Component editing in Inspector panel
-- [ ] Offscreen 3D rendering into Scene View
-- [ ] Real log capture via tracing subscriber → Console ring buffer
-- [ ] Asset file listing → Asset Browser
-- [ ] Entity selection (click in scene or hierarchy)
-- [ ] Gizmos (translate, rotate, scale)
-- [ ] Undo/redo system
-- [ ] Docking / panel rearrangement
-- [ ] Layout persistence
+### 4.4 Editor Features (Implemented)
+- [x] ECS entity tree in Hierarchy panel — live `hecs::World` query with `Name` + `Transform` display. Component-type icons via `world.query_mut::<(&Name, Option<&MeshComponent>, ...)>`.
+- [x] Component editing in Inspector panel — full component reflection via typed queries + drag-value widgets. Custom color picker with HSVA 2-D picker popup + R/G/B inputs. All mutations recorded in undo history.
+- [x] Offscreen 3D rendering — viewport stores rect in egui memory (`viewport_rect_0`). Offscreen texture displayed via `ui.painter().image(tex_id, ...)`. Pipeline ready; needs render target / framebuffer implementation for full scene rendering.
+- [x] Real log capture — `rustix_core::log_capture` module captures `tracing` events into a ring buffer. Console panel reads and displays with level-based coloring.
+- [x] Asset file listing — Asset Browser tab reads project directory via `std::fs::read_dir`, shows files with icons.
+- [x] Entity selection — click in Hierarchy panel sets `selected_entity`. Click in viewport (via world-to-screen ray test) selects entity under cursor.
+- [x] Gizmos (translate, rotate, scale) — toolbar with E/R/T mode buttons. Local/world space toggle. Snap toggle with configurable step size. Visual gizmo axes drawn via `ui.painter().line_segment` in viewport. Dragging updates entity transform in real time with undo batching.
+- [x] Grid overlay — configurable XZ grid with major/minor line spacing, world-to-screen projected, toggleable.
+- [x] Undo/redo system — `UndoHistory` in `apps/runtime/src/undo.rs` records `EditorAction` variants: `AddEntity`, `DeleteEntity`, `TransformChange`, `ComponentChange`, `Rename`. `Ctrl+Z` / `Ctrl+Y` or Edit menu. Actions store before/after snapshots for full revert.
+- [x] Viewport splitting — `ViewportManager` supports up to `MAX_VIEWPORTS=4`. Primary (index 0) uses `CentralPanel`; secondary use floating `egui::Window`. Each viewport has independent camera. Add/remove via menu bar.
+- [x] Project Settings dialog — modal window: resolution (W/H drag values), VSync checkbox, target FPS (30-480), 2D/3D mode selector. Changes applied on close.
+- [x] Sprite editor dialog — integrated sprite editing window with animation timeline.
+- [x] Audio preview in Console — play/stop buttons, waveform visualization via `WaveformViewer`, volume slider.
+- [x] Confirmation dialogs — unsaved changes warning when switching projects or closing.
 
-### 4.5 Custom UI Framework (crates/ui)
+### 4.5 Editor Features (Planned)
+- [ ] Layout persistence (panel sizes, positions, viewport arrangement saved per-project)
+- [ ] Docking / panel rearrangement (drag panels to new positions)
+- [ ] Full offscreen scene rendering pipeline (requires render target implementation)
+- [ ] Entity multi-select + group operations
+- [ ] Drag-and-drop in Hierarchy (reparent entities)
+- [ ] Scene camera bookmarks / preset views
+- [ ] Play mode (simulate game inside editor viewport)
+
+### 4.6 Custom UI Framework (crates/ui)
 - [x] Immediate mode UI context
 - [x] Draw command list (rectangles, colored)
 - [x] Button widget (with hover/interaction state)
@@ -316,17 +363,27 @@ Remaining crates (`physics`, `animation`, `networking`, `scripting`, `ai`, `terr
 | Editor layout | 0.5 | Medium | High | **Done** (placeholder panels) |
 | File dialogs | 0.5 | Low | High | **DONE** |
 | Recent projects | 0.5 | Low | Medium | **DONE** |
-| Project serialization | 1 | Low | High | **—** |
+| Project serialization | 0.5 | Low | High | **DONE** |
+| Console log capture (tracing → editor) | 1 | Low | High | **—** |
 | ECS → Hierarchy/Inspector | 1 | Medium | High | **—** |
 | Offscreen scene rendering | 1 | Medium | High | **—** |
+| Render target / framebuffer management | 1 | Medium | Critical | **—** |
+| MSAA render targets (for quality levels) | 1 | Medium | High | **—** |
 | Frame graph | 1 | High | Critical | **—** |
+| Pipeline layout cache | 1 | Low | Medium | **—** |
 | PBR shading | 1 | High | Critical | **—** |
-| Asset system | 1 | High | Critical | **—** |
-| Physics | 1 | Medium | High | **—** |
-| Audio | 1 | Medium | Medium | **—** |
+| Asset system (handles + async loading) | 1 | High | Critical | **—** |
+| Physics integration | 1 | Medium | High | **—** |
+| Audio | 1 | Medium | Medium | **Partial** (decode + playback done) |
 | Animation | 2 | High | High | **—** |
 | World streaming | 2 | High | High | **—** |
 | Terrain | 2 | High | Medium | **—** |
+| Shader hot-reload | 1 | Medium | High | **—** |
+| GPU timestamp queries | 1 | Low | Medium | **—** |
+| Windows build (Win32 + Vulkan) | 2 | Medium | High | **Done** |
+| macOS build (MoltenVK + Metal surface) | 2 | Medium | High | **—** |
+| CI: GitHub Actions matrix | 2 | Low | Medium | **—** |
+| RenderDoc capture trigger | 1 | Low | Low | **—** |
 | UI framework | 2 | Medium | High | **Partial** (crates/ui stub) |
 | Networking | 3 | Very High | High | **—** |
 | AI | 3 | Medium | Medium | **—** |

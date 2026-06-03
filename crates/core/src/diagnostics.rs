@@ -19,7 +19,7 @@ use crate::LogBuffer;
 /// use rustix_core::diagnostics::JsonFileLayer;
 /// use tracing_subscriber::layer::SubscriberExt;
 ///
-/// let json_layer = JsonFileLayer::new("logs/app.jsonl").unwrap();
+/// let json_layer = JsonFileLayer::new("logs/app.jsonl", 10 * 1024 * 1024, 3).unwrap();
 /// let subscriber = tracing_subscriber::registry().with(json_layer);
 /// tracing::subscriber::set_global_default(subscriber).ok();
 ///
@@ -28,17 +28,32 @@ use crate::LogBuffer;
 /// ```
 pub struct JsonFileLayer {
     file: Mutex<std::fs::File>,
+    path: std::path::PathBuf,
+    max_size_bytes: u64,
+    max_backups: usize,
+    current_size: std::sync::atomic::AtomicU64,
 }
 
 impl JsonFileLayer {
     /// Open (create / append) the given path for JSON log output.
-    pub fn new(path: impl AsRef<std::path::Path>) -> Result<Self, std::io::Error> {
+    /// `max_size_bytes`: rotate when file exceeds this size (0 = never rotate).
+    /// `max_backups`: number of backup files to keep.
+    pub fn new(
+        path: impl AsRef<std::path::Path>,
+        max_size_bytes: u64,
+        max_backups: usize,
+    ) -> Result<Self, std::io::Error> {
         let file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(path)?;
+            .open(&path)?;
+        let current_size = file.metadata().map(|m| m.len()).unwrap_or(0);
         Ok(Self {
             file: Mutex::new(file),
+            path: path.as_ref().to_path_buf(),
+            max_size_bytes,
+            max_backups,
+            current_size: std::sync::atomic::AtomicU64::new(current_size),
         })
     }
 
@@ -124,8 +139,18 @@ where
 
         buf.push_str("}\n");
 
+        let bytes = buf.as_bytes();
         if let Ok(mut f) = self.file.lock() {
-            let _ = f.write_all(buf.as_bytes());
+            let _ = f.write_all(bytes);
+        }
+
+        if self.max_size_bytes > 0 {
+            let new_size = self.current_size.fetch_add(bytes.len() as u64, std::sync::atomic::Ordering::Relaxed) + bytes.len() as u64;
+            if new_size >= self.max_size_bytes {
+                let _ = self.rotate(&self.path, self.max_backups);
+                let fresh_size = std::fs::metadata(&self.path).map(|m| m.len()).unwrap_or(0);
+                self.current_size.store(fresh_size, std::sync::atomic::Ordering::Relaxed);
+            }
         }
     }
 }
@@ -271,6 +296,10 @@ pub struct LogConfig {
     pub json: bool,
     /// Path to a JSON Lines log file.  `None` disables file output.
     pub json_file_path: Option<PathBuf>,
+    /// Max file size in MB before rotating the JSON log.  0 = no rotation.
+    pub json_max_size_mb: u32,
+    /// Number of backup JSON log files to keep.
+    pub json_max_backups: usize,
     /// Include thread IDs in log output.
     pub thread_ids: bool,
     /// Include target module path.
@@ -286,6 +315,8 @@ impl Default for LogConfig {
             crate_filters: Vec::new(),
             json: false,
             json_file_path: None,
+            json_max_size_mb: 10,
+            json_max_backups: 3,
             thread_ids: true,
             targets: true,
             tracy_enabled: cfg!(feature = "profiling"),
@@ -316,7 +347,8 @@ pub fn init_logging_with_capture(config: &LogConfig, capture: Option<std::sync::
 
         let _ = tracing::subscriber::set_global_default(subscriber);
     } else if let Some(path) = &config.json_file_path {
-        match JsonFileLayer::new(path) {
+        let max_size = (config.json_max_size_mb as u64) * 1024 * 1024;
+        match JsonFileLayer::new(path, max_size, config.json_max_backups) {
             Ok(json_layer) => {
                 let subscriber = fmt_layer.finish().with(json_layer);
                 if let Some(buf) = capture {
@@ -399,7 +431,7 @@ mod tests {
     fn json_file_layer_creates_file() {
         let path = temp_jsonl("create");
         let _ = std::fs::remove_file(&path);
-        let layer = JsonFileLayer::new(&path).unwrap();
+        let layer = JsonFileLayer::new(&path, 0, 0).unwrap();
         assert!(path.exists());
         let _ = std::fs::remove_file(&path);
     }
@@ -408,7 +440,7 @@ mod tests {
     fn json_file_layer_appends_lines() {
         let path = temp_jsonl("append");
         let _ = std::fs::remove_file(&path);
-        let layer = JsonFileLayer::new(&path).unwrap();
+        let layer = JsonFileLayer::new(&path, 0, 0).unwrap();
 
         // Write two events via the tracing subscriber
         use tracing_subscriber::layer::SubscriberExt;
@@ -448,7 +480,7 @@ mod tests {
         let backup = path.with_extension("jsonl.0");
         let _ = std::fs::remove_file(&backup);
 
-        let layer = JsonFileLayer::new(&path).unwrap();
+        let layer = JsonFileLayer::new(&path, 0, 3).unwrap();
         std::fs::write(&path, "old data\n").unwrap();
 
         layer.rotate(&path, 3).unwrap();
@@ -469,7 +501,7 @@ mod tests {
     fn json_file_layer_escape_quotes() {
         let path = temp_jsonl("escape");
         let _ = std::fs::remove_file(&path);
-        let layer = JsonFileLayer::new(&path).unwrap();
+        let layer = JsonFileLayer::new(&path, 0, 0).unwrap();
 
         use tracing_subscriber::layer::SubscriberExt;
         let subscriber = tracing_subscriber::registry().with(layer);
@@ -490,7 +522,7 @@ mod tests {
     fn json_file_layer_escaped_newlines() {
         let path = temp_jsonl("newline");
         let _ = std::fs::remove_file(&path);
-        let layer = JsonFileLayer::new(&path).unwrap();
+        let layer = JsonFileLayer::new(&path, 0, 0).unwrap();
 
         use tracing_subscriber::layer::SubscriberExt;
         let subscriber = tracing_subscriber::registry().with(layer);
@@ -504,5 +536,31 @@ mod tests {
         assert!(contents.contains(r#"\n"#));
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn json_file_layer_auto_rotate_on_size() {
+        let path = temp_jsonl("autorotate");
+        let backup = path.with_extension("jsonl.0");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&backup);
+
+        // Set a tiny max size so a single log line triggers rotation
+        let layer = JsonFileLayer::new(&path, 1, 2).unwrap();
+
+        use tracing_subscriber::layer::SubscriberExt;
+        let subscriber = tracing_subscriber::registry().with(layer);
+        tracing::subscriber::with_default(subscriber, || {
+            // This line will exceed 1 byte and trigger auto-rotation
+            tracing::info!("this is a log message that is definitely more than one byte long");
+        });
+
+        // The original file should have been rotated to backup
+        assert!(backup.exists(), "backup should exist after auto-rotation");
+        // Fresh file should exist (may or may not be empty depending on timing)
+        assert!(path.exists(), "fresh file should exist after auto-rotation");
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&backup);
     }
 }

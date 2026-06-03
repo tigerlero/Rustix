@@ -31,6 +31,8 @@ impl App {
             crate_filters: config.logging.crate_filters.clone(),
             json: config.logging.json,
             json_file_path: None,
+            json_max_size_mb: 10,
+            json_max_backups: 3,
             thread_ids: true,
             targets: true,
             tracy_enabled: cfg!(feature = "profiling"),
