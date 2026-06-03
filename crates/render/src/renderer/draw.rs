@@ -170,11 +170,12 @@ impl super::Renderer {
         &self, cmd: vk::CommandBuffer,
         pipeline: &pipeline::GraphicsPipeline,
         vertex_buffer: &GpuBuffer, index_buffer: Option<&GpuBuffer>, index_count: u32,
-        push_constants: &[u8], descriptor_set: vk::DescriptorSet,
+        push_constants: &[u8],
     ) {
+        let bindless_set = self.bindless_heap.set();
         unsafe {
             self.device.logical().cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
-            self.device.logical().cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.layout, 0, &[descriptor_set], &[]);
+            self.device.logical().cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.layout, 0, &[bindless_set], &[]);
             self.device.logical().cmd_push_constants(cmd, pipeline.layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
             self.device.logical().cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer.buffer], &[0u64]);
             if let Some(ib) = index_buffer {
@@ -236,11 +237,12 @@ impl super::Renderer {
         &self, cmd: vk::CommandBuffer,
         pipeline: &pipeline::ShadowPipeline,
         vertex_buffer: &GpuBuffer, index_buffer: Option<&GpuBuffer>, index_count: u32,
-        push_constants: &[u8], descriptor_set: vk::DescriptorSet,
+        push_constants: &[u8],
     ) {
+        let bindless_set = self.bindless_heap.set();
         unsafe {
             self.device.logical().cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
-            self.device.logical().cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.layout, 0, &[descriptor_set], &[]);
+            self.device.logical().cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.layout, 0, &[bindless_set], &[]);
             self.device.logical().cmd_push_constants(cmd, pipeline.layout, vk::ShaderStageFlags::VERTEX, 0, push_constants);
             self.device.logical().cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer.buffer], &[0u64]);
             if let Some(ib) = index_buffer {

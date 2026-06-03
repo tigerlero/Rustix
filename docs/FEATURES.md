@@ -113,15 +113,15 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [x] GPU readback (profiling counters, occlusion queries)
 
 ### 3.3 Descriptors
-- [ ] Bindless descriptor model (global heap)
-- [ ] Descriptor set layout cache
-- [ ] Sampler cache (reuse sampler objects)
-- [ ] Descriptor update batching
+- [x] Bindless descriptor model (global heap)
+- [x] Descriptor set layout cache
+- [x] Sampler cache (reuse sampler objects)
+- [x] Descriptor update batching
 
 ### 3.4 Pipelines
 - [x] Graphics pipeline cache (hash-based key → VkPipeline)
-- [ ] Compute pipeline cache
-- [ ] Pipeline variants (forward/deferred, quality levels)
+- [x] Compute pipeline cache
+- [x] Pipeline variants (forward/deferred, quality levels)
 - [ ] Specialization constants (reducing shader variants)
 
 ### 3.5 Shaders

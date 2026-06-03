@@ -1,5 +1,7 @@
 use ash::vk;
 
+use crate::descriptor_cache::DescriptorSetLayoutCache;
+use crate::sampler_cache::SamplerCache;
 use crate::instance::VulkanInstance;
 use crate::RenderError;
 
@@ -52,7 +54,7 @@ fn score_physical_device(device: &vk::PhysicalDeviceProperties) -> u32 {
 }
 
 pub struct GpuDevice {
-    logical: ash::Device,
+    logical: Box<ash::Device>,
     physical: vk::PhysicalDevice,
     physical_properties: vk::PhysicalDeviceProperties,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
@@ -61,6 +63,8 @@ pub struct GpuDevice {
     present_queue: vk::Queue,
     transfer_queue: vk::Queue,
     pipeline_cache: vk::PipelineCache,
+    descriptor_layout_cache: DescriptorSetLayoutCache,
+    sampler_cache: SamplerCache,
 }
 
 impl GpuDevice {
@@ -143,7 +147,16 @@ impl GpuDevice {
             ash::khr::swapchain::NAME.as_ptr(),
             ash::khr::dynamic_rendering::NAME.as_ptr(),
             ash::khr::synchronization2::NAME.as_ptr(),
+            ash::ext::descriptor_indexing::NAME.as_ptr(),
         ];
+
+        let mut descriptor_indexing_features =
+            vk::PhysicalDeviceDescriptorIndexingFeatures::default()
+                .shader_sampled_image_array_non_uniform_indexing(true)
+                .descriptor_binding_partially_bound(true)
+                .descriptor_binding_update_unused_while_pending(true)
+                .descriptor_binding_sampled_image_update_after_bind(true)
+                .descriptor_binding_variable_descriptor_count(true);
 
         let create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_create_infos)
@@ -151,14 +164,15 @@ impl GpuDevice {
             .enabled_features(&enabled_features)
             .push_next(&mut dynamic_rendering_features)
             .push_next(&mut timeline_semaphore_features)
-            .push_next(&mut synchronization2_features);
+            .push_next(&mut synchronization2_features)
+            .push_next(&mut descriptor_indexing_features);
 
-        let logical = unsafe {
+        let logical = Box::new(unsafe {
             instance
                 .inner()
                 .create_device(physical, &create_info, None)
                 .map_err(|e| RenderError::DeviceCreation(format!("device: {e}")))?
-        };
+        });
 
         let graphics_queue =
             unsafe { logical.get_device_queue(queue_families.graphics.ok_or_else(|| RenderError::DeviceCreation("no graphics queue".into()))?, 0) };
@@ -174,6 +188,8 @@ impl GpuDevice {
                 .map_err(|e| RenderError::DeviceCreation(format!("pipeline cache: {e}")))?
         };
 
+        let descriptor_layout_cache = DescriptorSetLayoutCache::new(&*logical);
+        let sampler_cache = SamplerCache::new(&*logical);
         Ok(Self {
             logical,
             physical,
@@ -184,6 +200,8 @@ impl GpuDevice {
             present_queue,
             transfer_queue,
             pipeline_cache,
+            descriptor_layout_cache,
+            sampler_cache,
         })
     }
 
@@ -236,7 +254,7 @@ impl GpuDevice {
         result
     }
 
-    pub fn logical(&self) -> &ash::Device { &self.logical }
+    pub fn logical(&self) -> &ash::Device { self.logical.as_ref() }
     pub fn physical(&self) -> vk::PhysicalDevice { self.physical }
     pub fn physical_properties(&self) -> &vk::PhysicalDeviceProperties { &self.physical_properties }
     pub fn memory_properties(&self) -> &vk::PhysicalDeviceMemoryProperties { &self.memory_properties }
@@ -251,6 +269,8 @@ impl GpuDevice {
         self.queue_families.transfer.unwrap_or(self.queue_families.graphics.unwrap_or(0))
     }
     pub fn pipeline_cache(&self) -> vk::PipelineCache { self.pipeline_cache }
+    pub fn descriptor_layout_cache(&self) -> &DescriptorSetLayoutCache { &self.descriptor_layout_cache }
+    pub fn sampler_cache(&self) -> &SamplerCache { &self.sampler_cache }
 }
 
 fn physical_devices_name(props: &vk::PhysicalDeviceProperties) -> String {
@@ -263,6 +283,10 @@ fn physical_devices_name(props: &vk::PhysicalDeviceProperties) -> String {
 impl Drop for GpuDevice {
     fn drop(&mut self) {
         unsafe {
+            // descriptor_layout_cache must be dropped before the logical device
+            // so its layouts are destroyed while the device is still valid.
+            std::ptr::drop_in_place(&mut self.descriptor_layout_cache);
+            std::ptr::drop_in_place(&mut self.sampler_cache);
             self.logical.destroy_pipeline_cache(self.pipeline_cache, None);
             self.logical.destroy_device(None);
         }

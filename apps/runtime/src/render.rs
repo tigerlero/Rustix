@@ -41,8 +41,6 @@ pub fn render_3d_scene(
     shadow_map: Option<&rustix_render::GpuTexture>,
     mut shadow_layout: Option<vk::ImageLayout>,
     ubo: &GpuBuffer,
-    descriptor_set: vk::DescriptorSet,
-    shadow_descriptor_set: Option<vk::DescriptorSet>,
     meshes: &HashMap<String, Mesh>,
     ecs_world: &EcsWorld,
     cam: &EditorCamera,
@@ -120,9 +118,9 @@ pub fn render_3d_scene(
     ubo.write(&ubo_data);
 
     // --- Shadow pass ---
-    if let (Some(sp), Some(sm), Some(layout), Some(sds)) = (shadow_pipeline, shadow_map, shadow_layout, shadow_descriptor_set) {
+    if let (Some(sp), Some(sm), Some(layout)) = (shadow_pipeline, shadow_map, shadow_layout) {
         let shadow_size = 1024u32;
-        renderer.update_descriptor_set(sds, ubo);
+        renderer.update_descriptor_set(vk::DescriptorSet::null(), ubo);
         renderer.transition_image_layout(cmd, sm.image, vk::ImageAspectFlags::DEPTH, layout, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
         shadow_layout = Some(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
         renderer.begin_shadow_pass(cmd, sm, shadow_size);
@@ -137,7 +135,6 @@ pub fn render_3d_scene(
                     &mesh.vertex_buffer,
                     mesh.index_buffer.as_ref(), mesh.index_count,
                     &pc_data,
-                    sds,
                 );
             }
         }
@@ -146,9 +143,9 @@ pub fn render_3d_scene(
         renderer.transition_image_layout(cmd, sm.image, vk::ImageAspectFlags::DEPTH, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         shadow_layout = Some(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
 
-        renderer.update_descriptor_set_with_shadow(descriptor_set, ubo, sm);
+        renderer.update_descriptor_set_with_shadow(vk::DescriptorSet::null(), ubo, sm);
     } else {
-        renderer.update_descriptor_set(descriptor_set, ubo);
+        renderer.update_descriptor_set(vk::DescriptorSet::null(), ubo);
     }
 
     let clear_color = [0.04, 0.04, 0.08, 1.0f32];
@@ -186,7 +183,6 @@ pub fn render_3d_scene(
                 &mesh.vertex_buffer,
                 mesh.index_buffer.as_ref(), mesh.index_count,
                 &pc_data,
-                descriptor_set,
             );
         }
     }

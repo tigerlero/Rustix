@@ -10,6 +10,8 @@ use crate::pipeline;
 use crate::texture::Framebuffer;
 use crate::error::RenderError;
 use crate::profiler::GpuProfiler;
+use crate::bindless::BindlessDescriptorHeap;
+use crate::pipeline::GraphicsPipelineVariantCache;
 use rustix_core::config::RenderConfig;
 
 mod resource;
@@ -26,6 +28,8 @@ pub struct Renderer {
     command_buffers: Vec<vk::CommandBuffer>,
     frame_complete_semaphore: vk::Semaphore,
     profiler: Option<GpuProfiler>,
+    bindless_heap: BindlessDescriptorHeap,
+    pipeline_variant_cache: GraphicsPipelineVariantCache,
     frame_index: usize,
     initialized: bool,
 }
@@ -63,7 +67,12 @@ impl Renderer {
             device.logical().create_semaphore(&sem_create, None).expect("timeline semaphore")
         };
         let profiler = GpuProfiler::new(&instance, &device).ok();
-        Ok(Self { instance, device, swapchain: Arc::new(Mutex::new(Swapchain::new())), allocator: Arc::new(Mutex::new(allocator)), command_pool: cmd_pool, transfer_command_pool: transfer_pool, command_buffers: cmd_bufs, frame_complete_semaphore, profiler, frame_index: 0, initialized: false })
+        let bindless_heap = BindlessDescriptorHeap::new(device.logical())?;
+        let pipeline_variant_cache = GraphicsPipelineVariantCache::new(
+            device.logical(),
+            bindless_heap.layout(),
+        );
+        Ok(Self { instance, device, swapchain: Arc::new(Mutex::new(Swapchain::new())), allocator: Arc::new(Mutex::new(allocator)), command_pool: cmd_pool, transfer_command_pool: transfer_pool, command_buffers: cmd_bufs, frame_complete_semaphore, profiler, bindless_heap, pipeline_variant_cache, frame_index: 0, initialized: false })
     }
 
     pub fn init_surface(&mut self, rw: raw_window_handle::RawWindowHandle, rd: raw_window_handle::RawDisplayHandle, w: u32, h: u32) -> Result<(), RenderError> {
@@ -137,6 +146,9 @@ impl Renderer {
     pub fn current_cmd(&self) -> vk::CommandBuffer { self.command_buffers[self.frame_index % 3] }
     pub fn frame_index(&self) -> usize { self.frame_index }
     pub fn device(&self) -> &GpuDevice { &self.device }
+    pub fn bindless_heap(&self) -> &BindlessDescriptorHeap { &self.bindless_heap }
+    pub fn bindless_heap_mut(&mut self) -> &mut BindlessDescriptorHeap { &mut self.bindless_heap }
+    pub fn pipeline_variant_cache(&self) -> &GraphicsPipelineVariantCache { &self.pipeline_variant_cache }
 
     pub fn command_pool(&self) -> vk::CommandPool {
         self.command_pool

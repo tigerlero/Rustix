@@ -7,13 +7,13 @@ pub fn init_scene_resources(
     renderer: &Renderer,
     meshes: &mut HashMap<String, Mesh>,
     scene_pipeline: &mut Option<rustix_render::pipeline::GraphicsPipeline>,
-    scene_descriptor_pool: &mut Option<vk::DescriptorPool>,
-    scene_descriptor_set: &mut Option<vk::DescriptorSet>,
+    _scene_descriptor_pool: &mut Option<vk::DescriptorPool>,
+    _scene_descriptor_set: &mut Option<vk::DescriptorSet>,
     scene_uniform_buffer: &mut Option<rustix_render::memory::GpuBuffer>,
     scene_depth_buffer: &mut Option<rustix_render::DepthBuffer>,
     shadow_pipeline: &mut Option<rustix_render::pipeline::ShadowPipeline>,
-    shadow_descriptor_pool: &mut Option<vk::DescriptorPool>,
-    shadow_descriptor_set: &mut Option<vk::DescriptorSet>,
+    _shadow_descriptor_pool: &mut Option<vk::DescriptorPool>,
+    _shadow_descriptor_set: &mut Option<vk::DescriptorSet>,
     shadow_map: &mut Option<rustix_render::GpuTexture>,
 ) {
     if scene_pipeline.is_some() { return; }
@@ -80,32 +80,33 @@ pub fn init_scene_resources(
         }
     }
 
+    let bindless_layout = renderer.bindless_heap().layout();
     match (
         rustix_render::shader::builtin::vertex_shader(renderer.device().logical()),
         rustix_render::shader::builtin::fragment_shader(renderer.device().logical()),
     ) {
         (Ok(vs), Ok(fs)) => {
             let sw = renderer.swapchain.lock();
-            match rustix_render::pipeline::GraphicsPipeline::create(renderer.device(), &sw, &vs, &fs) {
-                Ok(p) => *scene_pipeline = Some(p),
+            let variant_key = rustix_render::pipeline::PipelineVariantKey::default();
+            match renderer.pipeline_variant_cache().get_or_create(
+                &variant_key,
+                renderer.device(),
+                &sw,
+                &vs,
+                &fs,
+            ) {
+                Ok(_pipeline) => {
+                    // The pipeline is now cached; retrieve the full struct for storage.
+                    if let Some(gp) = renderer.pipeline_variant_cache().get_pipeline(&variant_key) {
+                        *scene_pipeline = Some(gp);
+                    }
+                }
                 Err(e) => tracing::error!("scene pipeline creation failed: {e}"),
-            }
-            match renderer.create_descriptor_pool() {
-                Ok(dp) => *scene_descriptor_pool = Some(dp),
-                Err(e) => tracing::error!("scene descriptor pool failed: {e}"),
             }
             drop(sw);
         }
         (Err(e), _) => tracing::error!("vertex shader compile failed: {e}"),
         (_, Err(e)) => tracing::error!("fragment shader compile failed: {e}"),
-    }
-    if let Some(ref pipeline) = scene_pipeline {
-        if let Some(dp) = scene_descriptor_pool {
-            match renderer.alloc_descriptor_set(*dp, pipeline.descriptor_set_layout) {
-                Ok(ds) => *scene_descriptor_set = Some(ds),
-                Err(e) => tracing::error!("scene descriptor set alloc failed: {e}"),
-            }
-        }
     }
     match renderer.create_buffer("scene_ubo", rustix_render::pipeline::UBO_SCENE_SIZE, vk::BufferUsageFlags::UNIFORM_BUFFER, gpu_allocator::MemoryLocation::CpuToGpu) {
         Ok(buf) => *scene_uniform_buffer = Some(buf),
@@ -117,26 +118,8 @@ pub fn init_scene_resources(
     drop(sw);
 
     if let Ok(sv) = rustix_render::shader::builtin::shadow_vertex_shader(renderer.device().logical()) {
-        match rustix_render::pipeline::ShadowPipeline::create(renderer.device(), &sv) {
+        match rustix_render::pipeline::ShadowPipeline::create(renderer.device(), &sv, bindless_layout) {
             Ok(p) => {
-                let ps = [
-                    vk::DescriptorPoolSize { ty: vk::DescriptorType::UNIFORM_BUFFER, descriptor_count: 1 },
-                ];
-                let pool = unsafe {
-                    renderer.device().logical().create_descriptor_pool(
-                        &vk::DescriptorPoolCreateInfo::default().pool_sizes(&ps).max_sets(1), None
-                    )
-                };
-                match pool {
-                    Ok(dp) => {
-                        *shadow_descriptor_pool = Some(dp);
-                        match renderer.alloc_descriptor_set(dp, p.descriptor_set_layout) {
-                            Ok(ds) => *shadow_descriptor_set = Some(ds),
-                            Err(e) => tracing::error!("shadow desc set alloc failed: {e}"),
-                        }
-                    }
-                    Err(e) => tracing::error!("shadow desc pool failed: {e}"),
-                }
                 *shadow_pipeline = Some(p);
             }
             Err(e) => tracing::error!("shadow pipeline creation failed: {e}"),
@@ -145,6 +128,19 @@ pub fn init_scene_resources(
         tracing::error!("failed to compile shadow vertex shader");
     }
     *shadow_map = renderer.create_shadow_map(1024).ok();
+    // Register shadow map texture and sampler into bindless heap using a batched update.
+    if let Some(ref sm) = *shadow_map {
+        let heap = renderer.bindless_heap();
+        let mut batch = rustix_render::descriptor_batch::DescriptorUpdateBatch::new(
+            renderer.device().logical(),
+            heap.set(),
+        );
+        let _texture_slot = heap.alloc_texture_into(&mut batch, sm.view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        let _sampler_slot = heap.alloc_sampler_into(&mut batch, sm.sampler);
+        if let Err(e) = batch.flush() {
+            tracing::error!("bindless batch flush failed: {e}");
+        }
+    }
 }
 
 pub fn init_2d_resources(

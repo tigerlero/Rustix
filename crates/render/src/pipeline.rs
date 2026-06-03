@@ -1,4 +1,6 @@
 use ash::vk;
+use parking_lot::Mutex;
+use std::collections::HashMap;
 
 use crate::device::GpuDevice;
 use crate::shader::ShaderModule;
@@ -81,6 +83,64 @@ pub fn shadow_depth_stencil_state() -> vk::PipelineDepthStencilStateCreateInfo<'
         .depth_compare_op(vk::CompareOp::LESS)
 }
 
+/// Rendering path strategy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RenderPath {
+    Forward,
+    /// Deferred rendering (G-buffer + lighting pass).
+    /// Currently falls back to forward; full G-buffer support is planned.
+    Deferred,
+}
+
+/// Quality preset affecting MSAA, shadow resolution, and effect quality.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum QualityLevel {
+    Low,
+    Medium,
+    High,
+    Ultra,
+}
+
+impl QualityLevel {
+    /// MSAA sample count for this quality level.
+    pub fn msaa_samples(&self) -> vk::SampleCountFlags {
+        match self {
+            QualityLevel::Low => vk::SampleCountFlags::TYPE_1,
+            QualityLevel::Medium => vk::SampleCountFlags::TYPE_2,
+            QualityLevel::High => vk::SampleCountFlags::TYPE_4,
+            QualityLevel::Ultra => vk::SampleCountFlags::TYPE_8,
+        }
+    }
+}
+
+/// Key identifying a specific pipeline variant.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PipelineVariantKey {
+    pub render_path: RenderPath,
+    pub quality_level: QualityLevel,
+    pub cull_mode: vk::CullModeFlags,
+    pub polygon_mode: vk::PolygonMode,
+    pub depth_test: bool,
+    pub depth_write: bool,
+    pub blend_enable: bool,
+}
+
+impl Default for PipelineVariantKey {
+    fn default() -> Self {
+        Self {
+            render_path: RenderPath::Forward,
+            // Low quality (1x MSAA) is the safe default until the engine
+            // creates multisample render targets for higher quality levels.
+            quality_level: QualityLevel::Low,
+            cull_mode: vk::CullModeFlags::NONE,
+            polygon_mode: vk::PolygonMode::FILL,
+            depth_test: true,
+            depth_write: true,
+            blend_enable: false,
+        }
+    }
+}
+
 pub struct GraphicsPipeline {
     pub pipeline: vk::Pipeline,
     pub layout: vk::PipelineLayout,
@@ -93,17 +153,12 @@ impl GraphicsPipeline {
         swapchain: &Swapchain,
         vs: &ShaderModule,
         fs: &ShaderModule,
+        bindless_layout: vk::DescriptorSetLayout,
+        variant: &PipelineVariantKey,
     ) -> Result<Self, RenderError> {
         let stages = [vs.stage_create_info(), fs.stage_create_info()];
 
-        let bindings = main_descriptor_set_bindings();
-        let desc_layout = unsafe {
-            device.logical().create_descriptor_set_layout(
-                &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings), None,
-            ).map_err(|e| RenderError::PipelineCreation(format!("desc_layout: {e}")))?
-        };
-
-        let set_layouts = [desc_layout];
+        let set_layouts = [bindless_layout];
         let push_range = vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
             .offset(0)
@@ -127,17 +182,29 @@ impl GraphicsPipeline {
         let ia = vk::PipelineInputAssemblyStateCreateInfo::default().topology(vk::PrimitiveTopology::TRIANGLE_LIST);
         let vps = [vk::Viewport::default()]; let scs = [vk::Rect2D::default()];
         let vp = vk::PipelineViewportStateCreateInfo::default().viewports(&vps).scissors(&scs);
-        let rs = vk::PipelineRasterizationStateCreateInfo::default().polygon_mode(vk::PolygonMode::FILL).cull_mode(vk::CullModeFlags::NONE).front_face(vk::FrontFace::CLOCKWISE).line_width(1.0);
-        let ms = vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(vk::SampleCountFlags::TYPE_1);
-        let ds = vk::PipelineDepthStencilStateCreateInfo::default().depth_test_enable(true).depth_write_enable(true).depth_compare_op(vk::CompareOp::LESS);
-        let ba = [vk::PipelineColorBlendAttachmentState::default().color_write_mask(vk::ColorComponentFlags::RGBA).blend_enable(false)];
+        let rs = vk::PipelineRasterizationStateCreateInfo::default()
+            .polygon_mode(variant.polygon_mode)
+            .cull_mode(variant.cull_mode)
+            .front_face(vk::FrontFace::CLOCKWISE)
+            .line_width(1.0);
+        let ms = vk::PipelineMultisampleStateCreateInfo::default()
+            .rasterization_samples(variant.quality_level.msaa_samples());
+        let ds = vk::PipelineDepthStencilStateCreateInfo::default()
+            .depth_test_enable(variant.depth_test)
+            .depth_write_enable(variant.depth_write)
+            .depth_compare_op(vk::CompareOp::LESS);
+        let ba = [vk::PipelineColorBlendAttachmentState::default()
+            .color_write_mask(vk::ColorComponentFlags::RGBA)
+            .blend_enable(variant.blend_enable)];
         let cb = vk::PipelineColorBlendStateCreateInfo::default().attachments(&ba);
         let dyns = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
         let dy = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dyns);
 
         let cfs = [swapchain.format()];
-        let depth_fmt = vk::Format::D32_SFLOAT; // D32 is widely supported; fallback to D24 if needed
-        let mut dr = vk::PipelineRenderingCreateInfoKHR::default().color_attachment_formats(&cfs).depth_attachment_format(depth_fmt);
+        let depth_fmt = vk::Format::D32_SFLOAT;
+        let mut dr = vk::PipelineRenderingCreateInfoKHR::default()
+            .color_attachment_formats(&cfs)
+            .depth_attachment_format(depth_fmt);
 
         let ci = vk::GraphicsPipelineCreateInfo::default()
             .stages(&stages).vertex_input_state(&vi).input_assembly_state(&ia)
@@ -152,9 +219,9 @@ impl GraphicsPipeline {
                 .into_iter().next().ok_or_else(|| RenderError::PipelineCreation("no pipeline created".into()))?
         };
 
-        tracing::info!("graphics pipeline created (UBO + push constants + depth + culling)");
+        tracing::info!("graphics pipeline created (variant={:?}, msaa={:?})", variant.render_path, variant.quality_level.msaa_samples());
 
-        Ok(Self { pipeline, layout, descriptor_set_layout: desc_layout })
+        Ok(Self { pipeline, layout, descriptor_set_layout: bindless_layout })
     }
 }
 
@@ -168,18 +235,11 @@ impl ShadowPipeline {
     pub fn create(
         device: &GpuDevice,
         vs: &ShaderModule,
+        bindless_layout: vk::DescriptorSetLayout,
     ) -> Result<Self, RenderError> {
         let stages = [vs.stage_create_info()];
 
-        // Same descriptor set layout as main pipeline (UBO binding 0 with light_view_proj)
-        let bindings = shadow_descriptor_set_bindings();
-        let desc_layout = unsafe {
-            device.logical().create_descriptor_set_layout(
-                &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings), None,
-            ).map_err(|e| RenderError::PipelineCreation(format!("shadow desc_layout: {e}")))?
-        };
-
-        let set_layouts = [desc_layout];
+        let set_layouts = [bindless_layout];
         let push_range = shadow_push_constant_range();
         let push_ranges = [push_range];
 
@@ -221,9 +281,9 @@ impl ShadowPipeline {
                 .into_iter().next().ok_or_else(|| RenderError::PipelineCreation("no shadow pipeline created".into()))?
         };
 
-        tracing::info!("shadow depth pipeline created");
+        tracing::info!("shadow depth pipeline created (bindless)");
 
-        Ok(Self { pipeline, layout, descriptor_set_layout: desc_layout })
+        Ok(Self { pipeline, layout, descriptor_set_layout: bindless_layout })
     }
 }
 
@@ -255,11 +315,10 @@ impl GraphicsPipeline2D {
                 .binding(2).descriptor_type(vk::DescriptorType::SAMPLER)
                 .descriptor_count(1).stage_flags(vk::ShaderStageFlags::FRAGMENT),
         ];
-        let desc_layout = unsafe {
-            device.logical().create_descriptor_set_layout(
-                &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings), None,
-            ).map_err(|e| RenderError::PipelineCreation(format!("2d desc_layout: {e}")))?
-        };
+        let desc_layout = device
+            .descriptor_layout_cache()
+            .get_or_create_simple(&bindings)
+            .map_err(|e| RenderError::PipelineCreation(format!("2d desc_layout: {e}")))?;
 
         // Descriptor pool: 1 UBO + 1 sampled image + 1 sampler
         let pool_sizes = [
@@ -341,6 +400,274 @@ impl GraphicsPipeline2D {
         tracing::info!("2D graphics pipeline created (UBO + sampler + alpha blend)");
 
         Ok(Self { pipeline, layout, desc_layout, desc_pool })
+    }
+}
+
+/// Compute pipeline wrapper.
+pub struct ComputePipeline {
+    pub pipeline: vk::Pipeline,
+    pub layout: vk::PipelineLayout,
+}
+
+/// Hashable key for the compute pipeline cache.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ComputePipelineKey {
+    shader: vk::ShaderModule,
+    set_layouts: Vec<vk::DescriptorSetLayout>,
+    push_ranges: Vec<PushConstantKey>,
+}
+
+/// Hashable wrapper for `vk::PushConstantRange` fields.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct PushConstantKey {
+    stage_flags: vk::ShaderStageFlags,
+    offset: u32,
+    size: u32,
+}
+
+impl From<vk::PushConstantRange> for PushConstantKey {
+    fn from(r: vk::PushConstantRange) -> Self {
+        Self {
+            stage_flags: r.stage_flags,
+            offset: r.offset,
+            size: r.size,
+        }
+    }
+}
+
+/// Caches compute pipelines keyed by shader module + layout configuration.
+///
+/// Use `get_or_create` to obtain a compute pipeline. The cache owns the
+/// Vulkan pipeline and layout handles and destroys them on drop.
+pub struct ComputePipelineCache {
+    device: *const ash::Device,
+    cache: Mutex<HashMap<ComputePipelineKey, ComputePipeline>>,
+}
+
+unsafe impl Send for ComputePipelineCache {}
+unsafe impl Sync for ComputePipelineCache {}
+
+impl ComputePipelineCache {
+    pub fn new(device: &ash::Device) -> Self {
+        Self {
+            device: device as *const ash::Device,
+            cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Get or create a compute pipeline for the given shader and layout config.
+    ///
+    /// `set_layouts` should be borrowed from the descriptor set layout cache
+    /// (e.g. `device.descriptor_layout_cache()`). `push_ranges` are the push
+    /// constant ranges for the pipeline layout.
+    pub fn get_or_create(
+        &self,
+        shader: &ShaderModule,
+        set_layouts: &[vk::DescriptorSetLayout],
+        push_ranges: &[vk::PushConstantRange],
+    ) -> Result<vk::Pipeline, RenderError> {
+        let key = ComputePipelineKey {
+            shader: shader.module,
+            set_layouts: set_layouts.to_vec(),
+            push_ranges: push_ranges.iter().copied().map(PushConstantKey::from).collect(),
+        };
+
+        {
+            let cache = self.cache.lock();
+            if let Some(entry) = cache.get(&key) {
+                return Ok(entry.pipeline);
+            }
+        }
+
+        let (pipeline, layout) = unsafe {
+            let layout = (*self.device)
+                .create_pipeline_layout(
+                    &vk::PipelineLayoutCreateInfo::default()
+                        .set_layouts(set_layouts)
+                        .push_constant_ranges(push_ranges),
+                    None,
+                )
+                .map_err(|e| RenderError::PipelineCreation(format!("compute layout: {e}")))?;
+
+            let stage = shader.stage_create_info();
+            let ci = vk::ComputePipelineCreateInfo::default()
+                .stage(stage)
+                .layout(layout);
+
+            let pipeline = (*self.device)
+                .create_compute_pipelines(vk::PipelineCache::null(), &[ci], None)
+                .map_err(|(_, e)| {
+                    (*self.device).destroy_pipeline_layout(layout, None);
+                    RenderError::PipelineCreation(format!("compute pipeline: {e}"))
+                })?
+                .into_iter()
+                .next()
+                .ok_or_else(|| {
+                    (*self.device).destroy_pipeline_layout(layout, None);
+                    RenderError::PipelineCreation("no compute pipeline created".into())
+                })?;
+
+            (pipeline, layout)
+        };
+
+        let mut cache = self.cache.lock();
+        // Another thread may have raced us.
+        if let Some(entry) = cache.get(&key) {
+            unsafe {
+                (*self.device).destroy_pipeline(pipeline, None);
+                (*self.device).destroy_pipeline_layout(layout, None);
+            }
+            return Ok(entry.pipeline);
+        }
+
+        cache.insert(key, ComputePipeline { pipeline, layout });
+        Ok(pipeline)
+    }
+
+    /// Retrieve an existing compute pipeline by key without creating one.
+    pub fn get(
+        &self,
+        shader: &ShaderModule,
+        set_layouts: &[vk::DescriptorSetLayout],
+        push_ranges: &[vk::PushConstantRange],
+    ) -> Option<vk::Pipeline> {
+        let key = ComputePipelineKey {
+            shader: shader.module,
+            set_layouts: set_layouts.to_vec(),
+            push_ranges: push_ranges.iter().copied().map(PushConstantKey::from).collect(),
+        };
+        self.cache.lock().get(&key).map(|e| e.pipeline)
+    }
+
+    /// Returns the number of cached compute pipelines.
+    pub fn len(&self) -> usize {
+        self.cache.lock().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cache.lock().is_empty()
+    }
+}
+
+impl Drop for ComputePipelineCache {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.device.is_null() {
+                let dev = &*self.device;
+                let cache = self.cache.get_mut();
+                for entry in cache.values() {
+                    if entry.pipeline != vk::Pipeline::null() {
+                        dev.destroy_pipeline(entry.pipeline, None);
+                    }
+                    if entry.layout != vk::PipelineLayout::null() {
+                        dev.destroy_pipeline_layout(entry.layout, None);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Caches graphics pipelines by variant key.
+///
+/// Each variant gets its own `GraphicsPipeline` with potentially different
+/// rasterization state, MSAA, depth/blend settings, etc. All variants share
+/// the same bindless descriptor set layout.
+pub struct GraphicsPipelineVariantCache {
+    device: *const ash::Device,
+    bindless_layout: vk::DescriptorSetLayout,
+    cache: Mutex<HashMap<PipelineVariantKey, GraphicsPipeline>>,
+}
+
+unsafe impl Send for GraphicsPipelineVariantCache {}
+unsafe impl Sync for GraphicsPipelineVariantCache {}
+
+impl GraphicsPipelineVariantCache {
+    pub fn new(device: &ash::Device, bindless_layout: vk::DescriptorSetLayout) -> Self {
+        Self {
+            device: device as *const ash::Device,
+            bindless_layout,
+            cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Get or create a graphics pipeline for the given variant key.
+    pub fn get_or_create(
+        &self,
+        key: &PipelineVariantKey,
+        device: &GpuDevice,
+        swapchain: &Swapchain,
+        vs: &ShaderModule,
+        fs: &ShaderModule,
+    ) -> Result<vk::Pipeline, RenderError> {
+        {
+            let cache = self.cache.lock();
+            if let Some(entry) = cache.get(key) {
+                return Ok(entry.pipeline);
+            }
+        }
+
+        let gp = GraphicsPipeline::create(
+            device,
+            swapchain,
+            vs,
+            fs,
+            self.bindless_layout,
+            key,
+        )?;
+        let pipeline = gp.pipeline;
+
+        let mut cache = self.cache.lock();
+        if let Some(entry) = cache.get(key) {
+            return Ok(entry.pipeline);
+        }
+
+        cache.insert(key.clone(), gp);
+        Ok(pipeline)
+    }
+
+    /// Look up an existing pipeline without creating one.
+    pub fn get(&self, key: &PipelineVariantKey) -> Option<vk::Pipeline> {
+        self.cache.lock().get(key).map(|e| e.pipeline)
+    }
+
+    /// Retrieve the full `GraphicsPipeline` for a variant.
+    pub fn get_pipeline(&self, key: &PipelineVariantKey) -> Option<GraphicsPipeline> {
+        // Return a copy with the shared layout handle so callers can use it
+        // for binding.  Note: `GraphicsPipeline` does not implement `Clone`,
+        // so we return a newly constructed struct with the same handles.
+        self.cache.lock().get(key).map(|e| GraphicsPipeline {
+            pipeline: e.pipeline,
+            layout: e.layout,
+            descriptor_set_layout: e.descriptor_set_layout,
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.cache.lock().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cache.lock().is_empty()
+    }
+}
+
+impl Drop for GraphicsPipelineVariantCache {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.device.is_null() {
+                let dev = &*self.device;
+                let cache = self.cache.get_mut();
+                for entry in cache.values() {
+                    if entry.pipeline != vk::Pipeline::null() {
+                        dev.destroy_pipeline(entry.pipeline, None);
+                    }
+                    if entry.layout != vk::PipelineLayout::null() {
+                        dev.destroy_pipeline_layout(entry.layout, None);
+                    }
+                }
+            }
+        }
     }
 }
 

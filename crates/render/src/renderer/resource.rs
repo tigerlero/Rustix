@@ -110,25 +110,14 @@ impl super::Renderer {
             .map_err(|e| RenderError::DeviceCreation(format!("alloc set: {e}"))).map(|mut s| s.remove(0))
     }
 
-    pub fn update_descriptor_set(&self, set: vk::DescriptorSet, ubo: &GpuBuffer) {
-        let bi = [vk::DescriptorBufferInfo::default().buffer(ubo.buffer).offset(0).range(ubo.size)];
-        let w = vk::WriteDescriptorSet::default().dst_set(set).dst_binding(0).descriptor_type(vk::DescriptorType::UNIFORM_BUFFER).buffer_info(&bi);
-        unsafe { self.device.logical().update_descriptor_sets(&[w], &[]); }
+    pub fn update_descriptor_set(&self, _set: vk::DescriptorSet, ubo: &GpuBuffer) {
+        self.bindless_heap.write_ubo(ubo.buffer, ubo.size);
     }
 
-    pub fn update_descriptor_set_with_shadow(&self, set: vk::DescriptorSet, ubo: &GpuBuffer, shadow_map: &GpuTexture) {
-        let bi = [vk::DescriptorBufferInfo::default().buffer(ubo.buffer).offset(0).range(ubo.size)];
-        let tex_ii = [vk::DescriptorImageInfo::default()
-            .image_view(shadow_map.view)
-            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
-        let samp_ii = [vk::DescriptorImageInfo::default()
-            .sampler(shadow_map.sampler)];
-        let writes = [
-            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(0).descriptor_type(vk::DescriptorType::UNIFORM_BUFFER).buffer_info(&bi),
-            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(1).descriptor_type(vk::DescriptorType::SAMPLED_IMAGE).image_info(&tex_ii),
-            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(2).descriptor_type(vk::DescriptorType::SAMPLER).image_info(&samp_ii),
-        ];
-        unsafe { self.device.logical().update_descriptor_sets(&writes, &[]); }
+    pub fn update_descriptor_set_with_shadow(&self, _set: vk::DescriptorSet, ubo: &GpuBuffer, shadow_map: &GpuTexture) {
+        self.bindless_heap.write_ubo(ubo.buffer, ubo.size);
+        // Shadow map should already be registered in the bindless heap.
+        // If not, this is a no-op; the caller manages heap registration.
     }
 
     pub fn create_shadow_map(&self, size: u32) -> Result<GpuTexture, RenderError> {
@@ -147,10 +136,9 @@ impl super::Renderer {
                     .subresource_range(vk::ImageSubresourceRange { aspect_mask: vk::ImageAspectFlags::DEPTH, base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: 1 }), None,
             ).map_err(|e| RenderError::DeviceCreation(format!("shadow view: {e}")))?
         };
-        let sampler = unsafe {
-            self.device.logical().create_sampler(&shadow_sampler_info(), None)
-                .map_err(|e| RenderError::DeviceCreation(format!("shadow sampler: {e}")))?
-        };
+        let sampler = self.device.sampler_cache()
+            .get_or_create(&shadow_sampler_info())
+            .map_err(|e| RenderError::DeviceCreation(format!("shadow sampler: {e}")))?;
         Ok(GpuTexture { image: img, view, sampler, _allocation: alloc })
     }
 

@@ -47,6 +47,7 @@ impl ShaderModule {
 fn vk_stage_to_naga(s: vk::ShaderStageFlags) -> naga::ShaderStage {
     if s.contains(vk::ShaderStageFlags::VERTEX) { naga::ShaderStage::Vertex }
     else if s.contains(vk::ShaderStageFlags::FRAGMENT) { naga::ShaderStage::Fragment }
+    else if s.contains(vk::ShaderStageFlags::COMPUTE) { naga::ShaderStage::Compute }
     else { tracing::warn!("unsupported shader stage {s:?}, defaulting to vertex"); naga::ShaderStage::Vertex }
 }
 

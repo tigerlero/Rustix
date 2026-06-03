@@ -424,7 +424,7 @@ fn main() {
                         }
 
                         let mut shadow_layout_opt = if shadow_map.is_some() { Some(shadow_layout) } else { None };
-                        if scene_pipeline.is_some() && scene_depth_buffer.is_some() && scene_uniform_buffer.is_some() && scene_descriptor_set.is_some() {
+                        if scene_pipeline.is_some() && scene_depth_buffer.is_some() && scene_uniform_buffer.is_some() {
                             // Clear swapchain once before any offscreen rendering.
                             for vp_idx in 0..num_viewports {
                                 if let Some(ref fb) = viewport_framebuffers[vp_idx][frame_idx] {
@@ -458,8 +458,6 @@ fn main() {
                                         shadow_map.as_ref(),
                                         shadow_layout_opt,
                                         scene_uniform_buffer.as_ref().unwrap(),
-                                        scene_descriptor_set.unwrap(),
-                                        shadow_descriptor_set,
                                         &meshes, &ecs_world, cam,
                                         Some(fb),
                                     );
@@ -478,9 +476,9 @@ fn main() {
                                 }
                             }
                         } else if renderer.frame_index() % 60 == 0 {
-                            tracing::warn!("3D scene skipped: pipeline={} depth={} ubo={} desc={}",
+                            tracing::warn!("3D scene skipped: pipeline={} depth={} ubo={}",
                                 scene_pipeline.is_some(), scene_depth_buffer.is_some(),
-                                scene_uniform_buffer.is_some(), scene_descriptor_set.is_some());
+                                scene_uniform_buffer.is_some());
                         }
 
                         // 2D debug overlay disabled — viewport is for 3D scene only.

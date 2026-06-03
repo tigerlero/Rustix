@@ -79,18 +79,16 @@ impl super::Renderer {
             ).map_err(|e| RenderError::DeviceCreation(format!("tex view: {e}")))?
         };
 
-        let sampler = unsafe {
-            self.device.logical().create_sampler(
-                &vk::SamplerCreateInfo::default()
-                    .mag_filter(vk::Filter::LINEAR).min_filter(vk::Filter::LINEAR)
-                    .address_mode_u(vk::SamplerAddressMode::REPEAT).address_mode_v(vk::SamplerAddressMode::REPEAT).address_mode_w(vk::SamplerAddressMode::REPEAT)
-                    .anisotropy_enable(false).max_anisotropy(1.0)
-                    .border_color(vk::BorderColor::INT_OPAQUE_BLACK)
-                    .unnormalized_coordinates(false).compare_enable(false).compare_op(vk::CompareOp::ALWAYS)
-                    .mipmap_mode(vk::SamplerMipmapMode::LINEAR).mip_lod_bias(0.0).min_lod(0.0).max_lod(0.0),
-                None,
-            ).map_err(|e| RenderError::DeviceCreation(format!("sampler: {e}")))?
-        };
+        let sampler_info = vk::SamplerCreateInfo::default()
+            .mag_filter(vk::Filter::LINEAR).min_filter(vk::Filter::LINEAR)
+            .address_mode_u(vk::SamplerAddressMode::REPEAT).address_mode_v(vk::SamplerAddressMode::REPEAT).address_mode_w(vk::SamplerAddressMode::REPEAT)
+            .anisotropy_enable(false).max_anisotropy(1.0)
+            .border_color(vk::BorderColor::INT_OPAQUE_BLACK)
+            .unnormalized_coordinates(false).compare_enable(false).compare_op(vk::CompareOp::ALWAYS)
+            .mipmap_mode(vk::SamplerMipmapMode::LINEAR).mip_lod_bias(0.0).min_lod(0.0).max_lod(0.0);
+        let sampler = self.device.sampler_cache()
+            .get_or_create(&sampler_info)
+            .map_err(|e| RenderError::DeviceCreation(format!("sampler: {e}")))?;
 
         unsafe { self.device.logical().free_command_buffers(self.transfer_command_pool, &[one_time_cmd]); }
 

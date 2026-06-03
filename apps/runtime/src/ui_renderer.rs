@@ -38,14 +38,14 @@ impl EguiVulkanRenderer {
 
         let placeholder = vec![255u8; 4];
         let font_texture = renderer.create_texture(1, 1, &placeholder)?;
-        let sampler = unsafe {
-            device.logical().create_sampler(&vk::SamplerCreateInfo::default()
-                .mag_filter(vk::Filter::LINEAR).min_filter(vk::Filter::LINEAR)
-                .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE), None,
-            ).map_err(|e| RenderError::PipelineCreation(format!("samp: {e}")))?
-        };
+        let sampler_info = vk::SamplerCreateInfo::default()
+            .mag_filter(vk::Filter::LINEAR).min_filter(vk::Filter::LINEAR)
+            .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+            .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+            .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE);
+        let sampler = device.sampler_cache()
+            .get_or_create(&sampler_info)
+            .map_err(|e| RenderError::PipelineCreation(format!("samp: {e}")))?;
 
         let bindings = [
             vk::DescriptorSetLayoutBinding::default()
@@ -55,11 +55,10 @@ impl EguiVulkanRenderer {
                 .binding(1).descriptor_type(vk::DescriptorType::SAMPLER)
                 .descriptor_count(1).stage_flags(vk::ShaderStageFlags::FRAGMENT),
         ];
-        let desc_layout = unsafe {
-            device.logical().create_descriptor_set_layout(
-                &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings), None,
-            ).map_err(|e| RenderError::PipelineCreation(format!("dsl: {e}")))?
-        };
+        let desc_layout = device
+            .descriptor_layout_cache()
+            .get_or_create_simple(&bindings)
+            .map_err(|e| RenderError::PipelineCreation(format!("dsl: {e}")))?;
 
         let push_range = vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::VERTEX).offset(0).size(8);
@@ -372,18 +371,14 @@ impl Drop for EguiVulkanRenderer {
                 if !self.pipeline_layout.is_null() {
                     dev.destroy_pipeline_layout(self.pipeline_layout, None);
                 }
-                if !self.descriptor_set_layout.is_null() {
-                    dev.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-                }
+                // descriptor_set_layout is owned by the global cache; do not destroy here.
                 for pool in &self.descriptor_pools {
                     let p = *pool.lock().unwrap();
                     if !p.is_null() {
                         dev.destroy_descriptor_pool(p, None);
                     }
                 }
-                if !self.sampler.is_null() {
-                    dev.destroy_sampler(self.sampler, None);
-                }
+                // sampler is owned by the global cache; do not destroy here.
             }
         }
         tracing::debug!("EguiVulkanRenderer dropped");

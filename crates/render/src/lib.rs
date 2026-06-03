@@ -12,6 +12,10 @@ pub mod error;
 pub mod texture;
 pub mod renderer;
 pub mod profiler;
+pub mod bindless;
+pub mod descriptor_cache;
+pub mod sampler_cache;
+pub mod descriptor_batch;
 
 // Re-export commonly used component types
 pub use components::{Sprite, SpriteRenderer, DirectionalLight, PointLight, SpotLight, Camera};
