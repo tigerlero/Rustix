@@ -34,12 +34,15 @@ impl super::Renderer {
             self.device.logical().begin_command_buffer(one_time_cmd, &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT))?;
         }
 
-        let barrier1 = vk::ImageMemoryBarrier::default()
+        let barrier1 = vk::ImageMemoryBarrier2::default()
             .image(img).old_layout(vk::ImageLayout::UNDEFINED).new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-            .src_access_mask(vk::AccessFlags::empty()).dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .src_stage_mask(vk::PipelineStageFlags2::TOP_OF_PIPE).dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+            .src_access_mask(vk::AccessFlags2::empty()).dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
             .subresource_range(vk::ImageSubresourceRange { aspect_mask: vk::ImageAspectFlags::COLOR, base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: 1 });
+        let barriers1 = [barrier1];
+        let dep1 = vk::DependencyInfo::default().image_memory_barriers(&barriers1);
         unsafe {
-            self.device.logical().cmd_pipeline_barrier(one_time_cmd, vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[barrier1]);
+            self.device.logical().cmd_pipeline_barrier2(one_time_cmd, &dep1);
         }
 
         let copy_region = vk::BufferImageCopy::default()
@@ -49,12 +52,15 @@ impl super::Renderer {
             self.device.logical().cmd_copy_buffer_to_image(one_time_cmd, staging.buffer, img, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[copy_region]);
         }
 
-        let barrier2 = vk::ImageMemoryBarrier::default()
+        let barrier2 = vk::ImageMemoryBarrier2::default()
             .image(img).old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL).new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ)
+            .src_stage_mask(vk::PipelineStageFlags2::TRANSFER).dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+            .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags2::SHADER_READ)
             .subresource_range(vk::ImageSubresourceRange { aspect_mask: vk::ImageAspectFlags::COLOR, base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: 1 });
+        let barriers2 = [barrier2];
+        let dep2 = vk::DependencyInfo::default().image_memory_barriers(&barriers2);
         unsafe {
-            self.device.logical().cmd_pipeline_barrier(one_time_cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[barrier2]);
+            self.device.logical().cmd_pipeline_barrier2(one_time_cmd, &dep2);
         }
 
         unsafe { self.device.logical().end_command_buffer(one_time_cmd)?; }
@@ -107,12 +113,15 @@ impl super::Renderer {
             self.device.logical().begin_command_buffer(one_time_cmd, &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT))?;
         }
 
-        let barrier = vk::ImageMemoryBarrier::default()
+        let barrier = vk::ImageMemoryBarrier2::default()
             .image(tex.image).old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL).new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-            .src_access_mask(vk::AccessFlags::SHADER_READ).dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .src_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER).dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+            .src_access_mask(vk::AccessFlags2::SHADER_READ).dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
             .subresource_range(vk::ImageSubresourceRange { aspect_mask: vk::ImageAspectFlags::COLOR, base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: 1 });
+        let barriers = [barrier];
+        let dep = vk::DependencyInfo::default().image_memory_barriers(&barriers);
         unsafe {
-            self.device.logical().cmd_pipeline_barrier(one_time_cmd, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[barrier]);
+            self.device.logical().cmd_pipeline_barrier2(one_time_cmd, &dep);
         }
 
         let copy_region = vk::BufferImageCopy::default()
@@ -122,12 +131,15 @@ impl super::Renderer {
             self.device.logical().cmd_copy_buffer_to_image(one_time_cmd, staging.buffer, tex.image, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[copy_region]);
         }
 
-        let barrier2 = vk::ImageMemoryBarrier::default()
+        let barrier2 = vk::ImageMemoryBarrier2::default()
             .image(tex.image).old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL).new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags::SHADER_READ)
+            .src_stage_mask(vk::PipelineStageFlags2::TRANSFER).dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+            .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE).dst_access_mask(vk::AccessFlags2::SHADER_READ)
             .subresource_range(vk::ImageSubresourceRange { aspect_mask: vk::ImageAspectFlags::COLOR, base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: 1 });
+        let barriers2 = [barrier2];
+        let dep2 = vk::DependencyInfo::default().image_memory_barriers(&barriers2);
         unsafe {
-            self.device.logical().cmd_pipeline_barrier(one_time_cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER, vk::DependencyFlags::empty(), &[], &[], &[barrier2]);
+            self.device.logical().cmd_pipeline_barrier2(one_time_cmd, &dep2);
         }
 
         unsafe { self.device.logical().end_command_buffer(one_time_cmd)?; }
@@ -170,12 +182,14 @@ impl super::Renderer {
             self.device.logical().begin_command_buffer(one_time_cmd, &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT))?;
         }
 
-        let barrier = vk::ImageMemoryBarrier::default()
+        let barrier = vk::ImageMemoryBarrier2::default()
             .image(tex.image)
             .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
             .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-            .src_access_mask(vk::AccessFlags::SHADER_READ)
-            .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .src_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+            .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+            .src_access_mask(vk::AccessFlags2::SHADER_READ)
+            .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
             .subresource_range(vk::ImageSubresourceRange {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
                 base_mip_level: 0,
@@ -183,16 +197,10 @@ impl super::Renderer {
                 base_array_layer: 0,
                 layer_count: 1,
             });
+        let barriers = [barrier];
+        let dep = vk::DependencyInfo::default().image_memory_barriers(&barriers);
         unsafe {
-            self.device.logical().cmd_pipeline_barrier(
-                one_time_cmd,
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[barrier],
-            );
+            self.device.logical().cmd_pipeline_barrier2(one_time_cmd, &dep);
         }
 
         let copy_region = vk::BufferImageCopy::default()
@@ -219,12 +227,14 @@ impl super::Renderer {
             );
         }
 
-        let barrier2 = vk::ImageMemoryBarrier::default()
+        let barrier2 = vk::ImageMemoryBarrier2::default()
             .image(tex.image)
             .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
             .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-            .dst_access_mask(vk::AccessFlags::SHADER_READ)
+            .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+            .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+            .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags2::SHADER_READ)
             .subresource_range(vk::ImageSubresourceRange {
                 aspect_mask: vk::ImageAspectFlags::COLOR,
                 base_mip_level: 0,
@@ -232,16 +242,10 @@ impl super::Renderer {
                 base_array_layer: 0,
                 layer_count: 1,
             });
+        let barriers2 = [barrier2];
+        let dep2 = vk::DependencyInfo::default().image_memory_barriers(&barriers2);
         unsafe {
-            self.device.logical().cmd_pipeline_barrier(
-                one_time_cmd,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::FRAGMENT_SHADER,
-                vk::DependencyFlags::empty(),
-                &[],
-                &[],
-                &[barrier2],
-            );
+            self.device.logical().cmd_pipeline_barrier2(one_time_cmd, &dep2);
         }
 
         unsafe { self.device.logical().end_command_buffer(one_time_cmd)?; }

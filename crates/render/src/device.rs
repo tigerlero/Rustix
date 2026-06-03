@@ -59,6 +59,7 @@ pub struct GpuDevice {
     queue_families: QueueFamilies,
     graphics_queue: vk::Queue,
     present_queue: vk::Queue,
+    transfer_queue: vk::Queue,
     pipeline_cache: vk::PipelineCache,
 }
 
@@ -128,18 +129,29 @@ impl GpuDevice {
             vk::PhysicalDeviceDynamicRenderingFeaturesKHR::default()
                 .dynamic_rendering(true);
 
+        let mut timeline_semaphore_features =
+            vk::PhysicalDeviceTimelineSemaphoreFeatures::default()
+                .timeline_semaphore(true);
+
+        let mut synchronization2_features =
+            vk::PhysicalDeviceSynchronization2Features::default()
+                .synchronization2(true);
+
         let enabled_features = vk::PhysicalDeviceFeatures::default();
 
         let device_ext_names = vec![
             ash::khr::swapchain::NAME.as_ptr(),
             ash::khr::dynamic_rendering::NAME.as_ptr(),
+            ash::khr::synchronization2::NAME.as_ptr(),
         ];
 
         let create_info = vk::DeviceCreateInfo::default()
             .queue_create_infos(&queue_create_infos)
             .enabled_extension_names(&device_ext_names)
             .enabled_features(&enabled_features)
-            .push_next(&mut dynamic_rendering_features);
+            .push_next(&mut dynamic_rendering_features)
+            .push_next(&mut timeline_semaphore_features)
+            .push_next(&mut synchronization2_features);
 
         let logical = unsafe {
             instance
@@ -152,6 +164,8 @@ impl GpuDevice {
             unsafe { logical.get_device_queue(queue_families.graphics.ok_or_else(|| RenderError::DeviceCreation("no graphics queue".into()))?, 0) };
         let present_queue =
             unsafe { logical.get_device_queue(queue_families.present.ok_or_else(|| RenderError::DeviceCreation("no present queue".into()))?, 0) };
+        let transfer_queue =
+            unsafe { logical.get_device_queue(queue_families.transfer.ok_or_else(|| RenderError::DeviceCreation("no transfer queue".into()))?, 0) };
 
         let pc_create_info = vk::PipelineCacheCreateInfo::default();
         let pipeline_cache = unsafe {
@@ -168,6 +182,7 @@ impl GpuDevice {
             queue_families,
             graphics_queue,
             present_queue,
+            transfer_queue,
             pipeline_cache,
         })
     }
@@ -228,8 +243,12 @@ impl GpuDevice {
     pub fn queue_families(&self) -> &QueueFamilies { &self.queue_families }
     pub fn graphics_queue(&self) -> vk::Queue { self.graphics_queue }
     pub fn present_queue(&self) -> vk::Queue { self.present_queue }
+    pub fn transfer_queue(&self) -> vk::Queue { self.transfer_queue }
     pub fn graphics_queue_family_index(&self) -> u32 {
         self.queue_families.graphics.unwrap_or(0)
+    }
+    pub fn transfer_queue_family_index(&self) -> u32 {
+        self.queue_families.transfer.unwrap_or(self.queue_families.graphics.unwrap_or(0))
     }
     pub fn pipeline_cache(&self) -> vk::PipelineCache { self.pipeline_cache }
 }

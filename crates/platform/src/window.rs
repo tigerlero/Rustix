@@ -1,6 +1,6 @@
 use winit::dpi::{LogicalSize, Size};
 use winit::event_loop::EventLoop;
-use winit::window::{Fullscreen, Window as WinitWindow, WindowAttributes, WindowButtons};
+use winit::window::{CursorGrabMode, Fullscreen, Window as WinitWindow, WindowAttributes, WindowButtons};
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
@@ -25,6 +25,23 @@ impl Default for FullscreenMode {
     }
 }
 
+/// Cursor visibility / confinement mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorMode {
+    /// Cursor is visible and free to move.
+    Normal,
+    /// Cursor is hidden but free to move.
+    Hidden,
+    /// Cursor is hidden and confined to the window.
+    Captured,
+    /// Cursor is hidden, locked to the center, and raw delta is reported.
+    RawDelta,
+}
+
+impl Default for CursorMode {
+    fn default() -> Self { CursorMode::Normal }
+}
+
 #[derive(Debug, Clone)]
 pub struct WindowConfig {
     pub title: String,
@@ -34,6 +51,7 @@ pub struct WindowConfig {
     pub fullscreen_mode: FullscreenMode,
     pub resizable: bool,
     pub decorations: bool,
+    pub cursor_mode: CursorMode,
 }
 
 impl Default for WindowConfig {
@@ -46,6 +64,7 @@ impl Default for WindowConfig {
             fullscreen_mode: FullscreenMode::Windowed,
             resizable: true,
             decorations: true,
+            cursor_mode: CursorMode::Normal,
         }
     }
 }
@@ -54,6 +73,7 @@ pub struct WindowHandle {
     inner: WinitWindow,
     config: WindowConfig,
     should_close: bool,
+    cursor_mode: CursorMode,
 }
 
 impl WindowHandle {
@@ -93,7 +113,9 @@ impl WindowHandle {
             inner,
             config: config.clone(),
             should_close: false,
+            cursor_mode: CursorMode::Normal,
         };
+        handle.set_cursor_mode(config.cursor_mode);
 
         // Apply fullscreen if requested.
         if config.fullscreen {
@@ -226,6 +248,28 @@ impl WindowHandle {
             }
         }
     }
+
+    /// Set the cursor visibility and confinement mode.
+    pub fn set_cursor_mode(&mut self, mode: CursorMode) {
+        self.cursor_mode = mode;
+        let (visible, grab) = match mode {
+            CursorMode::Normal => (true, CursorGrabMode::None),
+            CursorMode::Hidden => (false, CursorGrabMode::None),
+            CursorMode::Captured => (false, CursorGrabMode::Confined),
+            CursorMode::RawDelta => (false, CursorGrabMode::Locked),
+        };
+        self.inner.set_cursor_visible(visible);
+        if let Err(e) = self.inner.set_cursor_grab(grab) {
+            tracing::warn!("cursor_grab failed ({:?}): {e}", grab);
+            // Fallback to None if Confined/Locked isn't supported.
+            if grab != CursorGrabMode::None {
+                let _ = self.inner.set_cursor_grab(CursorGrabMode::None);
+            }
+        }
+    }
+
+    /// Query the current cursor mode.
+    pub fn cursor_mode(&self) -> CursorMode { self.cursor_mode }
 }
 
 unsafe impl Send for WindowHandle {}

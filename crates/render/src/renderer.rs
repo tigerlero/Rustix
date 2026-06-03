@@ -9,6 +9,7 @@ use crate::surface;
 use crate::pipeline;
 use crate::texture::Framebuffer;
 use crate::error::RenderError;
+use crate::profiler::GpuProfiler;
 use rustix_core::config::RenderConfig;
 
 mod resource;
@@ -23,7 +24,8 @@ pub struct Renderer {
     command_pool: vk::CommandPool,
     transfer_command_pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
-    in_flight_fences: Vec<vk::Fence>,
+    frame_complete_semaphore: vk::Semaphore,
+    profiler: Option<GpuProfiler>,
     frame_index: usize,
     initialized: bool,
 }
@@ -53,11 +55,15 @@ impl Renderer {
                     .level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(3),
             )?
         };
-        let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
-        let in_flight_fences: Vec<vk::Fence> = (0..3).map(|_| unsafe {
-            device.logical().create_fence(&fence_info, None).expect("fence")
-        }).collect();
-        Ok(Self { instance, device, swapchain: Arc::new(Mutex::new(Swapchain::new())), allocator: Arc::new(Mutex::new(allocator)), command_pool: cmd_pool, transfer_command_pool: transfer_pool, command_buffers: cmd_bufs, in_flight_fences, frame_index: 0, initialized: false })
+        let mut timeline_create = vk::SemaphoreTypeCreateInfo::default()
+            .semaphore_type(vk::SemaphoreType::TIMELINE)
+            .initial_value(0);
+        let sem_create = vk::SemaphoreCreateInfo::default().push_next(&mut timeline_create);
+        let frame_complete_semaphore = unsafe {
+            device.logical().create_semaphore(&sem_create, None).expect("timeline semaphore")
+        };
+        let profiler = GpuProfiler::new(&instance, &device).ok();
+        Ok(Self { instance, device, swapchain: Arc::new(Mutex::new(Swapchain::new())), allocator: Arc::new(Mutex::new(allocator)), command_pool: cmd_pool, transfer_command_pool: transfer_pool, command_buffers: cmd_bufs, frame_complete_semaphore, profiler, frame_index: 0, initialized: false })
     }
 
     pub fn init_surface(&mut self, rw: raw_window_handle::RawWindowHandle, rd: raw_window_handle::RawDisplayHandle, w: u32, h: u32) -> Result<(), RenderError> {
@@ -69,16 +75,39 @@ impl Renderer {
 
     pub fn begin_frame(&mut self) -> Result<bool, RenderError> {
         if !self.initialized { return Ok(false); }
-        let fence = self.in_flight_fences[self.frame_index % 3];
-        unsafe { self.device.logical().wait_for_fences(&[fence], true, u64::MAX)?; }
-        unsafe { self.device.logical().reset_fences(&[fence])?; }
+        // Read back profiler results for the frame we just waited on.
+        if self.frame_index >= 3 {
+            let wait_value = (self.frame_index - 2) as u64;
+            let wait_sems = [self.frame_complete_semaphore];
+            let wait_values = [wait_value];
+            let wait_info = vk::SemaphoreWaitInfo::default()
+                .semaphores(&wait_sems)
+                .values(&wait_values);
+            unsafe { self.device.logical().wait_semaphores(&wait_info, u64::MAX)?; }
+            if let Some(ref profiler) = self.profiler {
+                let results = profiler.readback(self.frame_index - 2, &self.device);
+                for (label, us) in results {
+                    tracing::trace!(target: "gpu_profile", "{label}: {us:.2} µs");
+                }
+            }
+        }
         self.swapchain.lock().acquire_next_image(&self.device, self.frame_index)?;
         Ok(true)
+    }
+
+    pub fn profiler_begin(&mut self, cmd: vk::CommandBuffer) {
+        if let Some(ref mut profiler) = self.profiler {
+            profiler.reset(cmd, self.frame_index, &self.device);
+            profiler.timestamp(cmd, self.frame_index, "frame_begin", &self.device);
+        }
     }
 
     pub fn end_frame(&mut self) -> Result<(), RenderError> {
         if !self.initialized { return Ok(()); }
         let cmd = self.current_cmd();
+        if let Some(ref mut profiler) = self.profiler {
+            profiler.timestamp(cmd, self.frame_index, "frame_end", &self.device);
+        }
         let frame_idx = self.frame_index;
         unsafe { self.device.logical().end_command_buffer(cmd)?; }
         let sw = self.swapchain.lock();
@@ -86,10 +115,19 @@ impl Renderer {
         let ss = [sw.render_finished_semaphore(frame_idx)];
         drop(sw);
         let wst = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT]; let cmds = [cmd];
-        let fence = self.in_flight_fences[frame_idx % 3];
-        let si = vk::SubmitInfo::default().wait_semaphores(&ws).wait_dst_stage_mask(&wst).command_buffers(&cmds).signal_semaphores(&ss);
+        let signal_value = (frame_idx + 1) as u64;
+        let signal_values = [0u64, signal_value]; // 0 for binary semaphore, value for timeline
+        let mut timeline_si = vk::TimelineSemaphoreSubmitInfo::default()
+            .signal_semaphore_values(&signal_values);
+        let signal_sems = [ss[0], self.frame_complete_semaphore];
+        let si = vk::SubmitInfo::default()
+            .wait_semaphores(&ws)
+            .wait_dst_stage_mask(&wst)
+            .command_buffers(&cmds)
+            .signal_semaphores(&signal_sems)
+            .push_next(&mut timeline_si);
         let subs = [si];
-        unsafe { self.device.logical().queue_submit(self.device.graphics_queue(), &subs, fence)?; }
+        unsafe { self.device.logical().queue_submit(self.device.graphics_queue(), &subs, vk::Fence::null())?; }
         let ok = self.swapchain.lock().present(&self.device, &ss)?;
         if !ok { self.swapchain.lock().recreate(&self.instance, &self.device)?; }
         self.frame_index = self.frame_index.wrapping_add(1);
@@ -118,13 +156,14 @@ impl Drop for Renderer {
         unsafe { self.device.logical().device_wait_idle().ok(); }
         self.swapchain.lock().destroy(&self.device);
         unsafe {
+            if let Some(ref profiler) = self.profiler {
+                self.device.logical().destroy_query_pool(profiler.query_pool, None);
+            }
             self.device.logical().free_command_buffers(self.transfer_command_pool, &[]);
             self.device.logical().destroy_command_pool(self.transfer_command_pool, None);
             self.device.logical().free_command_buffers(self.command_pool, &[]);
             self.device.logical().destroy_command_pool(self.command_pool, None);
-            for &fence in &self.in_flight_fences {
-                self.device.logical().destroy_fence(fence, None);
-            }
+            self.device.logical().destroy_semaphore(self.frame_complete_semaphore, None);
         }
     }
 }

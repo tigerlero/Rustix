@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
+use crate::thread_priority::{set_current_thread_priority, ThreadPriority};
+
 /// The job system wraps a rayon thread pool and provides
 /// fork-join parallelism for engine tasks.
 ///
@@ -29,6 +31,9 @@ pub struct JobSystemConfig {
     pub stack_size: Option<usize>,
     /// Thread name prefix for worker threads.
     pub thread_name: Option<String>,
+    /// OS-level scheduling priority for worker threads.
+    #[serde(default)]
+    pub thread_priority: ThreadPriority,
 }
 
 impl Default for JobSystemConfig {
@@ -38,6 +43,7 @@ impl Default for JobSystemConfig {
             affinity: false,
             stack_size: None,
             thread_name: Some("rx-worker".into()),
+            thread_priority: ThreadPriority::Normal,
         }
     }
 }
@@ -52,14 +58,26 @@ impl JobSystem {
         let mut builder = ThreadPoolBuilder::new()
             .num_threads(thread_count);
 
-        if let Some(ref name) = config.thread_name {
-            let prefix = name.clone();
-            builder = builder.thread_name(move |i| format!("{prefix}-{i}"));
-        }
-
         if let Some(stack_size) = config.stack_size {
             builder = builder.stack_size(stack_size);
         }
+
+        let priority = config.thread_priority;
+        let prefix = config.thread_name.clone().unwrap_or_else(|| "rx-worker".into());
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let builder = builder.spawn_handler(move |thread| {
+            let idx = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            std::thread::Builder::new()
+                .name(format!("{prefix}-{idx}"))
+                .spawn(move || {
+                    if let Err(e) = set_current_thread_priority(priority) {
+                        tracing::warn!("failed to set thread priority: {e}");
+                    }
+                    thread.run();
+                })
+                .expect("failed to spawn rayon worker thread");
+            Ok(())
+        });
 
         let pool = builder.build().map_err(|e| JobError::BuildFailed(e.to_string()))?;
 

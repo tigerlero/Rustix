@@ -68,9 +68,9 @@ pub struct PassDesc {
 #[derive(Debug, Clone)]
 pub struct PassBarrier {
     /// Image memory barriers to insert before this pass
-    pub before: Vec<vk::ImageMemoryBarrier<'static>>,
+    pub before: Vec<vk::ImageMemoryBarrier2<'static>>,
     /// Image memory barriers to insert after this pass
-    pub after: Vec<vk::ImageMemoryBarrier<'static>>,
+    pub after: Vec<vk::ImageMemoryBarrier2<'static>>,
 }
 
 /// A compiled frame graph ready for execution.
@@ -83,7 +83,7 @@ pub struct FrameGraph {
     barriers: Vec<PassBarrier>,
     /// Current state per resource (for incremental compilation)
     current_layouts: Vec<vk::ImageLayout>,
-    current_access: Vec<vk::AccessFlags>,
+    current_access: Vec<vk::AccessFlags2>,
 }
 
 impl FrameGraph {
@@ -101,7 +101,7 @@ impl FrameGraph {
     pub fn add_texture(&mut self, desc: TextureDesc) -> ResourceId {
         let id = ResourceId(self.textures.len() as u32);
         self.current_layouts.push(vk::ImageLayout::UNDEFINED);
-        self.current_access.push(vk::AccessFlags::empty());
+        self.current_access.push(vk::AccessFlags2::empty());
         self.textures.push(desc);
         id
     }
@@ -129,10 +129,10 @@ impl FrameGraph {
                 let old_layout = self.current_layouts[idx];
                 let old_access = self.current_access[idx];
                 let new_layout = vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL;
-                let new_access = vk::AccessFlags::COLOR_ATTACHMENT_WRITE;
+                let new_access = vk::AccessFlags2::COLOR_ATTACHMENT_WRITE;
 
                 if old_layout != new_layout || old_access != new_access {
-                    let barrier = vk::ImageMemoryBarrier::default()
+                    let barrier = vk::ImageMemoryBarrier2::default()
                         .old_layout(old_layout).new_layout(new_layout)
                         .src_access_mask(old_access).dst_access_mask(new_access)
                         .subresource_range(vk::ImageSubresourceRange {
@@ -153,10 +153,10 @@ impl FrameGraph {
                     let old_layout = self.current_layouts[idx];
                     let old_access = self.current_access[idx];
                     let new_layout = vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-                    let new_access = vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE;
+                    let new_access = vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE;
 
                     if old_layout != new_layout || old_access != new_access {
-                        let barrier = vk::ImageMemoryBarrier::default()
+                        let barrier = vk::ImageMemoryBarrier2::default()
                             .old_layout(old_layout).new_layout(new_layout)
                             .src_access_mask(old_access).dst_access_mask(new_access)
                             .subresource_range(vk::ImageSubresourceRange {
@@ -179,10 +179,10 @@ impl FrameGraph {
                 let old_layout = self.current_layouts[idx];
                 let old_access = self.current_access[idx];
                 let new_layout = vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL;
-                let new_access = vk::AccessFlags::SHADER_READ;
+                let new_access = vk::AccessFlags2::SHADER_READ;
 
                 if old_layout != new_layout || old_access != new_access {
-                    let barrier = vk::ImageMemoryBarrier::default()
+                    let barrier = vk::ImageMemoryBarrier2::default()
                         .old_layout(old_layout).new_layout(new_layout)
                         .src_access_mask(old_access).dst_access_mask(new_access)
                         .subresource_range(vk::ImageSubresourceRange {
@@ -204,11 +204,11 @@ impl FrameGraph {
                 for &rid in &pass.color_attachments {
                     let idx = rid.0 as usize;
                     if idx < self.textures.len() {
-                        let barrier = vk::ImageMemoryBarrier::default()
+                        let barrier = vk::ImageMemoryBarrier2::default()
                             .old_layout(self.current_layouts[idx])
                             .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
                             .src_access_mask(self.current_access[idx])
-                            .dst_access_mask(vk::AccessFlags::empty())
+                            .dst_access_mask(vk::AccessFlags2::empty())
                             .subresource_range(vk::ImageSubresourceRange {
                                 aspect_mask: vk::ImageAspectFlags::COLOR,
                                 base_mip_level: 0, level_count: 1,
@@ -216,7 +216,7 @@ impl FrameGraph {
                             });
                         after.push(barrier);
                         self.current_layouts[idx] = vk::ImageLayout::PRESENT_SRC_KHR;
-                        self.current_access[idx] = vk::AccessFlags::empty();
+                        self.current_access[idx] = vk::AccessFlags2::empty();
                     }
                 }
             }
@@ -226,12 +226,12 @@ impl FrameGraph {
     }
 
     /// Get barriers to execute before a pass.
-    pub fn pass_barriers_before(&self, pass_idx: usize) -> &[vk::ImageMemoryBarrier] {
+    pub fn pass_barriers_before(&self, pass_idx: usize) -> &[vk::ImageMemoryBarrier2] {
         self.barriers.get(pass_idx).map(|b| b.before.as_slice()).unwrap_or(&[])
     }
 
     /// Get barriers to execute after a pass.
-    pub fn pass_barriers_after(&self, pass_idx: usize) -> &[vk::ImageMemoryBarrier] {
+    pub fn pass_barriers_after(&self, pass_idx: usize) -> &[vk::ImageMemoryBarrier2] {
         self.barriers.get(pass_idx).map(|b| b.after.as_slice()).unwrap_or(&[])
     }
 
@@ -255,18 +255,11 @@ impl FrameGraph {
 pub unsafe fn execute_barriers(
     device: &ash::Device,
     cmd: vk::CommandBuffer,
-    barriers: &[vk::ImageMemoryBarrier],
+    barriers: &[vk::ImageMemoryBarrier2],
 ) {
     if barriers.is_empty() { return; }
-    device.cmd_pipeline_barrier(
-        cmd,
-        vk::PipelineStageFlags::ALL_COMMANDS,
-        vk::PipelineStageFlags::ALL_COMMANDS,
-        vk::DependencyFlags::empty(),
-        &[],
-        &[],
-        barriers,
-    );
+    let dep = vk::DependencyInfo::default().image_memory_barriers(barriers);
+    device.cmd_pipeline_barrier2(cmd, &dep);
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum KeyCode {
     A, B, C, D, E, F, G, H, I, J, K, L, M,
     N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
@@ -18,10 +18,10 @@ pub enum KeyCode {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum MouseButton { Left, Right, Middle, Side(u8) }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum GamepadButton {
     South, East, North, West,
     LeftTrigger, RightTrigger,
@@ -31,26 +31,43 @@ pub enum GamepadButton {
     DPadUp, DPadDown, DPadLeft, DPadRight,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum GamepadAxis {
     LeftStickX, LeftStickY,
     RightStickX, RightStickY,
     LeftTrigger, RightTrigger,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct GamepadId(pub u32);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum TouchPhase { Started, Moved, Ended, Cancelled }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TouchPoint {
+    pub id: u64,
+    pub x: f32,
+    pub y: f32,
+    pub force: Option<f32>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum InputEvent {
     KeyPress(KeyCode),
     KeyRelease(KeyCode),
     MouseMove(f32, f32),
     MouseButton(MouseButton, bool),
     MouseScroll(f32, f32),
+    RawMouseMotion(f32, f32),
     GamepadButton(GamepadId, GamepadButton, bool),
     GamepadAxis(GamepadId, GamepadAxis, f32),
     Text(char),
+    ImeEnabled,
+    ImeDisabled,
+    ImePreedit(String, Option<(usize, usize)>),
+    ImeCommit(String),
+    Touch { id: u64, phase: TouchPhase, x: f32, y: f32, force: Option<f32> },
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +118,7 @@ impl KeyboardState {
 pub struct MouseState {
     position: (f32, f32),
     delta: (f32, f32),
+    raw_delta: (f32, f32),
     scroll: (f32, f32),
     buttons: HashMap<MouseButton, bool>,
     just_pressed: Vec<MouseButton>,
@@ -114,13 +132,14 @@ impl Default for MouseState {
 impl MouseState {
     pub fn new() -> Self {
         Self {
-            position: (0.0, 0.0), delta: (0.0, 0.0), scroll: (0.0, 0.0),
+            position: (0.0, 0.0), delta: (0.0, 0.0), raw_delta: (0.0, 0.0), scroll: (0.0, 0.0),
             buttons: HashMap::new(), just_pressed: Vec::new(), just_released: Vec::new(),
         }
     }
 
     pub fn position(&self) -> (f32, f32) { self.position }
     pub fn delta(&self) -> (f32, f32) { self.delta }
+    pub fn raw_delta(&self) -> (f32, f32) { self.raw_delta }
     pub fn scroll(&self) -> (f32, f32) { self.scroll }
     pub fn down(&self, button: MouseButton) -> bool {
         *self.buttons.get(&button).unwrap_or(&false)
@@ -137,6 +156,10 @@ impl MouseState {
         self.position = (x, y);
     }
 
+    fn add_raw_delta(&mut self, x: f32, y: f32) {
+        self.raw_delta = (self.raw_delta.0 + x, self.raw_delta.1 + y);
+    }
+
     fn scroll_to(&mut self, x: f32, y: f32) { self.scroll = (x, y); }
 
     fn press(&mut self, button: MouseButton) {
@@ -151,6 +174,7 @@ impl MouseState {
 
     fn end_tick(&mut self) {
         self.delta = (0.0, 0.0);
+        self.raw_delta = (0.0, 0.0);
         self.scroll = (0.0, 0.0);
         self.just_pressed.clear();
         self.just_released.clear();
@@ -181,11 +205,41 @@ impl GamepadState {
     }
 }
 
+/// Tracks IME composition state and committed text.
+#[derive(Debug, Clone, Default)]
+pub struct TextInputState {
+    pub enabled: bool,
+    pub preedit: String,
+    pub preedit_cursor: Option<(usize, usize)>,
+    pub committed: String,
+}
+
+/// Tracks active touch points and per-frame gesture helpers.
+#[derive(Debug, Clone, Default)]
+pub struct TouchState {
+    /// Currently active touch points keyed by finger id.
+    pub active: HashMap<u64, TouchPoint>,
+    /// Previous frame positions for active touches (used for gesture deltas).
+    prev_active: HashMap<u64, (f32, f32)>,
+    /// Touch points that started this frame.
+    pub started: Vec<TouchPoint>,
+    /// Touch points that ended this frame.
+    pub ended: Vec<TouchPoint>,
+    /// Total two-finger pinch delta this frame (negative = pinch in, positive = pinch out).
+    pub pinch_delta: f32,
+    /// Total two-finger scroll delta this frame.
+    pub two_finger_scroll: (f32, f32),
+}
+
 pub struct InputManager {
     keyboard: KeyboardState,
     mouse: MouseState,
+    text_input: TextInputState,
+    touch: TouchState,
     gamepads: HashMap<GamepadId, GamepadState>,
     pending_events: Vec<InputEvent>,
+    recording: bool,
+    recorded: Vec<InputEvent>,
 }
 
 impl InputManager {
@@ -193,12 +247,25 @@ impl InputManager {
         Self {
             keyboard: KeyboardState::new(),
             mouse: MouseState::new(),
+            text_input: TextInputState::default(),
+            touch: TouchState::default(),
             gamepads: HashMap::new(),
             pending_events: Vec::new(),
+            recording: false,
+            recorded: Vec::new(),
         }
     }
 
+    pub fn start_capture(&mut self) { self.recording = true; }
+    pub fn stop_capture(&mut self) { self.recording = false; self.recorded.clear(); }
+    pub fn drain_captured(&mut self) -> Vec<InputEvent> {
+        std::mem::take(&mut self.recorded)
+    }
+
     pub fn push_event(&mut self, event: InputEvent) {
+        if self.recording {
+            self.recorded.push(event.clone());
+        }
         self.pending_events.push(event);
     }
 
@@ -213,6 +280,7 @@ impl InputManager {
                     if *pressed { self.mouse.press(*btn) } else { self.mouse.release(*btn) }
                 }
                 InputEvent::MouseScroll(x, y) => self.mouse.scroll_to(*x, *y),
+                InputEvent::RawMouseMotion(x, y) => self.mouse.add_raw_delta(*x, *y),
                 InputEvent::GamepadButton(id, btn, pressed) => {
                     let state = self.gamepads.entry(*id).or_default();
                     state.buttons.insert(*btn, *pressed);
@@ -222,6 +290,32 @@ impl InputManager {
                     state.axes.insert(*axis, *value);
                 }
                 InputEvent::Text(_) => {}
+                InputEvent::ImeEnabled | InputEvent::ImeDisabled |
+                InputEvent::ImePreedit(_, _) | InputEvent::ImeCommit(_) => {}
+                InputEvent::Touch { id, phase, x, y, force } => {
+                    match phase {
+                        TouchPhase::Started => {
+                            let pt = TouchPoint { id: *id, x: *x, y: *y, force: *force };
+                            self.touch.active.insert(*id, pt);
+                            self.touch.started.push(pt);
+                        }
+                        TouchPhase::Moved => {
+                            if let Some(pt) = self.touch.active.get_mut(id) {
+                                pt.x = *x;
+                                pt.y = *y;
+                                pt.force = *force;
+                            }
+                        }
+                        TouchPhase::Ended | TouchPhase::Cancelled => {
+                            if let Some(pt) = self.touch.active.remove(id) {
+                                self.touch.ended.push(pt);
+                            }
+                        }
+                    }
+                    // Two-finger gesture helpers (pinch / scroll) —
+                    // computed in a second pass after all move events are processed.
+
+                }
             }
         }
     }
@@ -229,10 +323,21 @@ impl InputManager {
     pub fn end_tick(&mut self) {
         self.keyboard.end_tick();
         self.mouse.end_tick();
+        self.text_input.committed.clear();
+        self.touch.prev_active.clear();
+        for (id, pt) in &self.touch.active {
+            self.touch.prev_active.insert(*id, (pt.x, pt.y));
+        }
+        self.touch.started.clear();
+        self.touch.ended.clear();
+        self.touch.pinch_delta = 0.0;
+        self.touch.two_finger_scroll = (0.0, 0.0);
     }
 
     pub fn keyboard(&self) -> &KeyboardState { &self.keyboard }
     pub fn mouse(&self) -> &MouseState { &self.mouse }
+    pub fn text_input(&self) -> &TextInputState { &self.text_input }
+    pub fn touch(&self) -> &TouchState { &self.touch }
     pub fn gamepad(&self, id: GamepadId) -> Option<&GamepadState> {
         self.gamepads.get(&id)
     }
@@ -247,6 +352,39 @@ impl InputManager {
                         InputEvent::KeyRelease(keycode)
                     };
                     self.push_event(e);
+                }
+                // Only emit Text events when IME is not active; IME handles text via ImeCommit.
+                if !self.text_input.enabled {
+                    if key_event.state == winit::event::ElementState::Pressed {
+                        if let Some(ref txt) = key_event.text {
+                            for ch in txt.chars() {
+                                self.push_event(InputEvent::Text(ch));
+                            }
+                        }
+                    }
+                }
+            }
+            winit::event::WindowEvent::Ime(ime) => {
+                match ime {
+                    winit::event::Ime::Enabled => {
+                        self.text_input.enabled = true;
+                        self.push_event(InputEvent::ImeEnabled);
+                    }
+                    winit::event::Ime::Disabled => {
+                        self.text_input.enabled = false;
+                        self.text_input.preedit.clear();
+                        self.text_input.preedit_cursor = None;
+                        self.push_event(InputEvent::ImeDisabled);
+                    }
+                    winit::event::Ime::Preedit(text, cursor) => {
+                        self.text_input.preedit = text.clone();
+                        self.text_input.preedit_cursor = *cursor;
+                        self.push_event(InputEvent::ImePreedit(text.clone(), *cursor));
+                    }
+                    winit::event::Ime::Commit(text) => {
+                        self.text_input.committed.push_str(text);
+                        self.push_event(InputEvent::ImeCommit(text.clone()));
+                    }
                 }
             }
             winit::event::WindowEvent::CursorMoved { position, .. } => {
@@ -266,7 +404,49 @@ impl InputManager {
                     }
                 }
             }
+            winit::event::WindowEvent::Touch(touch) => {
+                let phase = match touch.phase {
+                    winit::event::TouchPhase::Started => TouchPhase::Started,
+                    winit::event::TouchPhase::Moved => TouchPhase::Moved,
+                    winit::event::TouchPhase::Ended => TouchPhase::Ended,
+                    winit::event::TouchPhase::Cancelled => TouchPhase::Cancelled,
+                };
+                let force = touch.force.map(|f| f.normalized() as f32);
+                self.push_event(InputEvent::Touch {
+                    id: touch.id,
+                    phase,
+                    x: touch.location.x as f32,
+                    y: touch.location.y as f32,
+                    force,
+                });
+            }
             _ => {}
+        }
+    }
+
+    /// After all touch events have been polled, compute two-finger gesture deltas.
+    pub fn compute_touch_gestures(&mut self) {
+        let touch = &mut self.touch;
+        if touch.active.len() == 2 {
+            let ids: Vec<u64> = touch.active.keys().copied().collect();
+            let prev = &touch.prev_active;
+            if prev.len() == 2 {
+                let cur0 = touch.active[&ids[0]];
+                let cur1 = touch.active[&ids[1]];
+                let p0 = prev[&ids[0]];
+                let p1 = prev[&ids[1]];
+                let prev_dx = p1.0 - p0.0;
+                let prev_dy = p1.1 - p0.1;
+                let cur_dx = cur1.x - cur0.x;
+                let cur_dy = cur1.y - cur0.y;
+                let prev_dist = (prev_dx * prev_dx + prev_dy * prev_dy).sqrt().max(1.0);
+                let cur_dist = (cur_dx * cur_dx + cur_dy * cur_dy).sqrt().max(1.0);
+                touch.pinch_delta = cur_dist - prev_dist;
+                // Two-finger scroll: average motion of both points
+                let avg_x = ((cur0.x - p0.0) + (cur1.x - p1.0)) * 0.5;
+                let avg_y = ((cur0.y - p0.1) + (cur1.y - p1.1)) * 0.5;
+                touch.two_finger_scroll = (avg_x, avg_y);
+            }
         }
     }
 }

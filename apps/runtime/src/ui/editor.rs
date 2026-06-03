@@ -50,7 +50,7 @@ pub fn editor_screen(
     audio_instance: &mut Option<SoundInstance>,
     waveform_viewer: &mut waveform::WaveformViewer,
 ) {
-    menu_bar::show_menu_bar(ctx, viewport_manager, _input, target, screen, ww, wh, fps, open_project, new_project, project_name, current_project, project_dir, world, dirty, show_confirm, confirm_target, show_settings, sprite_editor, pending_mesh_load);
+    menu_bar::show_menu_bar(ctx, viewport_manager, _input, target, screen, ww, wh, fps, open_project, new_project, project_name, current_project, project_dir, world, dirty, show_confirm, confirm_target, show_settings, sprite_editor, pending_mesh_load, _window);
     hierarchy::show_hierarchy(ctx, world, selected_entity, pending_delete, dirty, renaming, rename_buffer, undo_history);
     let cam = viewport_manager.primary_camera_mut();
     inspector::show_inspector(ctx, cam, world, selected_entity, dirty, undo_history);

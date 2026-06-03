@@ -33,35 +33,35 @@ pub fn shadow_sampler_info() -> vk::SamplerCreateInfo<'static> {
 }
 
 /// Pure function returning pipeline barrier parameters for a given layout transition.
-/// Returns (src_stage, dst_stage, src_access_mask, dst_access_mask).
+/// Returns (src_stage, dst_stage, src_access_mask, dst_access_mask) using Synchronization2 flags.
 pub fn layout_transition_params(
     old_layout: vk::ImageLayout,
     new_layout: vk::ImageLayout,
-) -> (vk::PipelineStageFlags, vk::PipelineStageFlags, vk::AccessFlags, vk::AccessFlags) {
+) -> (vk::PipelineStageFlags2, vk::PipelineStageFlags2, vk::AccessFlags2, vk::AccessFlags2) {
     match (old_layout, new_layout) {
         (vk::ImageLayout::UNDEFINED, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL) => (
-            vk::PipelineStageFlags::TOP_OF_PIPE,
-            vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
-            vk::AccessFlags::empty(),
-            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            vk::PipelineStageFlags2::TOP_OF_PIPE,
+            vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS,
+            vk::AccessFlags2::empty(),
+            vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
         ),
         (vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL) => (
-            vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-            vk::PipelineStageFlags::FRAGMENT_SHADER,
-            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-            vk::AccessFlags::SHADER_READ,
+            vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+            vk::PipelineStageFlags2::FRAGMENT_SHADER,
+            vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            vk::AccessFlags2::SHADER_READ,
         ),
         (vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL) => (
-            vk::PipelineStageFlags::FRAGMENT_SHADER,
-            vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
-            vk::AccessFlags::SHADER_READ,
-            vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            vk::PipelineStageFlags2::FRAGMENT_SHADER,
+            vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS,
+            vk::AccessFlags2::SHADER_READ,
+            vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
         ),
         _ => (
-            vk::PipelineStageFlags::ALL_COMMANDS,
-            vk::PipelineStageFlags::ALL_COMMANDS,
-            vk::AccessFlags::empty(),
-            vk::AccessFlags::empty(),
+            vk::PipelineStageFlags2::ALL_COMMANDS,
+            vk::PipelineStageFlags2::ALL_COMMANDS,
+            vk::AccessFlags2::empty(),
+            vk::AccessFlags2::empty(),
         ),
     }
 }
@@ -156,14 +156,20 @@ impl super::Renderer {
 
     pub fn transition_image_layout(&self, cmd: vk::CommandBuffer, image: vk::Image, aspect: vk::ImageAspectFlags, old_layout: vk::ImageLayout, new_layout: vk::ImageLayout) {
         let (src_stage, dst_stage, src_mask, dst_mask) = layout_transition_params(old_layout, new_layout);
-        let barrier = vk::ImageMemoryBarrier::default()
+        let barrier = vk::ImageMemoryBarrier2::default()
             .old_layout(old_layout).new_layout(new_layout)
             .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED).dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
             .image(image)
             .subresource_range(vk::ImageSubresourceRange { aspect_mask: aspect, base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: 1 })
-            .src_access_mask(src_mask).dst_access_mask(dst_mask);
+            .src_stage_mask(src_stage)
+            .dst_stage_mask(dst_stage)
+            .src_access_mask(src_mask)
+            .dst_access_mask(dst_mask);
+        let barriers = [barrier];
+        let dep_info = vk::DependencyInfo::default()
+            .image_memory_barriers(&barriers);
         unsafe {
-            self.device.logical().cmd_pipeline_barrier(cmd, src_stage, dst_stage, vk::DependencyFlags::empty(), &[], &[], &[barrier]);
+            self.device.logical().cmd_pipeline_barrier2(cmd, &dep_info);
         }
     }
 }

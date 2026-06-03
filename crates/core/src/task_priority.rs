@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
+use crate::thread_priority::{set_current_thread_priority, ThreadPriority};
+
 /// Priority levels for engine tasks.
 ///
 /// The worker thread pool always drains the **high** queue before
@@ -31,11 +33,17 @@ pub struct PriorityTaskSystem {
     shutdown: Arc<AtomicUsize>,
     excess: Arc<AtomicUsize>,
     handles: Mutex<Vec<std::thread::JoinHandle<()>>>,
+    thread_priority: ThreadPriority,
 }
 
 impl PriorityTaskSystem {
     /// Spawn a new priority task system with `thread_count` workers.
     pub fn new(thread_count: usize) -> Self {
+        Self::with_priority(thread_count, ThreadPriority::Normal)
+    }
+
+    /// Spawn a new priority task system with the given OS-level thread priority.
+    pub fn with_priority(thread_count: usize, priority: ThreadPriority) -> Self {
         let high = Arc::new(Mutex::new(Vec::new()));
         let medium = Arc::new(Mutex::new(Vec::new()));
         let low = Arc::new(Mutex::new(Vec::new()));
@@ -51,9 +59,13 @@ impl PriorityTaskSystem {
             let p = pending.clone();
             let s = shutdown.clone();
             let e = excess.clone();
+            let prio = priority;
             let handle = std::thread::Builder::new()
                 .name(format!("rx-priority-{i}"))
                 .spawn(move || {
+                    if let Err(err) = set_current_thread_priority(prio) {
+                        tracing::warn!("failed to set priority thread priority: {err}");
+                    }
                     worker_loop(h, m, l, p, s, e);
                 })
                 .expect("failed to spawn priority worker thread");
@@ -69,6 +81,7 @@ impl PriorityTaskSystem {
             shutdown,
             excess,
             handles: Mutex::new(handles),
+            thread_priority: priority,
         }
     }
 
@@ -139,6 +152,7 @@ impl PriorityTaskSystem {
 
         if new_count > self.thread_count {
             let start = self.thread_count;
+            let prio = self.thread_priority;
             for i in start..new_count {
                 let h = self.high.clone();
                 let m = self.medium.clone();
@@ -149,6 +163,9 @@ impl PriorityTaskSystem {
                 let handle = std::thread::Builder::new()
                     .name(format!("rx-priority-{i}"))
                     .spawn(move || {
+                        if let Err(err) = set_current_thread_priority(prio) {
+                            tracing::warn!("failed to set priority thread priority: {err}");
+                        }
                         worker_loop(h, m, l, p, s, e);
                     })
                     .expect("failed to spawn priority worker thread");

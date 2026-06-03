@@ -72,10 +72,10 @@ fn layout_transition_undefined_to_depth_attachment() {
         vk::ImageLayout::UNDEFINED,
         vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
     );
-    assert_eq!(src_stage, vk::PipelineStageFlags::TOP_OF_PIPE, "src should be TOP_OF_PIPE");
-    assert_eq!(dst_stage, vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS, "dst should be EARLY_FRAGMENT_TESTS");
-    assert_eq!(src_mask, vk::AccessFlags::empty(), "src access should be empty");
-    assert_eq!(dst_mask, vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE, "dst access should be depth write");
+    assert_eq!(src_stage, vk::PipelineStageFlags2::TOP_OF_PIPE, "src should be TOP_OF_PIPE");
+    assert_eq!(dst_stage, vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS, "dst should be EARLY_FRAGMENT_TESTS");
+    assert_eq!(src_mask, vk::AccessFlags2::empty(), "src access should be empty");
+    assert_eq!(dst_mask, vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE, "dst access should be depth write");
 }
 
 #[test]
@@ -84,10 +84,10 @@ fn layout_transition_depth_attachment_to_shader_read() {
         vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
         vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
     );
-    assert_eq!(src_stage, vk::PipelineStageFlags::LATE_FRAGMENT_TESTS, "src should be LATE_FRAGMENT_TESTS");
-    assert_eq!(dst_stage, vk::PipelineStageFlags::FRAGMENT_SHADER, "dst should be FRAGMENT_SHADER");
-    assert_eq!(src_mask, vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE, "src access should be depth write");
-    assert_eq!(dst_mask, vk::AccessFlags::SHADER_READ, "dst access should be shader read");
+    assert_eq!(src_stage, vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS, "src should be LATE_FRAGMENT_TESTS");
+    assert_eq!(dst_stage, vk::PipelineStageFlags2::FRAGMENT_SHADER, "dst should be FRAGMENT_SHADER");
+    assert_eq!(src_mask, vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE, "src access should be depth write");
+    assert_eq!(dst_mask, vk::AccessFlags2::SHADER_READ, "dst access should be shader read");
 }
 
 #[test]
@@ -96,10 +96,10 @@ fn layout_transition_shader_read_to_depth_attachment() {
         vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
     );
-    assert_eq!(src_stage, vk::PipelineStageFlags::FRAGMENT_SHADER, "src should be FRAGMENT_SHADER");
-    assert_eq!(dst_stage, vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS, "dst should be EARLY_FRAGMENT_TESTS");
-    assert_eq!(src_mask, vk::AccessFlags::SHADER_READ, "src access should be shader read");
-    assert_eq!(dst_mask, vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE, "dst access should be depth write");
+    assert_eq!(src_stage, vk::PipelineStageFlags2::FRAGMENT_SHADER, "src should be FRAGMENT_SHADER");
+    assert_eq!(dst_stage, vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS, "dst should be EARLY_FRAGMENT_TESTS");
+    assert_eq!(src_mask, vk::AccessFlags2::SHADER_READ, "src access should be shader read");
+    assert_eq!(dst_mask, vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE, "dst access should be depth write");
 }
 
 #[test]
@@ -108,8 +108,8 @@ fn layout_transition_unknown_fallback() {
         vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         vk::ImageLayout::PRESENT_SRC_KHR,
     );
-    assert_eq!(src_stage, vk::PipelineStageFlags::ALL_COMMANDS, "unknown transition src should be ALL_COMMANDS");
-    assert_eq!(dst_stage, vk::PipelineStageFlags::ALL_COMMANDS, "unknown transition dst should be ALL_COMMANDS");
-    assert_eq!(src_mask, vk::AccessFlags::empty(), "unknown transition src access should be empty");
-    assert_eq!(dst_mask, vk::AccessFlags::empty(), "unknown transition dst access should be empty");
+    assert_eq!(src_stage, vk::PipelineStageFlags2::ALL_COMMANDS, "unknown transition src should be ALL_COMMANDS");
+    assert_eq!(dst_stage, vk::PipelineStageFlags2::ALL_COMMANDS, "unknown transition dst should be ALL_COMMANDS");
+    assert_eq!(src_mask, vk::AccessFlags2::empty(), "unknown transition src access should be empty");
+    assert_eq!(dst_mask, vk::AccessFlags2::empty(), "unknown transition dst access should be empty");
 }

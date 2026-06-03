@@ -27,12 +27,20 @@ use rustix_audio::{AudioEngine, SoundInstance};
 use rustix_animation::{Animator, AnimationClip, update_animators};
 use rustix_physics::{RigidBody, Collider, PhysicsWorld, step_physics};
 
+use rustix_asset::mmap::MappedFile;
+
 use camera::EditorCamera;
 use project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo, load_project_file, create_project_file, add_recent_project, load_recent_projects, write_project_file};
 use scene::{Transform, Name, MeshComponent, Material, world_transform, scene_to_world, world_to_scene};
 use undo::UndoHistory;
 
 fn main() {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("PANIC: {}", info);
+        if let Some(loc) = info.location() {
+            eprintln!("  at {}:{}", loc.file(), loc.line());
+        }
+    }));
     let config = config::find_and_load_config();
     let log_buffer = rustix_core::init_log_capture(500);
     rustix_core::diagnostics::init_logging_with_capture(
@@ -47,7 +55,7 @@ fn main() {
         Ok(el) => el,
         Err(e) => { eprintln!("Failed to create event loop: {e}"); std::process::exit(1); }
     };
-    let wc = WindowConfig { title: "Rustix Editor".into(), width: 1600, height: 900, fullscreen: false, fullscreen_mode: rustix_platform::FullscreenMode::Windowed, resizable: true, decorations: true };
+    let wc = WindowConfig { title: "Rustix Editor".into(), width: 1600, height: 900, fullscreen: false, fullscreen_mode: rustix_platform::FullscreenMode::Windowed, resizable: true, decorations: true, cursor_mode: rustix_platform::window::CursorMode::Normal };
     let mut window = match WindowHandle::new(&el, &wc) {
         Ok(w) => w,
         Err(e) => { eprintln!("Failed to create window: {e}"); std::process::exit(1); }
@@ -65,16 +73,20 @@ fn main() {
         enable_validation: false, preferred_gpu: config.render.preferred_gpu, frame_count: config.render.frame_count,
         shader_cache_path: config.render.shader_cache_path, pipeline_cache_path: config.render.pipeline_cache_path,
     };
+    tracing::info!("creating Vulkan renderer...");
     let mut renderer = match Renderer::new(&rc) {
-        Ok(r) => r,
+        Ok(r) => { tracing::info!("Vulkan renderer created"); r }
         Err(e) => { eprintln!("Failed to create Vulkan renderer: {e}"); std::process::exit(1); }
     };
+    tracing::info!("initializing Vulkan surface...");
     if let Err(e) = renderer.init_surface(window.raw_window_handle(), window.raw_display_handle(), ww, wh) {
         eprintln!("Failed to create Vulkan surface: {e}"); std::process::exit(1);
     }
+    tracing::info!("Vulkan surface initialized");
     let sc_format = renderer.swapchain.lock().format();
+    tracing::info!("creating egui Vulkan renderer...");
     let mut egui_r = match ui_renderer::EguiVulkanRenderer::new(&renderer, sc_format) {
-        Ok(r) => r,
+        Ok(r) => { tracing::info!("egui Vulkan renderer created"); r }
         Err(e) => { eprintln!("Failed to create egui renderer: {e}"); std::process::exit(1); }
     };
 
@@ -148,6 +160,24 @@ fn main() {
     let mut audio_engine = AudioEngine::new().ok();
     let mut audio_instance: Option<SoundInstance> = None;
     let mut waveform_viewer = waveform::WaveformViewer::new();
+    let mut gamepad_input = rustix_platform::gamepad::GamepadInput::new();
+    let mut input_actions = rustix_platform::actions::InputActions::new();
+    let binding_config_path = dirs::config_dir()
+        .map(|d| d.join("rustix").join("bindings.json"))
+        .unwrap_or_else(|| std::path::PathBuf::from("bindings.json"));
+    if let Some(cfg) = rustix_platform::actions::load_binding_config(&binding_config_path) {
+        input_actions.load_bindings(&cfg.bindings);
+        tracing::info!("loaded input bindings from {}", binding_config_path.display());
+    } else {
+        input_actions.bind_defaults();
+        tracing::info!("using default input bindings");
+    }
+
+    let mut input_recorder = rustix_platform::recorder::InputRecorder::new();
+    let recording_dir = dirs::config_dir()
+        .map(|d| d.join("rustix").join("recordings"))
+        .unwrap_or_else(|| std::path::PathBuf::from("recordings"));
+    let _ = std::fs::create_dir_all(&recording_dir);
 
     let start_time = Instant::now();
     let mut needs_resize = false;
@@ -186,8 +216,72 @@ fn main() {
                         let dt = now.duration_since(last).as_secs_f32().min(0.1);
                         last = now;
 
+                        // Capture all input events for recording
+                        if input_recorder.mode() == rustix_platform::recorder::RecorderMode::Recording {
+                            input.start_capture();
+                        } else {
+                            input.stop_capture();
+                        }
+
+                        for ev in gamepad_input.poll() {
+                            input_actions.handle_gamepad_event(&ev);
+                            input.push_event(ev);
+                        }
+                        input.poll();
+                        input_actions.update(&input);
+
+                        // Drain captured events into the recorder
+                        for ev in input.drain_captured() {
+                            input_recorder.record(ev);
+                        }
+
+                        // Inject playback events
+                        for ev in input_recorder.poll_playback() {
+                            input.push_event(ev);
+                        }
                         input.poll();
                         viewport_manager.primary_camera_mut().update(&input, dt);
+
+                        // Input recorder controls
+                        if input.keyboard().just_pressed(rustix_platform::input::KeyCode::F9) {
+                            match input_recorder.mode() {
+                                rustix_platform::recorder::RecorderMode::Idle => {
+                                    input_recorder.start_recording();
+                                    input.start_capture();
+                                    tracing::info!("input recording started");
+                                }
+                                rustix_platform::recorder::RecorderMode::Recording => {
+                                    input.stop_capture();
+                                    let rec = input_recorder.stop_recording();
+                                    let path = recording_dir.join("recording.json");
+                                    if rustix_platform::recorder::save_recording(&path, &rec).is_some() {
+                                        tracing::info!("input recording saved to {}", path.display());
+                                    } else {
+                                        tracing::warn!("failed to save input recording");
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        if input.keyboard().just_pressed(rustix_platform::input::KeyCode::F10) {
+                            match input_recorder.mode() {
+                                rustix_platform::recorder::RecorderMode::Idle => {
+                                    let path = recording_dir.join("recording.json");
+                                    if let Some(rec) = rustix_platform::recorder::load_recording(&path) {
+                                        input_recorder.start_playback(rec);
+                                        tracing::info!("input playback started from {}", path.display());
+                                    } else {
+                                        tracing::warn!("no recording found at {}", path.display());
+                                    }
+                                }
+                                rustix_platform::recorder::RecorderMode::Playing |
+                                rustix_platform::recorder::RecorderMode::Paused => {
+                                    input_recorder.stop_playback();
+                                    tracing::info!("input playback stopped");
+                                }
+                                _ => {}
+                            }
+                        }
 
                         let follow_pos = selected_entity.borrow().and_then(|sel| {
                             let matrix = world_transform(&ecs_world, sel);
@@ -254,6 +348,7 @@ fn main() {
                             tracing::error!("begin_command_buffer failed: {e}");
                             return;
                         }
+                        renderer.profiler_begin(cmd);
 
                         init::init_scene_resources(
                             &renderer, &mut meshes,
@@ -270,7 +365,7 @@ fn main() {
                         );
 
                         if let Some(path) = pending_mesh_load.borrow_mut().take() {
-                            if let Ok(data) = std::fs::read(&path) {
+                            if let Ok(data) = MappedFile::open(Path::new(&path)) {
                                 let mesh_name = Path::new(&path)
                                     .file_stem().and_then(|s| s.to_str()).unwrap_or("Imported")
                                     .to_string();
@@ -432,9 +527,7 @@ fn main() {
                             let dir = Path::new(&path);
                             let info = load_project_file(dir).or_else(|| create_project_file(dir, ProjectType::Dim3));
                             if let Some(ref proj_info) = info {
-                                if !proj_info.scene.entities.is_empty() {
-                                    scene_to_world(&mut ecs_world, &proj_info.scene);
-                                }
+                                scene_to_world(&mut ecs_world, &proj_info.scene);
                                 if let Some(ref cam_state) = proj_info.editor_camera {
                                     let cam = viewport_manager.primary_camera_mut();
                                     cam.position = cam_state.position.into();
@@ -504,6 +597,9 @@ fn main() {
                     }
                     _ => {}
                 }
+            }
+            winit::event::Event::DeviceEvent { event: winit::event::DeviceEvent::MouseMotion { delta }, .. } => {
+                input.push_event(rustix_platform::input::InputEvent::RawMouseMotion(delta.0 as f32, delta.1 as f32));
             }
             winit::event::Event::AboutToWait => {
                 if screen == AppScreen::PlayTest {

@@ -67,26 +67,26 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [x] Window resize handling (swapchain recreation)
 - [x] Multiple window support (editor: N viewports)
 - [x] DPI-aware scaling
-- [ ] Cursor mode: normal, hidden, captured, raw-delta
+- [x] Cursor mode: normal, hidden, captured, raw-delta
 
 ### 2.2 Input
 - [x] Keyboard: winit fallback (evdev raw input planned)
 - [x] Mouse: absolute + raw delta motion
-- [ ] Gamepad: `gilrs` integration
+- [x] Gamepad: `gilrs` integration (enabled via `--features rustix-platform/gamepad`; requires `libudev-dev` on Linux)
 - [x] Input state: current frame + previous frame (for "just pressed" detection)
-- [ ] Input actions (abstract binding: "jump" → Space / A-button)
-- [ ] Bindable key remapping (config file)
-- [ ] Text input (IME-aware for Wayland)
-- [ ] Touch input (surface)
-- [ ] Input recording + playback (testing / demos)
+- [x] Input actions (abstract binding: "jump" → Space / A-button)
+- [x] Bindable key remapping (config file)
+- [x] Text input (IME-aware for Wayland)
+- [x] Touch input (surface)
+- [x] Input recording + playback (testing / demos)
 
 ### 2.3 OS Abstraction
 - [x] High-resolution timer (monotonic clock)
-- [ ] Thread naming (pthread_setname_np on Linux)
-- [ ] Thread priority (SCHED_FIFO or SCHED_RR for audio/render threads)
-- [ ] Memory mapping (mmap for asset loading)
-- [ ] File watcher (inotify on Linux, ReadDirectoryChangesW on Windows)
-- [ ] Clipboard access
+- [x] Thread naming (pthread_setname_np on Linux)
+- [x] Thread priority (SCHED_FIFO or SCHED_RR for audio/render threads)
+- [x] Memory mapping (mmap for asset loading)
+- [x] File watcher (inotify on Linux, ReadDirectoryChangesW on Windows, FSEvents on macOS)
+- [x] Clipboard access
 - [x] File dialog (`rfd` native picker for project open/create)
 
 ---
@@ -101,16 +101,16 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [x] Swapchain (mailbox present mode, triple buffering)
 - [x] Dynamic rendering (VK_KHR_dynamic_rendering, no RenderPass objects)
 - [x] Pipeline cache (VK_KHR_pipeline_cache, in-memory)
-- [ ] Timeline semaphores (VK_KHR_timeline_semaphore)
-- [ ] Synchronization2 (VK_KHR_synchronization2)
+- [x] Timeline semaphores (VK_KHR_timeline_semaphore)
+- [x] Synchronization2 (VK_KHR_synchronization2)
 
 ### 3.2 GPU Memory
-- [ ] Device-local memory (VRAM for textures, buffers)
-- [ ] Host-visible coherent memory (staging, streaming UBOs)
-- [ ] Memory allocator (gpu-allocator integration)
-- [ ] Dedicated transfer queue for async upload
+- [x] Device-local memory (VRAM for textures, buffers)
+- [x] Host-visible coherent memory (staging, streaming UBOs)
+- [x] Memory allocator (gpu-allocator integration)
+- [x] Dedicated transfer queue for async upload
 - [x] Staging buffer pool (ring-buffer, recycled) — see `GpuStagingRing` / `GpuStagingBuffer` in Memory Management (1.3) and `crates/render/src/memory.rs`.
-- [ ] GPU readback (profiling counters, occlusion queries)
+- [x] GPU readback (profiling counters, occlusion queries)
 
 ### 3.3 Descriptors
 - [ ] Bindless descriptor model (global heap)
@@ -185,8 +185,8 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [x] "Open Project…" button with native folder picker
 - [x] Recent project tracking (in-memory, max 10, dedup by path)
 - [x] Empty state messaging when no recent projects
-- [ ] Project serialization (.rustixproj save/load)
-- [ ] Recent projects persistence (disk)
+- [x] Project serialization (.rustixproj save/load)
+- [x] Recent projects persistence (disk)
 
 ### 4.3 Editor Layout
 - [x] Menu bar: File, Edit, Assets, Help menus + FPS counter
@@ -198,7 +198,8 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [x] EditorCamera with orbit controls (WASDQE + mouse drag)
 
 ### 4.4 Planned Editor Features
-- [ ] ECS entity tree in Hierarchy panel
+- [ ] ECS ent- [ ] Real text rendering (glyph atlas, font rasterization)
+ity tree in Hierarchy panel
 - [ ] Component editing in Inspector panel
 - [ ] Offscreen 3D rendering into Scene View
 - [ ] Real log capture via tracing subscriber → Console ring buffer

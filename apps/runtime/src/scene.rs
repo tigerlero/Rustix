@@ -162,21 +162,22 @@ pub fn spawn_entity(world: &mut EcsWorld, e: &SceneEntity) -> hecs::Entity {
 pub fn world_to_scene(world: &EcsWorld) -> SceneData {
     let mut entities = Vec::new();
     let mut entity_to_idx = std::collections::HashMap::new();
-    for (idx, (entity, _name, _t)) in world.query::<(&hecs::Entity, &Name, &Transform)>().iter().enumerate() {
-        entity_to_idx.insert(*entity, idx);
+    for (idx, (entity, _name, _t)) in world.query::<(hecs::Entity, &Name, &Transform)>().iter().enumerate() {
+        entity_to_idx.insert(entity, idx);
     }
-    for (entity, name, t) in world.query::<(&hecs::Entity, &Name, &Transform)>().iter() {
-        let dirlight = world.get::<&DirectionalLight>(*entity).ok().map(|r| *r);
-        let pointlight = world.get::<&PointLight>(*entity).ok().map(|r| *r);
-        let spotlight = world.get::<&SpotLight>(*entity).ok().map(|r| *r);
-        let mesh = world.get::<&MeshComponent>(*entity).ok().map(|r| r.0.clone());
-        let material = world.get::<&Material>(*entity).ok().map(|r| (*r).clone());
-        let script = world.get::<&ScriptComponent>(*entity).ok().map(|r| (*r).clone());
-        let rigidbody = world.get::<&RigidBody>(*entity).ok().map(|r| *r);
-        let collider = world.get::<&Collider>(*entity).ok().map(|r| *r);
-        let audiolistener = world.get::<&rustix_audio::AudioListener>(*entity).ok().map(|r| *r);
-        let camera = world.get::<&rustix_render::Camera>(*entity).ok().map(|r| *r);
-        let parent_idx = world.get::<&Parent>(*entity).ok()
+    tracing::debug!("world_to_scene: found {} entities", entity_to_idx.len());
+    for (entity, name, t) in world.query::<(hecs::Entity, &Name, &Transform)>().iter() {
+        let dirlight = world.get::<&DirectionalLight>(entity).ok().map(|r| *r);
+        let pointlight = world.get::<&PointLight>(entity).ok().map(|r| *r);
+        let spotlight = world.get::<&SpotLight>(entity).ok().map(|r| *r);
+        let mesh = world.get::<&MeshComponent>(entity).ok().map(|r| r.0.clone());
+        let material = world.get::<&Material>(entity).ok().map(|r| (*r).clone());
+        let script = world.get::<&ScriptComponent>(entity).ok().map(|r| (*r).clone());
+        let rigidbody = world.get::<&RigidBody>(entity).ok().map(|r| *r);
+        let collider = world.get::<&Collider>(entity).ok().map(|r| *r);
+        let audiolistener = world.get::<&rustix_audio::AudioListener>(entity).ok().map(|r| *r);
+        let camera = world.get::<&rustix_render::Camera>(entity).ok().map(|r| *r);
+        let parent_idx = world.get::<&Parent>(entity).ok()
             .and_then(|p| p.0.and_then(|pe| entity_to_idx.get(&pe).copied()));
         entities.push(SceneEntity {
             name: name.0.clone(),
@@ -196,11 +197,13 @@ pub fn world_to_scene(world: &EcsWorld) -> SceneData {
             parent_idx,
         });
     }
+    tracing::debug!("world_to_scene: serialized {} entities", entities.len());
     SceneData { entities }
 }
 
 pub fn scene_to_world(world: &mut EcsWorld, data: &SceneData) {
     world.clear();
+    tracing::debug!("scene_to_world: loading {} entities", data.entities.len());
     let mut idx_to_entity = Vec::with_capacity(data.entities.len());
     for e in &data.entities {
         let mat = e.material.clone().unwrap_or(Material {
@@ -251,5 +254,47 @@ pub fn scene_to_world(world: &mut EcsWorld, data: &SceneData) {
                 let _ = world.insert(child_entity, (Parent(Some(parent_entity)),));
             }
         }
+    }
+    let spawned = world.query::<(&Name,)>().iter().count();
+    tracing::debug!("scene_to_world: spawned {} entities in world", spawned);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustix_core::ecs::EcsWorld;
+
+    #[test]
+    fn scene_round_trip_preserved_entities() {
+        let mut world = EcsWorld::new();
+        world.spawn((
+            Name("Cube".into()),
+            Transform { position: Vec3::new(1.0, 2.0, 3.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
+            MeshComponent("Cube".into()),
+            Material { base_color: Vec3::new(0.7, 0.7, 0.7), roughness: 0.5, metallic: 0.0 },
+        ));
+        world.spawn((
+            Name("Light".into()),
+            Transform { position: Vec3::new(5.0, 10.0, 5.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
+            DirectionalLight { color: Vec3::new(1.0, 1.0, 1.0), intensity: 1.0 },
+        ));
+
+        let scene = world_to_scene(&world);
+        assert_eq!(scene.entities.len(), 2, "world_to_scene should capture 2 entities");
+
+        // Serialize to JSON and back
+        let json = serde_json::to_string_pretty(&scene).expect("serialization failed");
+        let restored: SceneData = serde_json::from_str(&json).expect("deserialization failed");
+        assert_eq!(restored.entities.len(), 2, "deserialized scene should have 2 entities");
+
+        let mut new_world = EcsWorld::new();
+        scene_to_world(&mut new_world, &restored);
+        let count = new_world.query::<(&Name,)>().iter().count();
+        assert_eq!(count, 2, "scene_to_world should spawn 2 entities");
+
+        // Verify names and transforms preserved
+        let names: Vec<String> = new_world.query::<&Name>().iter().map(|n| n.0.clone()).collect();
+        assert!(names.contains(&"Cube".into()));
+        assert!(names.contains(&"Light".into()));
     }
 }

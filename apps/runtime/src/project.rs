@@ -115,15 +115,38 @@ pub fn create_project_file(dir: &Path, project_type: ProjectType) -> Option<Proj
 
 pub fn write_project_file(dir: &Path, info: &ProjectInfo) -> Option<()> {
     let path = dir.join(PROJECT_FILE);
-    let json = serde_json::to_string_pretty(info).ok()?;
-    fs::write(&path, &json).ok()?;
+    let json = match serde_json::to_string_pretty(info) {
+        Ok(j) => j,
+        Err(e) => {
+            tracing::error!("failed to serialize project: {}", e);
+            return None;
+        }
+    };
+    if let Err(e) = fs::write(&path, &json) {
+        tracing::error!("failed to write project file {}: {}", path.display(), e);
+        return None;
+    }
+    tracing::debug!("saved project {} with {} scene entities", info.name, info.scene.entities.len());
     Some(())
 }
 
 pub fn load_project_file(dir: &Path) -> Option<ProjectInfo> {
     let path = dir.join(PROJECT_FILE);
-    let json = fs::read_to_string(&path).ok()?;
-    let mut info: ProjectInfo = serde_json::from_str(&json).ok()?;
+    let json = match fs::read_to_string(&path) {
+        Ok(j) => j,
+        Err(e) => {
+            tracing::warn!("failed to read project file {}: {}", path.display(), e);
+            return None;
+        }
+    };
+    let mut info: ProjectInfo = match serde_json::from_str(&json) {
+        Ok(i) => i,
+        Err(e) => {
+            tracing::error!("failed to parse project file {}: {}", path.display(), e);
+            return None;
+        }
+    };
+    tracing::debug!("loaded project {} with {} scene entities", info.name, info.scene.entities.len());
     info.last_opened = chrono_now();
     write_project_file(dir, &info)?;
     tracing::info!("loaded project: {} from {}", info.name, dir.display());

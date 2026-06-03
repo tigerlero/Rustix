@@ -77,8 +77,12 @@ impl EditorCamera {
         let zoom_speed = 3.0 * dt;
         let move_speed = 5.0 * dt;
 
-        let (dx, dy) = input.mouse().delta();
+        let (dx, dy) = {
+            let rd = input.mouse().raw_delta();
+            if rd.0 != 0.0 || rd.1 != 0.0 { rd } else { input.mouse().delta() }
+        };
         let shift_held = k.down(KeyCode::ShiftLeft) || k.down(KeyCode::ShiftRight);
+        let alt_held = k.down(KeyCode::AltLeft) || k.down(KeyCode::AltRight);
 
         match self.mode {
             CameraMode::Orbit => {
@@ -92,7 +96,9 @@ impl EditorCamera {
                 }
                 self.distance = self.distance.max(0.5);
 
-                if input.mouse().down(rustix_platform::input::MouseButton::Right) {
+                let orbit_active = input.mouse().down(rustix_platform::input::MouseButton::Right)
+                    || (alt_held && input.mouse().down(rustix_platform::input::MouseButton::Left));
+                if orbit_active {
                     self.yaw += dx * 0.005;
                     self.pitch = (self.pitch - dy * 0.005).clamp(-1.4, 1.4);
                 }

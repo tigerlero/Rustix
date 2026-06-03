@@ -11,6 +11,7 @@ pub mod graph;
 pub mod error;
 pub mod texture;
 pub mod renderer;
+pub mod profiler;
 
 // Re-export commonly used component types
 pub use components::{Sprite, SpriteRenderer, DirectionalLight, PointLight, SpotLight, Camera};

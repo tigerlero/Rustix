@@ -10,3 +10,11 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 cfg-if = { workspace = true }
 raw-window-handle = "0.6"
+gilrs = { workspace = true, optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+arboard = { workspace = true }
+
+[features]
+default = []
+gamepad = ["dep:gilrs"]

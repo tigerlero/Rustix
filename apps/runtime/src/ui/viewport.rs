@@ -97,7 +97,8 @@ pub fn show_viewport(
         ctx.data_mut(|d| d.insert_temp(egui::Id::new("viewport_rect_0"), rect));
 
         // Display the offscreen-rendered 3D scene as an image filling the panel
-        let has_offscreen = ctx.data(|d| d.get_temp::<bool>(egui::Id::new("viewport_offscreen_valid")).unwrap_or(false));
+        let valid_key = egui::Id::new("viewport_offscreen_valid_0");
+        let has_offscreen = ctx.data(|d| d.get_temp::<bool>(valid_key).unwrap_or(false));
         tracing::trace!("show_viewport: has_offscreen={} rect={:?}", has_offscreen, rect);
         if has_offscreen {
             let tex_id = viewport_texture_id(0);
@@ -215,6 +216,20 @@ pub fn show_viewport(
         ctx.data_mut(|d| d.insert_temp(snap_id, snap_enabled));
         ctx.data_mut(|d| d.insert_temp(snap_size_id, snap_size));
         ctx.data_mut(|d| d.insert_temp(gizmo_space_id, gizmo_space));
+        ctx.data_mut(|d| d.insert_temp(gizmo_mode_id, gizmo_mode));
+
+        // Camera debug overlay
+        let cam_debug_text = format!(
+            "Camera: dist={:.1} yaw={:.2} pitch={:.2} | Right-click or Alt+Left-drag to orbit | Middle-drag to pan",
+            cam.distance, cam.yaw, cam.pitch
+        );
+        ui.painter().text(
+            rect.left_bottom() + egui::vec2(8.0, -8.0),
+            egui::Align2::LEFT_BOTTOM,
+            cam_debug_text,
+            egui::FontId::proportional(11.0),
+            egui::Color32::from_rgba_premultiplied(200, 200, 200, 180),
+        );
 
         let mut entities: Vec<(hecs::Entity, Transform, Vec3, f32)> = Vec::new();
         for (entity, transform) in world.query::<(Entity, &Transform)>().iter() {
@@ -302,13 +317,15 @@ pub fn show_viewport(
                         (local_axes[1], egui::Color32::from_rgb(60, 200, 60)),
                         (local_axes[2], egui::Color32::from_rgb(60, 100, 220)),
                     ];
-                    let gizmo_len = 60.0;
+                    let gizmo_len = 85.0;
                     // Ctrl → scale, Shift → rotate, default follows gizmo_mode.
                     let effective_mode = if !gizmo_dragging {
                         if ui.input(|i| i.modifiers.ctrl) { 2 }
                         else if ui.input(|i| i.modifiers.shift) { 1 }
                         else { gizmo_mode }
-                    } else { gizmo_mode };
+                    } else {
+                        ctx.data(|d| d.get_temp::<usize>(gizmo_drag_mode_id)).unwrap_or(gizmo_mode)
+                    };
 
                     for (axis_idx, (axis_dir, color)) in axis_colors.iter().enumerate() {
                         let is_active = gizmo_active == axis_idx;
@@ -318,7 +335,7 @@ pub fn show_viewport(
                         match effective_mode {
                             1 => {
                                 // Rotation: draw a ring in the plane perpendicular to the axis.
-                                let ring_world_r = cam.distance * 0.04;
+                                let ring_world_r = cam.distance * 0.12;
                                 let (plane_a, plane_b) = match axis_idx {
                                     0 => (local_axes[1], local_axes[2]),
                                     1 => (local_axes[0], local_axes[2]),
@@ -339,10 +356,10 @@ pub fn show_viewport(
                                 // Handle at 45 degrees on the ring.
                                 let handle_world = world_pos + ring_world_r * (0.707 * plane_a + 0.707 * plane_b);
                                 if let Some(handle_screen) = world_to_screen(handle_world) {
-                                    let handle_rect = egui::Rect::from_center_size(handle_screen, egui::vec2(32.0, 32.0));
+                                    let handle_rect = egui::Rect::from_center_size(handle_screen, egui::vec2(48.0, 48.0));
                                     let handle_resp = ui.interact(handle_rect, handle_id, egui::Sense::drag());
-                                    ui.painter().circle_filled(handle_screen, 4.0, handle_color);
-                                    ui.painter().circle_stroke(handle_screen, 4.0, egui::Stroke::new(1.5, egui::Color32::WHITE));
+                                    ui.painter().circle_filled(handle_screen, 6.0, handle_color);
+                                    ui.painter().circle_stroke(handle_screen, 6.0, egui::Stroke::new(2.0, egui::Color32::WHITE));
                                     if handle_resp.drag_started() {
                                         gizmo_active = axis_idx;
                                         gizmo_drag_start = handle_resp.interact_pointer_pos().unwrap_or(handle_screen).to_vec2();
@@ -367,10 +384,10 @@ pub fn show_viewport(
 
                                     ui.painter().line_segment([screen_pos, handle_screen], egui::Stroke::new(1.5, *color));
 
-                                    let handle_rect = egui::Rect::from_center_size(handle_screen, egui::vec2(32.0, 32.0));
+                                    let handle_rect = egui::Rect::from_center_size(handle_screen, egui::vec2(44.0, 44.0));
                                     let handle_resp = ui.interact(handle_rect, handle_id, egui::Sense::drag());
 
-                                    let half = 5.0;
+                                    let half = 7.0;
                                     let square_rect = egui::Rect::from_center_size(handle_screen, egui::vec2(half * 2.0, half * 2.0));
                                     ui.painter().rect_filled(square_rect, 0.0, handle_color);
                                     ui.painter().rect_stroke(square_rect, 0.0, egui::Stroke::new(1.5, egui::Color32::WHITE), egui::StrokeKind::Inside);
@@ -399,11 +416,11 @@ pub fn show_viewport(
 
                                     ui.painter().line_segment([screen_pos, handle_screen], egui::Stroke::new(1.5, *color));
 
-                                    let handle_rect = egui::Rect::from_center_size(handle_screen, egui::vec2(32.0, 32.0));
+                                    let handle_rect = egui::Rect::from_center_size(handle_screen, egui::vec2(44.0, 44.0));
                                     let handle_resp = ui.interact(handle_rect, handle_id, egui::Sense::drag());
 
-                                    ui.painter().circle_filled(handle_screen, 4.0, handle_color);
-                                    ui.painter().circle_stroke(handle_screen, 4.0, egui::Stroke::new(1.5, egui::Color32::WHITE));
+                                    ui.painter().circle_filled(handle_screen, 5.5, handle_color);
+                                    ui.painter().circle_stroke(handle_screen, 5.5, egui::Stroke::new(2.0, egui::Color32::WHITE));
 
                                     if handle_resp.drag_started() {
                                         gizmo_active = axis_idx;

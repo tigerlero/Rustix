@@ -8,6 +8,7 @@ use crate::project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo, write_p
 use crate::scene::world_to_scene;
 use crate::sprite_editor;
 use crate::ui::viewport::{ViewportManager, MAX_VIEWPORTS};
+use rustix_platform::window::{CursorMode, WindowHandle};
 
 #[allow(clippy::too_many_arguments)]
 pub fn show_menu_bar(
@@ -31,6 +32,7 @@ pub fn show_menu_bar(
     show_settings: &std::cell::Cell<bool>,
     sprite_editor: &mut sprite_editor::SpriteEditor,
     pending_mesh_load: &std::cell::RefCell<Option<String>>,
+    window: &mut WindowHandle,
 ) {
     egui::Panel::top("menu_bar").show(ctx, |ui| {
         egui::MenuBar::new().ui(ui, |ui| {
@@ -163,6 +165,24 @@ pub fn show_menu_bar(
                             ui.close();
                         }
                     }
+                }
+                ui.separator();
+                let current = window.cursor_mode();
+                if ui.selectable_label(current == CursorMode::Normal, "Cursor: Normal").clicked() {
+                    window.set_cursor_mode(CursorMode::Normal);
+                    ui.close();
+                }
+                if ui.selectable_label(current == CursorMode::Hidden, "Cursor: Hidden").clicked() {
+                    window.set_cursor_mode(CursorMode::Hidden);
+                    ui.close();
+                }
+                if ui.selectable_label(current == CursorMode::Captured, "Cursor: Captured").clicked() {
+                    window.set_cursor_mode(CursorMode::Captured);
+                    ui.close();
+                }
+                if ui.selectable_label(current == CursorMode::RawDelta, "Cursor: Raw Delta").clicked() {
+                    window.set_cursor_mode(CursorMode::RawDelta);
+                    ui.close();
                 }
             });
             ui.menu_button("Edit", |ui| {

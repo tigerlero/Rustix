@@ -20,6 +20,7 @@ pub mod memory;
 pub mod diagnostics;
 pub mod config;
 pub mod log_capture;
+pub mod thread_priority;
 
 pub use ecs::*;
 pub use component_registry::*;
@@ -29,3 +30,4 @@ pub use memory::*;
 pub use diagnostics::*;
 pub use config::*;
 pub use log_capture::*;
+pub use thread_priority::*;

@@ -24,6 +24,7 @@ rustix-physics = { path = "../../crates/physics" }
 rustix-scripting = { path = "../../crates/scripting" }
 rustix-terrain = { path = "../../crates/terrain" }
 rustix-world = { path = "../../crates/world" }
+rustix-asset = { path = "../../crates/asset" }
 gltf = { workspace = true }
 rfd = { workspace = true }
 serde = { workspace = true }

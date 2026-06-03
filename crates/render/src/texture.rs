@@ -74,12 +74,14 @@ impl Framebuffer {
 
     pub fn prepare_rendering(&self, cmd: vk::CommandBuffer, device: &GpuDevice, instance: &VulkanInstance) {
         unsafe {
-            let barrier = vk::ImageMemoryBarrier::default()
+            let barrier = vk::ImageMemoryBarrier2::default()
                 .image(self.color_image)
                 .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
                 .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                .src_access_mask(vk::AccessFlags::TRANSFER_READ)
-                .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+                .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                .src_access_mask(vk::AccessFlags2::TRANSFER_READ)
+                .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
                 .subresource_range(vk::ImageSubresourceRange {
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     base_mip_level: 0,
@@ -87,7 +89,9 @@ impl Framebuffer {
                     base_array_layer: 0,
                     layer_count: 1,
                 });
-            device.logical().cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, vk::DependencyFlags::empty(), &[], &[], &[barrier]);
+            let barriers = [barrier];
+            let dep = vk::DependencyInfo::default().image_memory_barriers(&barriers);
+            device.logical().cmd_pipeline_barrier2(cmd, &dep);
         }
         self.begin_rendering(cmd, device, instance);
     }
@@ -124,12 +128,14 @@ impl Framebuffer {
         unsafe {
             let dr = ash::khr::dynamic_rendering::Device::new(&instance.inner(), device.logical());
             dr.cmd_end_rendering(cmd);
-            let barrier = vk::ImageMemoryBarrier::default()
+            let barrier = vk::ImageMemoryBarrier2::default()
                 .image(self.color_image)
                 .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                 .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
-                .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
-                .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+                .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+                .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
                 .subresource_range(vk::ImageSubresourceRange {
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     base_mip_level: 0,
@@ -137,7 +143,9 @@ impl Framebuffer {
                     base_array_layer: 0,
                     layer_count: 1,
                 });
-            device.logical().cmd_pipeline_barrier(cmd, vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT, vk::PipelineStageFlags::TRANSFER, vk::DependencyFlags::empty(), &[], &[], &[barrier]);
+            let barriers = [barrier];
+            let dep = vk::DependencyInfo::default().image_memory_barriers(&barriers);
+            device.logical().cmd_pipeline_barrier2(cmd, &dep);
         }
     }
 
