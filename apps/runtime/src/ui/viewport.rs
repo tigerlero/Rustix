@@ -5,6 +5,7 @@ use rustix_physics::{RigidBody, Collider};
 use rustix_render::Camera;
 
 use crate::camera::EditorCamera;
+use crate::project::CameraBookmark;
 use crate::scene::{Transform, Name, MeshComponent, Material, world_transform};
 use crate::undo::{UndoHistory, EditorAction};
 
@@ -85,6 +86,7 @@ pub fn show_viewport(
     selected_entity: &std::cell::RefCell<Option<hecs::Entity>>,
     dirty: &std::cell::Cell<bool>,
     undo_history: &std::cell::RefCell<UndoHistory>,
+    bookmarks: &mut Vec<CameraBookmark>,
 ) {
     let mut frame = egui::Frame::central_panel(&ctx.style());
     frame.fill = egui::Color32::TRANSPARENT;
@@ -182,18 +184,19 @@ pub fn show_viewport(
             }
         }
 
-        // Gizmo mode toolbar
+        // Gizmo mode toolbar + Bookmarks
         let snap_id = egui::Id::new("gizmo_snap");
         let snap_size_id = egui::Id::new("gizmo_snap_size");
         let mut snap_enabled = ctx.data(|d| d.get_temp::<bool>(snap_id).unwrap_or(false));
         let mut snap_size = ctx.data(|d| d.get_temp::<f32>(snap_size_id).unwrap_or(0.5));
+        let bookmark_popup_id = egui::Id::new("viewport_bookmark_popup");
         ui.horizontal(|ui| {
             ui.add_space(4.0);
             ui.vertical(|ui| {
                 ui.add_space(4.0);
                 let toolbar_bg = egui::Color32::from_rgba_premultiplied(30, 30, 38, 220);
                 let toolbar_rect = ui.available_rect_before_wrap();
-                let rect = egui::Rect::from_min_size(toolbar_rect.min, egui::vec2(260.0, 28.0));
+                let rect = egui::Rect::from_min_size(toolbar_rect.min, egui::vec2(320.0, 28.0));
                 ui.painter().rect_filled(rect, 6.0, toolbar_bg);
                 ui.painter().rect_stroke(rect, 6.0, egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 75)), egui::StrokeKind::Inside);
                 ui.allocate_ui_at_rect(rect.shrink(4.0), |ui| {
@@ -208,6 +211,61 @@ pub fn show_viewport(
                         if ui.selectable_label(snap_enabled, egui::RichText::new("Snap").size(11.0)).clicked() { snap_enabled = !snap_enabled; }
                         if snap_enabled {
                             ui.add(egui::DragValue::new(&mut snap_size).speed(0.1).range(0.01..=10.0).prefix("").suffix("").clamp_to_range(false));
+                        }
+                        ui.add_space(8.0);
+                        let btn = ui.button(egui::RichText::new("Bookmarks").size(11.0));
+                        let mut show_bookmarks = ctx.data(|d| d.get_temp::<bool>(bookmark_popup_id).unwrap_or(false));
+                        if btn.clicked() {
+                            show_bookmarks = !show_bookmarks;
+                            ctx.data_mut(|d| d.insert_temp(bookmark_popup_id, show_bookmarks));
+                        }
+                        if show_bookmarks {
+                            let popup_pos = btn.rect.left_bottom() + egui::vec2(0.0, 4.0);
+                            egui::Window::new("Bookmarks")
+                                .id(bookmark_popup_id)
+                                .title_bar(false)
+                                .resizable(false)
+                                .auto_sized()
+                                .fixed_pos(popup_pos)
+                                .show(ctx, |ui| {
+                                    ui.set_min_width(160.0);
+                                    if ui.button("Save Current View").clicked() {
+                                        let name = format!("Bookmark {}", bookmarks.len() + 1);
+                                        bookmarks.push(CameraBookmark {
+                                            name,
+                                            position: cam.position.into(),
+                                            center: cam.center.into(),
+                                            yaw: cam.yaw,
+                                            pitch: cam.pitch,
+                                            distance: cam.distance,
+                                            mode: cam.mode,
+                                        });
+                                        ctx.data_mut(|d| d.insert_temp(bookmark_popup_id, false));
+                                    }
+                                    ui.separator();
+                                    let mut to_remove = None;
+                                    for (i, bm) in bookmarks.iter().enumerate() {
+                                        ui.horizontal(|ui| {
+                                            if ui.selectable_label(false, &bm.name).clicked() {
+                                                cam.position = Vec3::from(bm.position);
+                                                cam.center = Vec3::from(bm.center);
+                                                cam.yaw = bm.yaw;
+                                                cam.pitch = bm.pitch;
+                                                cam.distance = bm.distance;
+                                                cam.mode = bm.mode;
+                                            }
+                                            if ui.small_button("×").clicked() {
+                                                to_remove = Some(i);
+                                            }
+                                        });
+                                    }
+                                    if let Some(idx) = to_remove {
+                                        bookmarks.remove(idx);
+                                    }
+                                    if bookmarks.is_empty() {
+                                        ui.label(egui::RichText::new("No bookmarks").weak());
+                                    }
+                                });
                         }
                     });
                 });
@@ -666,11 +724,12 @@ pub fn show_viewports(
     selected_entity: &std::cell::RefCell<Option<hecs::Entity>>,
     dirty: &std::cell::Cell<bool>,
     undo_history: &std::cell::RefCell<UndoHistory>,
+    bookmarks: &mut Vec<CameraBookmark>,
 ) {
     // Primary viewport always gets full interaction.
     if let Some(vp) = manager.viewports.get_mut(PRIMARY_VIEWPORT) {
         if vp.open {
-            show_viewport(ctx, &mut vp.camera, world, selected_entity, dirty, undo_history);
+            show_viewport(ctx, &mut vp.camera, world, selected_entity, dirty, undo_history, bookmarks);
         }
     }
 

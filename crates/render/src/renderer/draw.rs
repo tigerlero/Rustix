@@ -260,4 +260,144 @@ impl super::Renderer {
             dr.cmd_end_rendering(cmd);
         }
     }
+
+    pub fn update_tonemap_descriptor_set(
+        &self, set: vk::DescriptorSet, hdr_view: vk::ImageView, sampler: vk::Sampler,
+    ) {
+        let tex_ii = [vk::DescriptorImageInfo::default().image_view(hdr_view).image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+        let samp_ii = [vk::DescriptorImageInfo::default().sampler(sampler)];
+        let writes = [
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(1).descriptor_type(vk::DescriptorType::SAMPLED_IMAGE).image_info(&tex_ii),
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(2).descriptor_type(vk::DescriptorType::SAMPLER).image_info(&samp_ii),
+        ];
+        unsafe { self.device.logical().update_descriptor_sets(&writes, &[]); }
+    }
+
+    pub fn tone_map_pass(
+        &self, cmd: vk::CommandBuffer,
+        pipeline: &pipeline::ToneMapPipeline,
+        desc_set: vk::DescriptorSet,
+        extent: vk::Extent2D,
+    ) {
+        let ca = vk::RenderingAttachmentInfoKHR::default()
+            .image_view(self.swapchain.lock().current_image_view())
+            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::LOAD)
+            .store_op(vk::AttachmentStoreOp::STORE);
+        let cas = [ca];
+        let ri = vk::RenderingInfoKHR::default()
+            .render_area(vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent })
+            .layer_count(1).color_attachments(&cas);
+
+        unsafe {
+            let dr = ash::khr::dynamic_rendering::Device::new(&self.instance.inner(), &self.device.logical());
+            dr.cmd_begin_rendering(cmd, &ri);
+            self.device.logical().cmd_set_viewport(cmd, 0, &[vk::Viewport {
+                x: 0.0, y: extent.height as f32,
+                width: extent.width as f32, height: -(extent.height as f32),
+                min_depth: 0.0, max_depth: 1.0,
+            }]);
+            self.device.logical().cmd_set_scissor(cmd, 0, &[vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent }]);
+            self.device.logical().cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
+            self.device.logical().cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.layout, 0, &[desc_set], &[]);
+            self.device.logical().cmd_draw(cmd, 3, 1, 0, 0);
+            dr.cmd_end_rendering(cmd);
+        }
+    }
+
+    /// Blit a render-target image into the current swapchain image and transition
+    /// the swapchain image to `PRESENT_SRC_KHR` so `end_frame` can present it.
+    pub fn blit_to_swapchain(
+        &self, cmd: vk::CommandBuffer,
+        src_image: vk::Image, src_extent: vk::Extent2D,
+        src_layout: vk::ImageLayout,
+    ) {
+        let sw = self.swapchain.lock();
+        let dst_image = sw.current_image();
+        let dst_extent = sw.extent();
+        drop(sw);
+
+        unsafe {
+            // 1. Transition src to TRANSFER_SRC if not already.
+            if src_layout != vk::ImageLayout::TRANSFER_SRC_OPTIMAL {
+                let src_barrier = vk::ImageMemoryBarrier2::default()
+                    .image(src_image)
+                    .old_layout(src_layout)
+                    .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                    .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT | vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                    .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                    .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE | vk::AccessFlags2::SHADER_READ)
+                    .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0, level_count: 1,
+                        base_array_layer: 0, layer_count: 1,
+                    });
+                let barriers = [src_barrier];
+                let dep = vk::DependencyInfo::default().image_memory_barriers(&barriers);
+                self.device.logical().cmd_pipeline_barrier2(cmd, &dep);
+            }
+
+            // 2. Transition dst (swapchain) to TRANSFER_DST.
+            let dst_barrier = vk::ImageMemoryBarrier2::default()
+                .image(dst_image)
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+                .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0, level_count: 1,
+                    base_array_layer: 0, layer_count: 1,
+                });
+            let barriers = [dst_barrier];
+            let dep = vk::DependencyInfo::default().image_memory_barriers(&barriers);
+            self.device.logical().cmd_pipeline_barrier2(cmd, &dep);
+
+            // 3. Blit.
+            let blit = vk::ImageBlit::default()
+                .src_subresource(vk::ImageSubresourceLayers {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_level: 0, base_array_layer: 0, layer_count: 1,
+                })
+                .src_offsets([
+                    vk::Offset3D { x: 0, y: 0, z: 0 },
+                    vk::Offset3D { x: src_extent.width as i32, y: src_extent.height as i32, z: 1 },
+                ])
+                .dst_subresource(vk::ImageSubresourceLayers {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_level: 0, base_array_layer: 0, layer_count: 1,
+                })
+                .dst_offsets([
+                    vk::Offset3D { x: 0, y: 0, z: 0 },
+                    vk::Offset3D { x: dst_extent.width as i32, y: dst_extent.height as i32, z: 1 },
+                ]);
+            self.device.logical().cmd_blit_image(
+                cmd,
+                src_image, vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                dst_image, vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[blit], vk::Filter::LINEAR,
+            );
+
+            // 4. Transition dst to PRESENT_SRC_KHR.
+            let present_barrier = vk::ImageMemoryBarrier2::default()
+                .image(dst_image)
+                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                .dst_stage_mask(vk::PipelineStageFlags2::BOTTOM_OF_PIPE)
+                .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                .dst_access_mask(vk::AccessFlags2::NONE)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0, level_count: 1,
+                    base_array_layer: 0, layer_count: 1,
+                });
+            let barriers = [present_barrier];
+            let dep = vk::DependencyInfo::default().image_memory_barriers(&barriers);
+            self.device.logical().cmd_pipeline_barrier2(cmd, &dep);
+        }
+    }
 }

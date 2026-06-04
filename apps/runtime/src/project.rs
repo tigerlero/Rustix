@@ -54,6 +54,17 @@ pub struct EditorCameraState {
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct CameraBookmark {
+    pub name: String,
+    pub position: [f32; 3],
+    pub center: [f32; 3],
+    pub yaw: f32,
+    pub pitch: f32,
+    pub distance: f32,
+    pub mode: crate::camera::CameraMode,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProjectInfo {
     pub name: String,
     pub description: String,
@@ -66,6 +77,8 @@ pub struct ProjectInfo {
     pub scene: SceneData,
     #[serde(default)]
     pub editor_camera: Option<EditorCameraState>,
+    #[serde(default)]
+    pub bookmarks: Vec<CameraBookmark>,
 }
 
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -107,6 +120,7 @@ pub fn create_project_file(dir: &Path, project_type: ProjectType) -> Option<Proj
         settings,
         scene: SceneData::default(),
         editor_camera: None,
+        bookmarks: Vec::new(),
     };
     write_project_file(dir, &info)?;
     tracing::info!("created project: {} at {} (type: {:?})", info.name, dir.display(), project_type);

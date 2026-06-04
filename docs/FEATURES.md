@@ -78,7 +78,7 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [x] Mouse: absolute + raw delta motion
 - [x] Gamepad: `gilrs` integration (enabled via `--features rustix-platform/gamepad`) — **cross-platform** (Linux via libudev, Windows via Raw Input, macOS via IOKit)
 - [x] Gamepad: XInput / Windows.Gaming.Input — **Windows** (handled by `gilrs` Raw Input backend)
-- [ ] Gamepad: IOKit GameController — **macOS**
+- [x] Gamepad: IOKit GameController — **macOS** (handled by `gilrs` IOKit backend)
 - [x] Input state: current frame + previous frame (for "just pressed" detection)
 - [x] Input actions (abstract binding: "jump" → Space / A-button)
 - [x] Bindable key remapping (config file)
@@ -92,10 +92,10 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [x] High-resolution timer (monotonic clock) — **cross-platform via std**
 - [x] Thread naming (pthread_setname_np on Linux) — **Linux only**
 - [x] Thread naming — **cross-platform** (`std::thread::Builder::name()` on all platforms; `pthread_setname_np` on Linux, `SetThreadDescription` fallback on Windows)
-- [ ] Thread naming (`pthread_setname_np` on macOS) — **macOS**
+- [x] Thread naming (`pthread_setname_np` on macOS) — **macOS**: implemented in `crates/core/src/thread_priority.rs` via `libc::pthread_setname_np`.
 - [x] Thread priority (SCHED_FIFO or SCHED_RR for audio/render threads) — **Linux only**
 - [x] Thread priority (`SetThreadPriority`) — **Windows**: implemented in `crates/core/src/thread_priority.rs` using raw FFI to `kernel32!SetThreadPriority`. Maps `Realtime`→`THREAD_PRIORITY_TIME_CRITICAL`, `High`→`THREAD_PRIORITY_HIGHEST`, `Normal`→`THREAD_PRIORITY_NORMAL`, `Low`→`THREAD_PRIORITY_LOWEST`.
-- [ ] Thread priority (`thread_policy_set` / `pthread_set_qos_class_self_np`) — **macOS**
+- [x] Thread priority (`pthread_set_qos_class_self_np`) — **macOS**: implemented in `crates/core/src/thread_priority.rs` via `libc::pthread_set_qos_class_self_np`. Maps `Realtime`→`QOS_CLASS_USER_INTERACTIVE`, `High`→`QOS_CLASS_USER_INITIATED`, `Normal`→`QOS_CLASS_DEFAULT`, `Low`→`QOS_CLASS_UTILITY`.
 - [x] Memory mapping for asset loading — **cross-platform via `memmap2`** (mmap on Linux/macOS, `CreateFileMapping`/`MapViewOfFile` on Windows)
 - [x] Memory mapping (`CreateFileMapping` / `MapViewOfFile`) — **Windows** (handled by `memmap2` crate)
 - [x] File watcher (inotify on Linux, ReadDirectoryChangesW on Windows, FSEvents on macOS) — **cross-platform via notify crate**
@@ -107,10 +107,10 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [ ] macOS build (MoltenVK bundled or system install)
 - [ ] CI: GitHub Actions matrix (Linux, Windows, macOS)
 - [ ] CI: Vulkan validation layer testing on Linux
-- [ ] Packaging: `.deb` / `.rpm` for Linux
+- [x] Packaging: `.deb` / `.rpm` for Linux — `cargo-deb` metadata in `apps/runtime/Cargo.toml` produces `.deb` with `libvulkan1` dependency and desktop entry. `cargo-generate-rpm` metadata produces `.rpm` with `vulkan-loader` dependency. Desktop file at `apps/runtime/packaging/rustix.desktop`.
 - [ ] Packaging: `.msi` / `.zip` for Windows
 - [ ] Packaging: `.dmg` / `.app` bundle for macOS
-- [ ] Cross-compilation docs (Linux → Windows, macOS)
+- [x] Cross-compilation docs (Linux → Windows, macOS) — documented in `docs/CROSS_COMPILATION.md`. Covers MinGW-w64 and `cargo-xwin` for Windows, `cargo-zigbuild` + osxcross for macOS. Notes on Vulkan runtime dependencies (Windows Vulkan loader, MoltenVK on macOS) included.
 
 ---
 
@@ -136,37 +136,37 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [x] Dedicated transfer queue for async upload
 - [x] Staging buffer pool (ring-buffer, recycled) — see `GpuStagingRing` / `GpuStagingBuffer` in Memory Management (1.3) and `crates/render/src/memory.rs`.
 - [x] GPU readback (profiling counters, occlusion queries)
-- [ ] UBO / SSBO allocator (ring buffer for per-frame uniform data)
+- [x] UBO / SSBO allocator (ring buffer for per-frame uniform data) — implemented in `crates/render/src/memory.rs` as `GpuUniformRing`. Uses a single `UNIFORM_BUFFER | STORAGE_BUFFER` with `CpuToGpu` memory, sub-allocates aligned regions via `GpuStagingRing`, and reclaims them by fence value.
 - [ ] Secondary command buffers (multi-threaded command recording)
 
 ### 3.3 Render Targets
-- [ ] Render target / framebuffer abstraction (color + depth attachments)
+- [x] Render target / framebuffer abstraction (color + depth attachments) — `Framebuffer` / `RenderTarget` in `crates/render/src/texture.rs` wraps a color image (`COLOR_ATTACHMENT | TRANSFER_SRC | SAMPLED`) + `DepthBuffer`. Provides `begin_rendering` / `end_rendering` for dynamic rendering, layout transitions, and GPU readback. Triple-buffered per-viewport offscreen framebuffers are used for editor viewports.
 - [ ] MSAA resolve targets (for Medium/High/Ultra quality levels)
-- [ ] Offscreen rendering (editor viewport, post-processing)
-- [ ] HDR framebuffer (RGBA16F) + tone mapping
-- [ ] Swapchain integration (blit / present from render target)
+- [x] Offscreen rendering (editor viewport, post-processing) — each viewport gets its own `Framebuffer` rendered via `render_3d_scene` with `begin_scene_pass_offscreen` / `end_scene_pass_offscreen`. The color view is registered as an egui user texture for display in the UI.
+- [x] HDR framebuffer (RGBA16F) + tone mapping — `HdrFramebuffer` in `crates/render/src/texture.rs` uses `R16G16B16A16_SFLOAT` color + depth attachments. A fullscreen `ToneMapPipeline` applies ACES filmic tone mapping + gamma correction (`crates/render/src/pipeline.rs`). The primary viewport renders to HDR when no offscreen framebuffer is active, then resolves to the SDR swapchain via `tone_map_pass`.
+- [x] Swapchain integration (blit / present from render target) — `Renderer::blit_to_swapchain` blits any render-target image into the current swapchain image with proper layout transitions (`TRANSFER_SRC` → `TRANSFER_DST` → `PRESENT_SRC_KHR`). Convenience methods `Framebuffer::blit_to_swapchain` and `HdrFramebuffer::blit_to_swapchain` wrap this. `Renderer::end_frame` now transitions the swapchain image to `PRESENT_SRC_KHR` before `vkQueuePresentKHR`.
 
 ### 3.4 Descriptors
 - [x] Bindless descriptor model (global heap)
 - [x] Descriptor set layout cache
 - [x] Sampler cache (reuse sampler objects)
 - [x] Descriptor update batching
-- [ ] Descriptor set allocator (pool recycling, not per-frame pool creation)
+- [x] Descriptor set allocator (pool recycling, not per-frame pool creation) — `DescriptorSetAllocator` in `crates/render/src/descriptor_allocator.rs` maintains ready/used pools. `allocate()` grabs a pool, spills to a new one on `ERROR_OUT_OF_POOL_MEMORY`, and `reset_pools()` recycles all used pools each frame. Integrated into `Renderer` as `allocate_descriptor_set(layout)` / `reset_descriptor_pools()`.
 
 ### 3.5 Pipelines
 - [x] Graphics pipeline cache (hash-based key → VkPipeline)
 - [x] Compute pipeline cache
 - [x] Pipeline variants (forward/deferred, quality levels)
-- [ ] Specialization constants (reducing shader variants)
-- [ ] Pipeline layout cache (distinct from descriptor set layout cache)
+- [x] Specialization constants (reducing shader variants) — `SpecConstantMap` in `crates/render/src/spec_constants.rs` stores `(constant_id, u32)` pairs. `ShaderModule::stage_create_info_with_specialization()` builds `vk::SpecializationInfo` arrays. `PipelineVariantKey` includes `spec_constants` so the `GraphicsPipelineVariantCache` correctly keys variants by constant values. Note: naga's GLSL frontend does not support `layout(constant_id = …)`; the built-in shaders use plain `const int` and the specialization constant infrastructure is ready for SPIR-V modules that do contain `OpSpecConstant` instructions.
+- [x] Pipeline layout cache (distinct from descriptor set layout cache) — `PipelineLayoutCache` in `crates/render/src/pipeline.rs` keys `vk::PipelineLayout` handles by `(set_layouts, push_ranges)`. Integrated into `GpuDevice` alongside `DescriptorSetLayoutCache` and `SamplerCache`. All pipeline creation code (`GraphicsPipeline`, `ShadowPipeline`, `GraphicsPipeline2D`, `ToneMapPipeline`, `ComputePipelineCache`) now uses `device.pipeline_layout_cache().get_or_create()` instead of direct `vkCreatePipelineLayout` calls.
 
 ### 3.6 Shaders
-- [~] GLSL source → SPIR-V via glslangValidator (SPIR-V module loading done, compilation not yet)
-- [ ] Runtime shader compilation (editor / debug)
-- [ ] SPIR-V reflection (resource binding, push constants)
-- [ ] Shader hot-reload (watch source files, rebuild pipelines)
-- [ ] Shader include system (#include resolution)
-- [ ] Pre-compiled shader archive for release builds
+- [x] GLSL source → SPIR-V via naga — `ShaderModule::from_glsl()` uses `naga::front::glsl` to parse GLSL and `naga::back::spv` to emit SPIR-V. All builtin shaders (scene PBR, shadow, tone mapping, 2D sprite) are defined as GLSL string constants and compiled at runtime. WGSL → SPIR-V via `naga::front::wgsl` is also supported.
+- [x] Runtime shader compilation (editor / debug) — `ShaderModule::from_file()` loads GLSL/WGSL from disk, infers stage from extension (`.vert`/`.frag`/`.comp`), and compiles via naga at runtime. Builtin shader module provides `*_override()` variants (`vertex_shader_override()`, `fragment_shader_override()`, etc.) that search `shaders/` for file overrides before falling back to embedded source. This allows editing shaders without recompiling the engine. Shader source files for all builtin pipelines are provided in `shaders/`.
+- [x] SPIR-V reflection (resource binding, push constants) — `spv_reflect` module in `crates/render/src/spv_reflect.rs` uses `naga::front::spv` to parse compiled SPIR-V and extract `ResourceBinding` (set, binding) and `AddressSpace::PushConstant` info. `ShaderReflection` provides `bindings_by_set()` to build `vk::DescriptorSetLayoutBinding` arrays, `push_constant_range()` to build `vk::PushConstantRange`, and `merge()` to combine vertex+fragment stage resources. `ShaderModule::reflect()` exposes this on any compiled shader.
+- [x] Shader hot-reload (watch source files, rebuild pipelines) — `ShaderHotReloader` in `crates/render/src/hot_reload.rs` uses `notify` to watch `shaders/` (and parent directories) for `.vert`/`.frag`/`.comp`/`.glsl`/`.wgsl` changes. Each frame the app polls `Renderer::hot_reloader().take_events()` and dispatches to per-pipeline reload functions (`reload_scene_pipeline`, `reload_shadow_pipeline`, `reload_tonemap_pipeline`, `reload_2d_pipeline`) in `apps/runtime/src/init.rs`. These recompile shaders via the same `*_override()` helpers and recreate `vk::Pipeline` objects. `GraphicsPipelineVariantCache::clear()` destroys old cached pipelines so the next `get_or_create()` rebuilds with the updated SPIR-V.
+- [x] Shader include system (#include resolution) — `shader_include` module in `crates/render/src/shader_include.rs` resolves `#include "..."` and `#include <...>` directives in GLSL source before passing it to naga. Paths are resolved relative to the current source file (for file-loaded shaders), then against the standard shader search paths (`shaders/`, `../shaders/`, `../../shaders`). Circular includes are detected via a per-branch `HashSet` and rejected with an error. `#line` directives are inserted around included content so that compiler error messages retain correct file/line info. `ShaderModule::from_file()` automatically enables includes, and `ShaderModule::from_glsl_with_includes()` provides the same for string source with an explicit base path.
+- [x] Pre-compiled shader archive for release builds — `build.rs` in `crates/render/build.rs` scans `shaders/` at compile time, compiles every `.vert`/`.frag`/`.comp`/`.glsl` file to SPIR-V via `naga::front::glsl` + `naga::back::spv`, and generates `shader_archive_gen.rs` in `OUT_DIR`. The generated file contains a `lookup(name) -> Option<(&[u32], ShaderStage)>` function backed by static `&[u32]` slices. `crates/render/src/shader_archive.rs` re-exports this lookup. In **release** builds (`cfg!(not(debug_assertions))`) all `builtin` shader loaders (`vertex_shader()`, `fragment_shader()`, `shadow_vertex_shader()`, etc.) bypass GLSL parsing and create `ShaderModule`s directly from the archive via `ShaderModule::from_archive_name()`. In **debug** builds the embedded GLSL strings and file-override paths remain active so hot-reload and `#include` resolution still work.
 
 ### 3.7 Frame Graph
 - [ ] Declarative render graph

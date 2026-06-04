@@ -94,6 +94,8 @@ impl super::Renderer {
         Ok(DepthBuffer { image: img, view, _allocation: alloc })
     }
 
+    /// Deprecated: descriptor pools are now managed by `DescriptorSetAllocator`.
+    /// Use `Renderer::allocate_descriptor_set(layout)` instead.
     pub fn create_descriptor_pool(&self) -> Result<vk::DescriptorPool, RenderError> {
         let ps = [
             vk::DescriptorPoolSize { ty: vk::DescriptorType::UNIFORM_BUFFER, descriptor_count: 1 },
@@ -104,6 +106,7 @@ impl super::Renderer {
             .map_err(|e| RenderError::DeviceCreation(format!("desc pool: {e}")))
     }
 
+    /// Deprecated: use `Renderer::allocate_descriptor_set(layout)` for pool-recycled allocation.
     pub fn alloc_descriptor_set(&self, pool: vk::DescriptorPool, layout: vk::DescriptorSetLayout) -> Result<vk::DescriptorSet, RenderError> {
         let ls = [layout];
         unsafe { self.device.logical().allocate_descriptor_sets(&vk::DescriptorSetAllocateInfo::default().descriptor_pool(pool).set_layouts(&ls)) }

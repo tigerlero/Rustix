@@ -45,6 +45,7 @@ pub fn render_3d_scene(
     ecs_world: &EcsWorld,
     cam: &EditorCamera,
     offscreen: Option<&rustix_render::Framebuffer>,
+    hdr_fb: Option<&rustix_render::HdrFramebuffer>,
 ) -> Option<vk::ImageLayout> {
     let (aspect, target_extent, color_image, color_view, fb_depth) = if let Some(fb) = offscreen {
         let ext = fb.extent;
@@ -54,6 +55,15 @@ pub fn render_3d_scene(
             Some(fb.color_image),
             Some(fb.color_view),
             Some(&fb.depth_buffer),
+        )
+    } else if let Some(hfb) = hdr_fb {
+        let ext = hfb.extent;
+        (
+            ext.width as f32 / ext.height as f32,
+            Some(ext),
+            Some(hfb.color_image),
+            Some(hfb.color_view),
+            Some(&hfb.depth_buffer),
         )
     } else {
         let sw = renderer.swapchain.lock();
@@ -150,8 +160,13 @@ pub fn render_3d_scene(
 
     let clear_color = [0.04, 0.04, 0.08, 1.0f32];
     if let (Some(ext), Some(ci), Some(cv)) = (target_extent, color_image, color_view) {
-        tracing::trace!("render_3d_scene: using offscreen pass {}x{}", ext.width, ext.height);
-        renderer.begin_scene_pass_offscreen(cmd, ci, cv, depth_buf, ext, clear_color);
+        if hdr_fb.is_some() {
+            tracing::trace!("render_3d_scene: using HDR pass {}x{}", ext.width, ext.height);
+            hdr_fb.unwrap().begin_rendering(cmd, renderer.device(), &renderer.instance, clear_color);
+        } else {
+            tracing::trace!("render_3d_scene: using offscreen pass {}x{}", ext.width, ext.height);
+            renderer.begin_scene_pass_offscreen(cmd, ci, cv, depth_buf, ext, clear_color);
+        }
     } else {
         tracing::trace!("render_3d_scene: using swapchain pass");
         renderer.begin_scene_pass(cmd, depth_buf, clear_color);
@@ -188,7 +203,11 @@ pub fn render_3d_scene(
     }
 
     if let Some(ci) = color_image {
-        renderer.end_scene_pass_offscreen(cmd, ci);
+        if hdr_fb.is_some() {
+            hdr_fb.unwrap().end_rendering(cmd, renderer.device(), &renderer.instance);
+        } else {
+            renderer.end_scene_pass_offscreen(cmd, ci);
+        }
     } else {
         renderer.end_scene_pass(cmd);
     }

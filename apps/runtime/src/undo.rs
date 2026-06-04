@@ -21,6 +21,7 @@ pub enum EditorAction {
     MeshComponentChanged { entity: hecs::Entity, old: MeshComponent },
     AudioListenerChanged { entity: hecs::Entity, old: AudioListener },
     CameraChanged { entity: hecs::Entity, old: Camera },
+    ParentChanged { entity: hecs::Entity, old_parent: Option<hecs::Entity>, new_parent: Option<hecs::Entity> },
     ComponentAdded { entity: hecs::Entity, component: String, old_snapshot: SceneEntity },
     ComponentRemoved { entity: hecs::Entity, component: String, old_snapshot: SceneEntity },
 }

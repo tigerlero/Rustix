@@ -23,62 +23,16 @@ use crate::undo::{UndoHistory, EditorAction};
 ///   `0..=255`. Updated in-place when the user picks a new color.
 /// * `popup_id` — Unique `egui::Id` used to track open/close state for this instance's
 ///   popup modal.
-fn color_picker_button(ui: &mut egui::Ui, rgb: &mut [u8; 3], popup_id: egui::Id) {
-    let color = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
-
-    // Show R/G/B editable inputs above the color button (outside the popup modal).
+fn color_picker_button(ui: &mut egui::Ui, rgb: &mut [u8; 3], _popup_id: egui::Id) {
+    // Show R/G/B editable inputs above the color button.
     ui.horizontal(|ui| {
         ui.add(egui::DragValue::new(&mut rgb[0]).prefix("R: ").speed(1.0).range(0..=255));
         ui.add(egui::DragValue::new(&mut rgb[1]).prefix("G: ").speed(1.0).range(0..=255));
         ui.add(egui::DragValue::new(&mut rgb[2]).prefix("B: ").speed(1.0).range(0..=255));
     });
 
-    let size = ui.spacing().interact_size;
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-
-    if ui.is_rect_visible(rect) {
-        let visuals = ui.style().interact(&response);
-        let draw_rect = rect.expand(visuals.expansion);
-        ui.painter().rect_filled(draw_rect, visuals.corner_radius.at_most(2), color);
-        ui.painter().rect_stroke(
-            draw_rect,
-            visuals.corner_radius.at_most(2),
-            (1.0, visuals.bg_fill),
-            egui::StrokeKind::Inside,
-        );
-    }
-
-    egui::Popup::from_toggle_button_response(&response)
-        .id(popup_id)
-        .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
-        .show(|ui| {
-            egui::Frame::popup(ui.style()).show(ui, |ui| {
-                ui.set_min_width(180.0);
-                ui.set_max_width(220.0);
-                // Header row with X button
-                ui.horizontal(|ui| {
-                    ui.label("Color");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("✕").clicked() {
-                            ui.ctx().memory_mut(|mem| mem.close_popup(popup_id));
-                        }
-                    });
-                });
-                ui.separator();
-                // Persist HSVA in egui memory so the color survives frame changes / focus loss.
-                let hsva_id = popup_id.with("hsva_state");
-                let mut hsva: egui::epaint::Hsva = ui.ctx().data(|d| {
-                    d.get_temp(hsva_id).unwrap_or_else(|| egui::epaint::Hsva::from(color))
-                });
-                color_picker_hsva_2d(ui, &mut hsva, Alpha::Opaque);
-                // Write back to persistent memory AND the caller's RGB buffer.
-                ui.ctx().data_mut(|d| d.insert_temp(hsva_id, hsva));
-                let new_color = egui::Color32::from(hsva);
-                rgb[0] = new_color[0];
-                rgb[1] = new_color[1];
-                rgb[2] = new_color[2];
-            });
-        });
+    // Use egui's built-in color picker which handles sRGB/linear conversions correctly.
+    egui::widgets::color_picker::color_edit_button_srgb(ui, rgb);
 }
 
 #[allow(clippy::too_many_arguments)]

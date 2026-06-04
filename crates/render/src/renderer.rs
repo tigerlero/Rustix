@@ -12,6 +12,7 @@ use crate::error::RenderError;
 use crate::profiler::GpuProfiler;
 use crate::bindless::BindlessDescriptorHeap;
 use crate::pipeline::GraphicsPipelineVariantCache;
+use crate::descriptor_allocator::DescriptorSetAllocator;
 use rustix_core::config::RenderConfig;
 
 mod resource;
@@ -30,6 +31,8 @@ pub struct Renderer {
     profiler: Option<GpuProfiler>,
     bindless_heap: BindlessDescriptorHeap,
     pipeline_variant_cache: GraphicsPipelineVariantCache,
+    descriptor_allocator: Mutex<DescriptorSetAllocator>,
+    hot_reloader: Option<crate::hot_reload::ShaderHotReloader>,
     frame_index: usize,
     initialized: bool,
 }
@@ -72,7 +75,19 @@ impl Renderer {
             device.logical(),
             bindless_heap.layout(),
         );
-        Ok(Self { instance, device, swapchain: Arc::new(Mutex::new(Swapchain::new())), allocator: Arc::new(Mutex::new(allocator)), command_pool: cmd_pool, transfer_command_pool: transfer_pool, command_buffers: cmd_bufs, frame_complete_semaphore, profiler, bindless_heap, pipeline_variant_cache, frame_index: 0, initialized: false })
+        let desc_pool_sizes = [
+            vk::DescriptorPoolSize { ty: vk::DescriptorType::UNIFORM_BUFFER, descriptor_count: 128 },
+            vk::DescriptorPoolSize { ty: vk::DescriptorType::SAMPLED_IMAGE, descriptor_count: 128 },
+            vk::DescriptorPoolSize { ty: vk::DescriptorType::SAMPLER, descriptor_count: 128 },
+            vk::DescriptorPoolSize { ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER, descriptor_count: 64 },
+            vk::DescriptorPoolSize { ty: vk::DescriptorType::STORAGE_BUFFER, descriptor_count: 32 },
+        ];
+        let descriptor_allocator = Mutex::new(DescriptorSetAllocator::new(device.logical(), &desc_pool_sizes, 256)?);
+        let hot_reloader = crate::hot_reload::ShaderHotReloader::new().ok();
+        if hot_reloader.is_none() {
+            tracing::warn!("shader hot-reload disabled: could not start file watcher");
+        }
+        Ok(Self { instance, device, swapchain: Arc::new(Mutex::new(Swapchain::new())), allocator: Arc::new(Mutex::new(allocator)), command_pool: cmd_pool, transfer_command_pool: transfer_pool, command_buffers: cmd_bufs, frame_complete_semaphore, profiler, bindless_heap, pipeline_variant_cache, descriptor_allocator, hot_reloader, frame_index: 0, initialized: false })
     }
 
     pub fn init_surface(&mut self, rw: raw_window_handle::RawWindowHandle, rd: raw_window_handle::RawDisplayHandle, w: u32, h: u32) -> Result<(), RenderError> {
@@ -84,6 +99,8 @@ impl Renderer {
 
     pub fn begin_frame(&mut self) -> Result<bool, RenderError> {
         if !self.initialized { return Ok(false); }
+        // Recycle descriptor pools from previous frames.
+        self.reset_descriptor_pools();
         // Read back profiler results for the frame we just waited on.
         if self.frame_index >= 3 {
             let wait_value = (self.frame_index - 2) as u64;
@@ -118,6 +135,28 @@ impl Renderer {
             profiler.timestamp(cmd, self.frame_index, "frame_end", &self.device);
         }
         let frame_idx = self.frame_index;
+        // Transition swapchain image to PRESENT_SRC_KHR before presenting.
+        unsafe {
+            let sw = self.swapchain.lock();
+            let dst_image = sw.current_image();
+            drop(sw);
+            let barrier = vk::ImageMemoryBarrier2::default()
+                .image(dst_image)
+                .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                .dst_stage_mask(vk::PipelineStageFlags2::BOTTOM_OF_PIPE)
+                .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+                .dst_access_mask(vk::AccessFlags2::NONE)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0, level_count: 1,
+                    base_array_layer: 0, layer_count: 1,
+                });
+            let barriers = [barrier];
+            let dep = vk::DependencyInfo::default().image_memory_barriers(&barriers);
+            self.device.logical().cmd_pipeline_barrier2(cmd, &dep);
+        }
         unsafe { self.device.logical().end_command_buffer(cmd)?; }
         let sw = self.swapchain.lock();
         let ws = [sw.image_available_semaphore(frame_idx)];
@@ -149,6 +188,22 @@ impl Renderer {
     pub fn bindless_heap(&self) -> &BindlessDescriptorHeap { &self.bindless_heap }
     pub fn bindless_heap_mut(&mut self) -> &mut BindlessDescriptorHeap { &mut self.bindless_heap }
     pub fn pipeline_variant_cache(&self) -> &GraphicsPipelineVariantCache { &self.pipeline_variant_cache }
+    pub fn hot_reloader(&self) -> Option<&crate::hot_reload::ShaderHotReloader> { self.hot_reloader.as_ref() }
+
+    /// Clear all cached graphics pipeline variants. Call after shader hot-reload.
+    pub fn clear_pipeline_cache(&self) {
+        self.pipeline_variant_cache.clear();
+    }
+
+    /// Allocate a descriptor set through the shared pool recycler.
+    pub fn allocate_descriptor_set(&self, layout: vk::DescriptorSetLayout) -> Result<vk::DescriptorSet, RenderError> {
+        self.descriptor_allocator.lock().allocate(layout)
+    }
+
+    /// Reset all descriptor pools so they can be reused next frame.
+    pub fn reset_descriptor_pools(&self) {
+        self.descriptor_allocator.lock().reset_pools();
+    }
 
     pub fn command_pool(&self) -> vk::CommandPool {
         self.command_pool

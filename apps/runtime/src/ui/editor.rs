@@ -55,7 +55,15 @@ pub fn editor_screen(
     let cam = viewport_manager.primary_camera_mut();
     inspector::show_inspector(ctx, cam, world, selected_entity, dirty, undo_history);
     console::show_console(ctx, project_dir, audio_engine, audio_instance, waveform_viewer);
-    viewport::show_viewports(ctx, viewport_manager, world, selected_entity, dirty, undo_history);
+    {
+        let bookmarks = current_project.as_mut().map(|p| &mut p.bookmarks);
+        if let Some(bm) = bookmarks {
+            viewport::show_viewports(ctx, viewport_manager, world, selected_entity, dirty, undo_history, bm);
+        } else {
+            let mut dummy = Vec::new();
+            viewport::show_viewports(ctx, viewport_manager, world, selected_entity, dirty, undo_history, &mut dummy);
+        }
+    }
     dialogs::show_dialogs(ctx, screen, target, current_project, dirty, show_confirm, confirm_target, show_settings, sprite_editor);
     undo_redo::handle_undo_redo(ctx, world, selected_entity, dirty, undo_history);
 

@@ -17,12 +17,140 @@ pub struct GpuTexture {
     pub(crate) _allocation: gpu_allocator::vulkan::Allocation,
 }
 
+/// A render target with color + depth attachments.
+///
+/// Wraps a dedicated color image (with `COLOR_ATTACHMENT | TRANSFER_SRC | SAMPLED` usage)
+/// and a depth buffer image. Provides `begin_rendering` / `end_rendering` helpers
+/// for dynamic rendering, layout transitions, and GPU readback via `copy_to_buffer`.
+///
+/// Used for both swapchain presentation and offscreen rendering (e.g. editor viewports).
 pub struct Framebuffer {
     pub color_image: vk::Image,
     pub color_view: vk::ImageView,
     pub depth_buffer: DepthBuffer,
     pub extent: vk::Extent2D,
     pub(crate) _color_allocation: gpu_allocator::vulkan::Allocation,
+}
+
+/// Alias for [`Framebuffer`] — a render target abstraction with color + depth attachments.
+pub type RenderTarget = Framebuffer;
+
+/// HDR render target with `R16G16B16A16_SFLOAT` color + depth attachments.
+///
+/// Scene geometry is rendered into this high-dynamic-range buffer first;
+/// a subsequent tone-mapping pass resolves it to the SDR swapchain.
+pub struct HdrFramebuffer {
+    pub color_image: vk::Image,
+    pub color_view: vk::ImageView,
+    pub depth_buffer: DepthBuffer,
+    pub extent: vk::Extent2D,
+    pub(crate) _color_allocation: gpu_allocator::vulkan::Allocation,
+}
+
+impl HdrFramebuffer {
+    pub fn new(renderer: &Renderer, width: u32, height: u32) -> Result<Self, RenderError> {
+        let extent = vk::Extent2D { width, height };
+        let format = vk::Format::R16G16B16A16_SFLOAT;
+
+        let color_img = unsafe {
+            renderer.device.logical().create_image(
+                &vk::ImageCreateInfo::default()
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .format(format)
+                    .extent(vk::Extent3D { width, height, depth: 1 })
+                    .mip_levels(1).array_layers(1).samples(vk::SampleCountFlags::TYPE_1)
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_SRC)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE),
+                None,
+            ).map_err(|e| RenderError::DeviceCreation(format!("hdr color img: {e}")))?
+        };
+
+        let color_req = unsafe { renderer.device.logical().get_image_memory_requirements(color_img) };
+        let color_alloc = renderer.allocator.lock().allocate("hdr_framebuffer_color", color_req, gpu_allocator::MemoryLocation::GpuOnly, false)?;
+        unsafe { renderer.device.logical().bind_image_memory(color_img, color_alloc.memory(), color_alloc.offset())?; }
+
+        let color_view = unsafe {
+            renderer.device.logical().create_image_view(
+                &vk::ImageViewCreateInfo::default()
+                    .image(color_img).view_type(vk::ImageViewType::TYPE_2D)
+                    .format(format)
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0, level_count: 1,
+                        base_array_layer: 0, layer_count: 1,
+                    }),
+                None,
+            ).map_err(|e| RenderError::DeviceCreation(format!("hdr color view: {e}")))?
+        };
+
+        let depth = renderer.create_depth_buffer(extent)?;
+
+        Ok(Self {
+            color_image: color_img,
+            color_view,
+            depth_buffer: depth,
+            extent,
+            _color_allocation: color_alloc,
+        })
+    }
+
+    pub fn begin_rendering(&self, cmd: vk::CommandBuffer, device: &GpuDevice, instance: &VulkanInstance, clear_color: [f32; 4]) {
+        let ca = vk::RenderingAttachmentInfoKHR::default()
+            .image_view(self.color_view).image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR).store_op(vk::AttachmentStoreOp::STORE)
+            .clear_value(vk::ClearValue { color: vk::ClearColorValue { float32: clear_color } });
+        let da = vk::RenderingAttachmentInfoKHR::default()
+            .image_view(self.depth_buffer.view).image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            .load_op(vk::AttachmentLoadOp::CLEAR).store_op(vk::AttachmentStoreOp::STORE)
+            .clear_value(vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } });
+        let cas = [ca];
+
+        let ri = vk::RenderingInfoKHR::default()
+            .render_area(vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent: self.extent })
+            .layer_count(1).color_attachments(&cas).depth_attachment(&da);
+
+        unsafe {
+            let dr = ash::khr::dynamic_rendering::Device::new(&instance.inner(), device.logical());
+            dr.cmd_begin_rendering(cmd, &ri);
+            device.logical().cmd_set_viewport(cmd, 0, &[vk::Viewport {
+                x: 0.0, y: self.extent.height as f32,
+                width: self.extent.width as f32,
+                height: -(self.extent.height as f32),
+                min_depth: 0.0, max_depth: 1.0,
+            }]);
+            device.logical().cmd_set_scissor(cmd, 0, &[vk::Rect2D { offset: vk::Offset2D { x: 0, y: 0 }, extent: self.extent }]);
+        }
+    }
+
+    pub fn end_rendering(&self, cmd: vk::CommandBuffer, device: &GpuDevice, instance: &VulkanInstance) {
+        unsafe {
+            let dr = ash::khr::dynamic_rendering::Device::new(&instance.inner(), device.logical());
+            dr.cmd_end_rendering(cmd);
+            let barrier = vk::ImageMemoryBarrier2::default()
+                .image(self.color_image)
+                .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+                .dst_access_mask(vk::AccessFlags2::SHADER_READ)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0, level_count: 1,
+                    base_array_layer: 0, layer_count: 1,
+                });
+            let barriers = [barrier];
+            let dep = vk::DependencyInfo::default().image_memory_barriers(&barriers);
+            device.logical().cmd_pipeline_barrier2(cmd, &dep);
+        }
+    }
+
+    /// Blit this HDR framebuffer to the swapchain image via `Renderer::blit_to_swapchain`.
+    /// Assumes the image is currently in `SHADER_READ_ONLY_OPTIMAL` after `end_rendering`.
+    pub fn blit_to_swapchain(&self, cmd: vk::CommandBuffer, renderer: &Renderer) {
+        renderer.blit_to_swapchain(cmd, self.color_image, self.extent, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+    }
 }
 
 impl Framebuffer {
@@ -167,5 +295,11 @@ impl Framebuffer {
             device.logical().cmd_copy_image_to_buffer(cmd, self.color_image, vk::ImageLayout::TRANSFER_SRC_OPTIMAL, dst_buffer, &[region]);
         }
         Ok(())
+    }
+
+    /// Blit this framebuffer to the swapchain image via `Renderer::blit_to_swapchain`.
+    /// Assumes the image is currently in `TRANSFER_SRC_OPTIMAL` after `end_rendering`.
+    pub fn blit_to_swapchain(&self, cmd: vk::CommandBuffer, renderer: &Renderer) {
+        renderer.blit_to_swapchain(cmd, self.color_image, self.extent, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
     }
 }

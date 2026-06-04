@@ -1,6 +1,7 @@
 use ash::vk;
 
 use crate::descriptor_cache::DescriptorSetLayoutCache;
+use crate::pipeline::PipelineLayoutCache;
 use crate::sampler_cache::SamplerCache;
 use crate::instance::VulkanInstance;
 use crate::RenderError;
@@ -64,6 +65,7 @@ pub struct GpuDevice {
     transfer_queue: vk::Queue,
     pipeline_cache: vk::PipelineCache,
     descriptor_layout_cache: DescriptorSetLayoutCache,
+    pipeline_layout_cache: PipelineLayoutCache,
     sampler_cache: SamplerCache,
 }
 
@@ -189,6 +191,7 @@ impl GpuDevice {
         };
 
         let descriptor_layout_cache = DescriptorSetLayoutCache::new(&*logical);
+        let pipeline_layout_cache = PipelineLayoutCache::new(&*logical);
         let sampler_cache = SamplerCache::new(&*logical);
         Ok(Self {
             logical,
@@ -201,6 +204,7 @@ impl GpuDevice {
             transfer_queue,
             pipeline_cache,
             descriptor_layout_cache,
+            pipeline_layout_cache,
             sampler_cache,
         })
     }
@@ -270,6 +274,7 @@ impl GpuDevice {
     }
     pub fn pipeline_cache(&self) -> vk::PipelineCache { self.pipeline_cache }
     pub fn descriptor_layout_cache(&self) -> &DescriptorSetLayoutCache { &self.descriptor_layout_cache }
+    pub fn pipeline_layout_cache(&self) -> &PipelineLayoutCache { &self.pipeline_layout_cache }
     pub fn sampler_cache(&self) -> &SamplerCache { &self.sampler_cache }
 }
 
@@ -286,6 +291,7 @@ impl Drop for GpuDevice {
             // descriptor_layout_cache must be dropped before the logical device
             // so its layouts are destroyed while the device is still valid.
             std::ptr::drop_in_place(&mut self.descriptor_layout_cache);
+            std::ptr::drop_in_place(&mut self.pipeline_layout_cache);
             std::ptr::drop_in_place(&mut self.sampler_cache);
             self.logical.destroy_pipeline_cache(self.pipeline_cache, None);
             self.logical.destroy_device(None);

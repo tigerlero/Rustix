@@ -124,6 +124,21 @@ pub fn show_hierarchy(
             }
             ui.label(format!("Entities: {query_count}"));
 
+            fn is_descendant(
+                children: &HashMap<hecs::Entity, Vec<hecs::Entity>>,
+                ancestor: hecs::Entity,
+                descendant: hecs::Entity,
+            ) -> bool {
+                if let Some(kids) = children.get(&ancestor) {
+                    for &child in kids {
+                        if child == descendant || is_descendant(children, child, descendant) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+
             fn render_entity(
                 ui: &mut egui::Ui,
                 entity: hecs::Entity,
@@ -162,110 +177,129 @@ pub fn show_hierarchy(
                         }
                     });
                 } else {
-                    ui.horizontal(|ui| {
-                        ui.add_space(indent);
-                        if depth > 0 {
-                            ui.label(egui::RichText::new("\u{2514}").weak());
-                        }
-                        let resp = ui.add_sized(
-                            egui::vec2(ui.available_width(), 0.0),
-                            egui::Button::new(egui::RichText::new(&name).color(egui::Color32::WHITE))
-                                .fill(if is_selected { egui::Color32::from_rgb(50, 90, 150) } else { egui::Color32::TRANSPARENT }),
-                        );
-                        if resp.clicked() {
-                            *selected_entity.borrow_mut() = Some(entity);
-                        }
-                        if resp.double_clicked() {
-                            *renaming.borrow_mut() = Some(entity);
-                            *rename_buffer.borrow_mut() = name;
-                        }
-                        if resp.secondary_clicked() {
-                            *selected_entity.borrow_mut() = Some(entity);
-                        }
-                        resp.context_menu(|ui| {
-                            if ui.button("Copy").clicked() {
-                                let snapshot = crate::scene::entity_to_scene_entity(world, entity);
-                                ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("copied_entity"), snapshot));
-                                ui.close();
-                            }
-                            if ui.button("Paste").clicked() {
-                                if let Some(copied) = ui.ctx().data(|d| d.get_temp::<crate::scene::SceneEntity>(egui::Id::new("copied_entity"))) {
-                                    let mut pasted = copied.clone();
-                                    pasted.name = format!("{} (Pasted)", pasted.name);
-                                    pasted.position[0] += 1.0;
-                                    let new_entity = crate::scene::spawn_entity(world, &pasted);
-                                    let snapshot = crate::scene::entity_to_scene_entity(world, new_entity);
-                                    undo_history.borrow_mut().push(EditorAction::AddEntity { entity: new_entity, snapshot });
-                                    *selected_entity.borrow_mut() = Some(new_entity);
-                                    dirty.set(true);
+                    let drag_id = egui::Id::new(("hier_drag", entity.to_bits().get()));
+                    let drop_frame = egui::Frame::none().inner_margin(2.0);
+                    let (_drop_inner, dropped) = ui.dnd_drop_zone(drop_frame, |ui| {
+                        let _drag = ui.dnd_drag_source(drag_id, entity, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.add_space(indent);
+                                if depth > 0 {
+                                    ui.label(egui::RichText::new("\u{2514}").weak());
                                 }
-                                ui.close();
-                            }
-                            if ui.button("Duplicate").clicked() {
-                                let name = world.get::<&Name>(entity).ok().map(|n| n.0.clone()).unwrap_or_default();
-                                let transform = world.get::<&Transform>(entity).ok().map(|r| (*r).clone()).unwrap_or_default();
-                                let mesh = world.get::<&MeshComponent>(entity).ok().map(|r| (*r).clone());
-                                let material = world.get::<&Material>(entity).ok().map(|r| (*r).clone());
-                                let dirlight = world.get::<&DirectionalLight>(entity).ok().map(|r| (*r).clone());
-                                let pointlight = world.get::<&PointLight>(entity).ok().map(|r| (*r).clone());
-                                let spotlight = world.get::<&SpotLight>(entity).ok().map(|r| (*r).clone());
-                                let audio = world.get::<&rustix_audio::AudioSource>(entity).ok().map(|r| (*r).clone());
-                                let rigidbody = world.get::<&RigidBody>(entity).ok().map(|r| *r);
-                                let collider = world.get::<&Collider>(entity).ok().map(|r| *r);
-                                let audiolistener = world.get::<&rustix_audio::AudioListener>(entity).ok().map(|r| *r);
-                                let camera = world.get::<&rustix_render::Camera>(entity).ok().map(|r| *r);
-
-                                let mut new_transform = transform;
-                                new_transform.position.x += 1.0;
-
-                                let mut builder = hecs::EntityBuilder::new();
-                                builder.add(Name(format!("{} Copy", name)));
-                                builder.add(new_transform);
-                                if let Some(m) = mesh { builder.add(m); }
-                                if let Some(m) = material { builder.add(m); }
-                                if let Some(l) = dirlight { builder.add(l); }
-                                if let Some(l) = pointlight { builder.add(l); }
-                                if let Some(l) = spotlight { builder.add(l); }
-                                if let Some(a) = audio { builder.add(a); }
-                                if let Some(rb) = rigidbody { builder.add(rb); }
-                                if let Some(c) = collider { builder.add(c); }
-                                if let Some(al) = audiolistener { builder.add(al); }
-                                if let Some(cam) = camera { builder.add(cam); }
-                                let new_entity = world.spawn(builder.build());
-
-                                let snapshot = crate::scene::entity_to_scene_entity(world, new_entity);
-                                undo_history.borrow_mut().push(EditorAction::AddEntity { entity: new_entity, snapshot });
-                                *selected_entity.borrow_mut() = Some(new_entity);
-                                dirty.set(true);
-                                ui.close();
-                            }
-                            if ui.button("Rename").clicked() {
-                                let n = world.get::<&Name>(entity).map(|n| n.0.clone()).unwrap_or_default();
-                                *renaming.borrow_mut() = Some(entity);
-                                *rename_buffer.borrow_mut() = n;
-                                ui.close();
-                            }
-                            if ui.button("Delete").clicked() {
-                                *pending_delete.borrow_mut() = Some(entity);
-                                ui.close();
-                            }
-                            ui.separator();
-                            if let Some(target) = sel {
-                                if target != entity {
-                                    if ui.button("Parent to Selected").clicked() {
-                                        let _ = world.insert(entity, (Parent(Some(target)),));
+                                let resp = ui.add_sized(
+                                    egui::vec2(ui.available_width(), 0.0),
+                                    egui::Button::new(egui::RichText::new(&name).color(egui::Color32::WHITE))
+                                        .fill(if is_selected { egui::Color32::from_rgb(50, 90, 150) } else { egui::Color32::TRANSPARENT }),
+                                );
+                                if resp.clicked() {
+                                    *selected_entity.borrow_mut() = Some(entity);
+                                }
+                                if resp.double_clicked() {
+                                    *renaming.borrow_mut() = Some(entity);
+                                    *rename_buffer.borrow_mut() = name;
+                                }
+                                if resp.secondary_clicked() {
+                                    *selected_entity.borrow_mut() = Some(entity);
+                                }
+                                resp.context_menu(|ui| {
+                                    if ui.button("Copy").clicked() {
+                                        let snapshot = crate::scene::entity_to_scene_entity(world, entity);
+                                        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("copied_entity"), snapshot));
                                         ui.close();
                                     }
-                                }
-                            }
-                            if world.get::<&Parent>(entity).ok().and_then(|p| p.0).is_some() {
-                                if ui.button("Unparent").clicked() {
-                                    let _ = world.insert(entity, (Parent(None),));
-                                    ui.close();
-                                }
-                            }
+                                    if ui.button("Paste").clicked() {
+                                        if let Some(copied) = ui.ctx().data(|d| d.get_temp::<crate::scene::SceneEntity>(egui::Id::new("copied_entity"))) {
+                                            let mut pasted = copied.clone();
+                                            pasted.name = format!("{} (Pasted)", pasted.name);
+                                            pasted.position[0] += 1.0;
+                                            let new_entity = crate::scene::spawn_entity(world, &pasted);
+                                            let snapshot = crate::scene::entity_to_scene_entity(world, new_entity);
+                                            undo_history.borrow_mut().push(EditorAction::AddEntity { entity: new_entity, snapshot });
+                                            *selected_entity.borrow_mut() = Some(new_entity);
+                                            dirty.set(true);
+                                        }
+                                        ui.close();
+                                    }
+                                    if ui.button("Duplicate").clicked() {
+                                        let name = world.get::<&Name>(entity).ok().map(|n| n.0.clone()).unwrap_or_default();
+                                        let transform = world.get::<&Transform>(entity).ok().map(|r| (*r).clone()).unwrap_or_default();
+                                        let mesh = world.get::<&MeshComponent>(entity).ok().map(|r| (*r).clone());
+                                        let material = world.get::<&Material>(entity).ok().map(|r| (*r).clone());
+                                        let dirlight = world.get::<&DirectionalLight>(entity).ok().map(|r| (*r).clone());
+                                        let pointlight = world.get::<&PointLight>(entity).ok().map(|r| (*r).clone());
+                                        let spotlight = world.get::<&SpotLight>(entity).ok().map(|r| (*r).clone());
+                                        let audio = world.get::<&rustix_audio::AudioSource>(entity).ok().map(|r| (*r).clone());
+                                        let rigidbody = world.get::<&RigidBody>(entity).ok().map(|r| *r);
+                                        let collider = world.get::<&Collider>(entity).ok().map(|r| *r);
+                                        let audiolistener = world.get::<&rustix_audio::AudioListener>(entity).ok().map(|r| *r);
+                                        let camera = world.get::<&rustix_render::Camera>(entity).ok().map(|r| *r);
+
+                                        let mut new_transform = transform;
+                                        new_transform.position.x += 1.0;
+
+                                        let mut builder = hecs::EntityBuilder::new();
+                                        builder.add(Name(format!("{} Copy", name)));
+                                        builder.add(new_transform);
+                                        if let Some(m) = mesh { builder.add(m); }
+                                        if let Some(m) = material { builder.add(m); }
+                                        if let Some(l) = dirlight { builder.add(l); }
+                                        if let Some(l) = pointlight { builder.add(l); }
+                                        if let Some(l) = spotlight { builder.add(l); }
+                                        if let Some(a) = audio { builder.add(a); }
+                                        if let Some(rb) = rigidbody { builder.add(rb); }
+                                        if let Some(c) = collider { builder.add(c); }
+                                        if let Some(al) = audiolistener { builder.add(al); }
+                                        if let Some(cam) = camera { builder.add(cam); }
+                                        let new_entity = world.spawn(builder.build());
+
+                                        let snapshot = crate::scene::entity_to_scene_entity(world, new_entity);
+                                        undo_history.borrow_mut().push(EditorAction::AddEntity { entity: new_entity, snapshot });
+                                        *selected_entity.borrow_mut() = Some(new_entity);
+                                        dirty.set(true);
+                                        ui.close();
+                                    }
+                                    if ui.button("Rename").clicked() {
+                                        let n = world.get::<&Name>(entity).map(|n| n.0.clone()).unwrap_or_default();
+                                        *renaming.borrow_mut() = Some(entity);
+                                        *rename_buffer.borrow_mut() = n;
+                                        ui.close();
+                                    }
+                                    if ui.button("Delete").clicked() {
+                                        *pending_delete.borrow_mut() = Some(entity);
+                                        ui.close();
+                                    }
+                                    ui.separator();
+                                    if let Some(target) = sel {
+                                        if target != entity {
+                                            if ui.button("Parent to Selected").clicked() {
+                                                let _ = world.insert(entity, (Parent(Some(target)),));
+                                                ui.close();
+                                            }
+                                        }
+                                    }
+                                    if world.get::<&Parent>(entity).ok().and_then(|p| p.0).is_some() {
+                                        if ui.button("Unparent").clicked() {
+                                            let _ = world.insert(entity, (Parent(None),));
+                                            ui.close();
+                                        }
+                                    }
+                                });
+                            });
                         });
                     });
+                    if let Some(dropped_entity) = dropped {
+                        let dropped = *dropped_entity;
+                        if dropped != entity && !is_descendant(children, entity, dropped) {
+                            let old_parent = world.get::<&Parent>(dropped).ok().and_then(|p| p.0);
+                            let _ = world.insert(dropped, (Parent(Some(entity)),));
+                            undo_history.borrow_mut().push(EditorAction::ParentChanged {
+                                entity: dropped,
+                                old_parent,
+                                new_parent: Some(entity),
+                            });
+                            dirty.set(true);
+                        }
+                    }
                 }
 
                 if let Some(kids) = children.get(&entity) {

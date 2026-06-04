@@ -15,8 +15,12 @@ glam = { workspace = true }
 smallvec = { workspace = true }
 cfg-if = { workspace = true }
 raw-window-handle = { workspace = true }
-naga = { version = "23", features = ["spv-out", "glsl-in", "wgsl-in"] }
+naga = { version = "23", features = ["spv-out", "spv-in", "glsl-in", "wgsl-in"] }
+notify = { workspace = true }
 hecs = { workspace = true, features = ["serde"] }
 serde = { workspace = true }
 
 rustix-core = { path = "../core" }
+
+[build-dependencies]
+naga = { version = "23", features = ["spv-out", "glsl-in"] }

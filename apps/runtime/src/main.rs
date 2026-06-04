@@ -84,9 +84,8 @@ fn main() {
     }
     tracing::info!("Vulkan surface initialized");
     let sc_format = renderer.swapchain.lock().format();
-    tracing::info!("creating egui Vulkan renderer...");
     let mut egui_r = match ui_renderer::EguiVulkanRenderer::new(&renderer, sc_format) {
-        Ok(r) => { tracing::info!("egui Vulkan renderer created"); r }
+        Ok(r) => r,
         Err(e) => { eprintln!("Failed to create egui renderer: {e}"); std::process::exit(1); }
     };
 
@@ -129,6 +128,12 @@ fn main() {
     let mut shadow_descriptor_set: Option<vk::DescriptorSet> = None;
     let mut shadow_map: Option<rustix_render::GpuTexture> = None;
     let mut shadow_layout = vk::ImageLayout::UNDEFINED;
+
+    // HDR framebuffer for primary viewport (recreated on swapchain resize).
+    let mut hdr_framebuffer: Option<rustix_render::HdrFramebuffer> = None;
+    let mut hdr_fb_size: (u32, u32) = (0, 0);
+    let mut tonemap_pipeline: Option<rustix_render::pipeline::ToneMapPipeline> = None;
+    let mut tonemap_desc_set: Option<vk::DescriptorSet> = None;
 
     // Per-viewport offscreen framebuffers (each triple-buffered).
     let mut viewport_framebuffers: Vec<[Option<rustix_render::Framebuffer>; 3]> = (0..ui::viewport::MAX_VIEWPORTS)
@@ -356,6 +361,7 @@ fn main() {
                             &mut scene_uniform_buffer, &mut scene_depth_buffer,
                             &mut shadow_pipeline, &mut shadow_descriptor_pool, &mut shadow_descriptor_set,
                             &mut shadow_map,
+                            &mut tonemap_pipeline, &mut tonemap_desc_set,
                         );
 
                         init::init_2d_resources(
@@ -363,6 +369,29 @@ fn main() {
                             &mut pipeline_2d, &mut ubo_2d, &mut desc_set_2d,
                             &mut quad_buffer_2d, &mut texture_2d,
                         );
+
+                        // Shader hot-reload: poll file watcher and recreate affected pipelines.
+                        if let Some(reloader) = renderer.hot_reloader() {
+                            for path in reloader.take_events() {
+                                let file = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                                match file {
+                                    "pbr.vert" | "pbr.frag" => {
+                                        init::reload_scene_pipeline(&renderer, &mut scene_pipeline);
+                                    }
+                                    "shadow.vert" => {
+                                        let bindless_layout = renderer.bindless_heap().layout();
+                                        init::reload_shadow_pipeline(&renderer, &mut shadow_pipeline, bindless_layout);
+                                    }
+                                    "tonemap.vert" | "tonemap.frag" => {
+                                        init::reload_tonemap_pipeline(&renderer, &mut tonemap_pipeline, &mut tonemap_desc_set);
+                                    }
+                                    "sprite.vert" | "sprite.frag" => {
+                                        init::reload_2d_pipeline(&renderer, &mut pipeline_2d, &mut desc_set_2d);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
 
                         if let Some(path) = pending_mesh_load.borrow_mut().take() {
                             if let Ok(data) = MappedFile::open(Path::new(&path)) {
@@ -423,7 +452,21 @@ fn main() {
                             }
                         }
 
+                        // Ensure HDR framebuffer matches swapchain size.
+                        let sw_extent = renderer.swapchain.lock().extent();
+                        if hdr_fb_size != (sw_extent.width, sw_extent.height) {
+                            hdr_framebuffer = None;
+                            hdr_fb_size = (sw_extent.width, sw_extent.height);
+                        }
+                        if hdr_framebuffer.is_none() {
+                            match rustix_render::HdrFramebuffer::new(&renderer, sw_extent.width, sw_extent.height) {
+                                Ok(hfb) => { hdr_framebuffer = Some(hfb); }
+                                Err(e) => tracing::error!("HDR framebuffer creation failed: {e}"),
+                            }
+                        }
+
                         let mut shadow_layout_opt = if shadow_map.is_some() { Some(shadow_layout) } else { None };
+                        let mut used_hdr = false;
                         if scene_pipeline.is_some() && scene_depth_buffer.is_some() && scene_uniform_buffer.is_some() {
                             // Clear swapchain once before any offscreen rendering.
                             for vp_idx in 0..num_viewports {
@@ -460,6 +503,7 @@ fn main() {
                                         scene_uniform_buffer.as_ref().unwrap(),
                                         &meshes, &ecs_world, cam,
                                         Some(fb),
+                                        None,
                                     );
                                     let tex_id = ui::viewport::viewport_texture_id(vp_idx);
                                     tracing::trace!("main: registering viewport {} framebuffer color_view={:?} as user texture {:?}", vp_idx, fb.color_view, tex_id);
@@ -470,9 +514,36 @@ fn main() {
                                     );
                                     let valid_key = egui::Id::new(format!("viewport_offscreen_valid_{}", vp_idx));
                                     egui_ctx.data_mut(|d| d.insert_temp(valid_key, true));
+                                } else if vp_idx == 0 && hdr_framebuffer.is_some() {
+                                    // Primary viewport with no offscreen: render to HDR, then tone-map to swapchain.
+                                    let cam = &viewport_manager.viewports[vp_idx].camera;
+                                    let hfb = hdr_framebuffer.as_ref().unwrap();
+                                    shadow_layout_opt = render::render_3d_scene(
+                                        &renderer, cmd,
+                                        scene_pipeline.as_ref().unwrap(),
+                                        shadow_pipeline.as_ref(),
+                                        scene_depth_buffer.as_ref().unwrap(),
+                                        shadow_map.as_ref(),
+                                        shadow_layout_opt,
+                                        scene_uniform_buffer.as_ref().unwrap(),
+                                        &meshes, &ecs_world, cam,
+                                        None,
+                                        Some(hfb),
+                                    );
+                                    used_hdr = true;
+                                    let valid_key = egui::Id::new(format!("viewport_offscreen_valid_{}", vp_idx));
+                                    egui_ctx.data_mut(|d| d.remove_temp::<bool>(valid_key));
                                 } else {
                                     let valid_key = egui::Id::new(format!("viewport_offscreen_valid_{}", vp_idx));
                                     egui_ctx.data_mut(|d| d.remove_temp::<bool>(valid_key));
+                                }
+                            }
+
+                            // Tone-map HDR result to swapchain when primary viewport used HDR.
+                            if used_hdr {
+                                if let (Some(ref hfb), Some(ref tp), Some(ds)) = (&hdr_framebuffer, &tonemap_pipeline, tonemap_desc_set) {
+                                    renderer.update_tonemap_descriptor_set(ds, hfb.color_view, egui_r.sampler());
+                                    renderer.tone_map_pass(cmd, tp, ds, sw_extent);
                                 }
                             }
                         } else if renderer.frame_index() % 60 == 0 {

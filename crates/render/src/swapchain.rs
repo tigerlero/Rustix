@@ -277,6 +277,9 @@ impl Swapchain {
     pub fn extent(&self) -> vk::Extent2D { self.extent }
     pub fn format(&self) -> vk::Format { self.format }
     pub const fn image_count(&self) -> u32 { self.image_count }
+    pub fn current_image(&self) -> vk::Image {
+        self.images[self.current_image_index]
+    }
     pub fn current_image_view(&self) -> vk::ImageView {
         self.image_views[self.current_image_index]
     }

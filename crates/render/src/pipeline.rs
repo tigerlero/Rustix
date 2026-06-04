@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use crate::device::GpuDevice;
 use crate::shader::ShaderModule;
+use crate::spec_constants::SpecConstantMap;
 use crate::swapchain::Swapchain;
 use crate::RenderError;
 
@@ -83,6 +84,99 @@ pub fn shadow_depth_stencil_state() -> vk::PipelineDepthStencilStateCreateInfo<'
         .depth_compare_op(vk::CompareOp::LESS)
 }
 
+/// Hashable key for a pipeline layout configuration.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct PipelineLayoutKey {
+    set_layouts: Vec<vk::DescriptorSetLayout>,
+    push_ranges: Vec<PushConstantKey>,
+}
+
+/// Caches `vk::PipelineLayout` objects keyed by their set layouts and push constant ranges.
+///
+/// Use `get_or_create` to obtain a layout. The cache retains the Vulkan handle until
+/// the cache itself is dropped.
+pub struct PipelineLayoutCache {
+    device: *const ash::Device,
+    cache: Mutex<HashMap<PipelineLayoutKey, vk::PipelineLayout>>,
+}
+
+unsafe impl Send for PipelineLayoutCache {}
+unsafe impl Sync for PipelineLayoutCache {}
+
+impl PipelineLayoutCache {
+    pub fn new(device: &ash::Device) -> Self {
+        Self {
+            device: device as *const ash::Device,
+            cache: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Get or create a `vk::PipelineLayout` for the given configuration.
+    pub fn get_or_create(
+        &self,
+        set_layouts: &[vk::DescriptorSetLayout],
+        push_ranges: &[vk::PushConstantRange],
+    ) -> Result<vk::PipelineLayout, RenderError> {
+        let key = PipelineLayoutKey {
+            set_layouts: set_layouts.to_vec(),
+            push_ranges: push_ranges.iter().copied().map(PushConstantKey::from).collect(),
+        };
+
+        {
+            let cache = self.cache.lock();
+            if let Some(&layout) = cache.get(&key) {
+                return Ok(layout);
+            }
+        }
+
+        let layout = unsafe {
+            (*self.device)
+                .create_pipeline_layout(
+                    &vk::PipelineLayoutCreateInfo::default()
+                        .set_layouts(set_layouts)
+                        .push_constant_ranges(push_ranges),
+                    None,
+                )
+                .map_err(|e| RenderError::DeviceCreation(format!("pipeline layout: {e}")))?
+        };
+
+        let mut cache = self.cache.lock();
+        if let Some(&existing) = cache.get(&key) {
+            unsafe {
+                (*self.device).destroy_pipeline_layout(layout, None);
+            }
+            return Ok(existing);
+        }
+
+        cache.insert(key, layout);
+        Ok(layout)
+    }
+
+    pub fn len(&self) -> usize {
+        self.cache.lock().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.cache.lock().is_empty()
+    }
+}
+
+impl Drop for PipelineLayoutCache {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.device.is_null() {
+                let dev = &*self.device;
+                let cache = self.cache.get_mut();
+                for &layout in cache.values() {
+                    if layout != vk::PipelineLayout::null() {
+                        dev.destroy_pipeline_layout(layout, None);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Rendering path strategy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RenderPath {
@@ -123,6 +217,8 @@ pub struct PipelineVariantKey {
     pub depth_test: bool,
     pub depth_write: bool,
     pub blend_enable: bool,
+    /// Specialization constants applied to the fragment shader.
+    pub spec_constants: SpecConstantMap,
 }
 
 impl Default for PipelineVariantKey {
@@ -137,6 +233,7 @@ impl Default for PipelineVariantKey {
             depth_test: true,
             depth_write: true,
             blend_enable: false,
+            spec_constants: SpecConstantMap::new(),
         }
     }
 }
@@ -156,7 +253,23 @@ impl GraphicsPipeline {
         bindless_layout: vk::DescriptorSetLayout,
         variant: &PipelineVariantKey,
     ) -> Result<Self, RenderError> {
-        let stages = [vs.stage_create_info(), fs.stage_create_info()];
+        let vs_stage = vs.stage_create_info();
+        // Build spec constant data unconditionally so it outlives the transmuted stage.
+        let spec_data = crate::spec_constants::SpecConstantData::from_map(&variant.spec_constants);
+        let spec_info = spec_data.info();
+        let fs_stage = if variant.spec_constants.is_empty() {
+            fs.stage_create_info()
+        } else {
+            let stage = fs.stage_create_info().specialization_info(&spec_info);
+            // SAFETY: `spec_data` and `spec_info` live until the end of this
+            // function, so all pointers remain valid for the synchronous
+            // `create_graphics_pipelines` call.
+            unsafe { std::mem::transmute::<_, vk::PipelineShaderStageCreateInfo<'static>>(stage) }
+        };
+        let stages = [
+            unsafe { std::mem::transmute::<_, vk::PipelineShaderStageCreateInfo<'static>>(vs_stage) },
+            fs_stage,
+        ];
 
         let set_layouts = [bindless_layout];
         let push_range = vk::PushConstantRange::default()
@@ -165,11 +278,9 @@ impl GraphicsPipeline {
             .size(PUSH_CONSTANT_SIZE);
         let push_ranges = [push_range];
 
-        let layout = unsafe {
-            device.logical().create_pipeline_layout(
-                &vk::PipelineLayoutCreateInfo::default().set_layouts(&set_layouts).push_constant_ranges(&push_ranges), None,
-            ).map_err(|e| RenderError::PipelineCreation(format!("layout: {e}")))?
-        };
+        let layout = device.pipeline_layout_cache()
+            .get_or_create(&set_layouts, &push_ranges)
+            .map_err(|e| RenderError::PipelineCreation(format!("layout: {e}")))?;
 
         let stride = 24u32; // pos(12) + normal(12)
         let vb = vk::VertexInputBindingDescription::default().binding(0).stride(stride).input_rate(vk::VertexInputRate::VERTEX);
@@ -243,11 +354,9 @@ impl ShadowPipeline {
         let push_range = shadow_push_constant_range();
         let push_ranges = [push_range];
 
-        let layout = unsafe {
-            device.logical().create_pipeline_layout(
-                &vk::PipelineLayoutCreateInfo::default().set_layouts(&set_layouts).push_constant_ranges(&push_ranges), None,
-            ).map_err(|e| RenderError::PipelineCreation(format!("shadow layout: {e}")))?
-        };
+        let layout = device.pipeline_layout_cache()
+            .get_or_create(&set_layouts, &push_ranges)
+            .map_err(|e| RenderError::PipelineCreation(format!("shadow layout: {e}")))?;
 
         let (vbs, va) = shadow_vertex_input_state();
         let vi = vk::PipelineVertexInputStateCreateInfo::default().vertex_binding_descriptions(&vbs).vertex_attribute_descriptions(&va);
@@ -291,7 +400,6 @@ pub struct GraphicsPipeline2D {
     pub pipeline: vk::Pipeline,
     pub layout: vk::PipelineLayout,
     pub desc_layout: vk::DescriptorSetLayout,
-    pub desc_pool: vk::DescriptorPool,
 }
 
 impl GraphicsPipeline2D {
@@ -320,18 +428,6 @@ impl GraphicsPipeline2D {
             .get_or_create_simple(&bindings)
             .map_err(|e| RenderError::PipelineCreation(format!("2d desc_layout: {e}")))?;
 
-        // Descriptor pool: 1 UBO + 1 sampled image + 1 sampler
-        let pool_sizes = [
-            vk::DescriptorPoolSize { ty: vk::DescriptorType::UNIFORM_BUFFER, descriptor_count: 1 },
-            vk::DescriptorPoolSize { ty: vk::DescriptorType::SAMPLED_IMAGE, descriptor_count: 1 },
-            vk::DescriptorPoolSize { ty: vk::DescriptorType::SAMPLER, descriptor_count: 1 },
-        ];
-        let desc_pool = unsafe {
-            device.logical().create_descriptor_pool(
-                &vk::DescriptorPoolCreateInfo::default().pool_sizes(&pool_sizes).max_sets(1), None,
-            ).map_err(|e| RenderError::PipelineCreation(format!("2d desc pool: {e}")))?
-        };
-
         let set_layouts = [desc_layout];
         let push_range = vk::PushConstantRange::default()
             .stage_flags(vk::ShaderStageFlags::VERTEX)
@@ -339,11 +435,9 @@ impl GraphicsPipeline2D {
             .size(PUSH_CONSTANT_SIZE_2D);
         let push_ranges = [push_range];
 
-        let layout = unsafe {
-            device.logical().create_pipeline_layout(
-                &vk::PipelineLayoutCreateInfo::default().set_layouts(&set_layouts).push_constant_ranges(&push_ranges), None,
-            ).map_err(|e| RenderError::PipelineCreation(format!("2d layout: {e}")))?
-        };
+        let layout = device.pipeline_layout_cache()
+            .get_or_create(&set_layouts, &push_ranges)
+            .map_err(|e| RenderError::PipelineCreation(format!("2d layout: {e}")))?;
 
         // Vertex: position(vec2) + uv(vec2) + color(vec4) = 32 bytes
         let stride = 32u32;
@@ -399,7 +493,100 @@ impl GraphicsPipeline2D {
 
         tracing::info!("2D graphics pipeline created (UBO + sampler + alpha blend)");
 
-        Ok(Self { pipeline, layout, desc_layout, desc_pool })
+        Ok(Self { pipeline, layout, desc_layout })
+    }
+}
+
+/// Full-screen tone-mapping pipeline (HDR → SDR).
+///
+/// Uses a fullscreen triangle generated from `gl_VertexID` with no vertex
+/// buffer. The fragment shader samples an HDR texture (binding 1) through a
+/// sampler (binding 2) and applies ACES filmic tone mapping + gamma correction.
+pub struct ToneMapPipeline {
+    pub pipeline: vk::Pipeline,
+    pub layout: vk::PipelineLayout,
+    pub desc_layout: vk::DescriptorSetLayout,
+}
+
+impl ToneMapPipeline {
+    pub fn create(
+        device: &GpuDevice,
+        swapchain: &Swapchain,
+        vs: &ShaderModule,
+        fs: &ShaderModule,
+        spec_constants: Option<&SpecConstantMap>,
+    ) -> Result<Self, RenderError> {
+        let vs_stage = vs.stage_create_info();
+        let fs_stage = if let Some(spec) = spec_constants {
+            let spec_data = crate::spec_constants::SpecConstantData::from_map(spec);
+            let spec_info = spec_data.info();
+            let stage = fs.stage_create_info().specialization_info(&spec_info);
+            // SAFETY: `spec_data` lives until the end of this function.
+            unsafe { std::mem::transmute::<_, vk::PipelineShaderStageCreateInfo<'static>>(stage) }
+        } else {
+            fs.stage_create_info()
+        };
+        let stages = [
+            unsafe { std::mem::transmute::<_, vk::PipelineShaderStageCreateInfo<'static>>(vs_stage) },
+            fs_stage,
+        ];
+
+        // Binding 1: sampled image (HDR texture), Binding 2: sampler
+        let bindings = [
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(1).descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .descriptor_count(1).stage_flags(vk::ShaderStageFlags::FRAGMENT),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(2).descriptor_type(vk::DescriptorType::SAMPLER)
+                .descriptor_count(1).stage_flags(vk::ShaderStageFlags::FRAGMENT),
+        ];
+        let desc_layout = device
+            .descriptor_layout_cache()
+            .get_or_create_simple(&bindings)
+            .map_err(|e| RenderError::PipelineCreation(format!("tonemap desc_layout: {e}")))?;
+
+        let set_layouts = [desc_layout];
+        let layout = device.pipeline_layout_cache()
+            .get_or_create(&set_layouts, &[])
+            .map_err(|e| RenderError::PipelineCreation(format!("tonemap layout: {e}")))?;
+
+        // No vertex input — positions generated from gl_VertexID
+        let vi = vk::PipelineVertexInputStateCreateInfo::default();
+        let ia = vk::PipelineInputAssemblyStateCreateInfo::default().topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+        let vps = [vk::Viewport::default()]; let scs = [vk::Rect2D::default()];
+        let vp = vk::PipelineViewportStateCreateInfo::default().viewports(&vps).scissors(&scs);
+        let rs = vk::PipelineRasterizationStateCreateInfo::default()
+            .polygon_mode(vk::PolygonMode::FILL)
+            .cull_mode(vk::CullModeFlags::NONE)
+            .front_face(vk::FrontFace::CLOCKWISE)
+            .line_width(1.0);
+        let ms = vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(vk::SampleCountFlags::TYPE_1);
+        let ds = vk::PipelineDepthStencilStateCreateInfo::default();
+        let ba = [vk::PipelineColorBlendAttachmentState::default()
+            .color_write_mask(vk::ColorComponentFlags::RGBA)
+            .blend_enable(false)];
+        let cb = vk::PipelineColorBlendStateCreateInfo::default().attachments(&ba);
+        let dyns = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+        let dy = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dyns);
+
+        let cfs = [swapchain.format()];
+        let mut dr = vk::PipelineRenderingCreateInfoKHR::default().color_attachment_formats(&cfs);
+
+        let ci = vk::GraphicsPipelineCreateInfo::default()
+            .stages(&stages).vertex_input_state(&vi).input_assembly_state(&ia)
+            .viewport_state(&vp).rasterization_state(&rs).multisample_state(&ms)
+            .depth_stencil_state(&ds).color_blend_state(&cb).dynamic_state(&dy)
+            .layout(layout).base_pipeline_handle(vk::Pipeline::null()).base_pipeline_index(-1)
+            .push_next(&mut dr);
+
+        let pipeline = unsafe {
+            device.logical().create_graphics_pipelines(device.pipeline_cache(), &[ci], None)
+                .map_err(|(_, e)| RenderError::PipelineCreation(format!("tonemap pipeline: {e}")))?
+                .into_iter().next().ok_or_else(|| RenderError::PipelineCreation("no tonemap pipeline created".into()))?
+        };
+
+        tracing::info!("tone-mapping pipeline created");
+        Ok(Self { pipeline, layout, desc_layout })
     }
 }
 
@@ -462,6 +649,7 @@ impl ComputePipelineCache {
     /// constant ranges for the pipeline layout.
     pub fn get_or_create(
         &self,
+        device: &GpuDevice,
         shader: &ShaderModule,
         set_layouts: &[vk::DescriptorSetLayout],
         push_ranges: &[vk::PushConstantRange],
@@ -480,13 +668,8 @@ impl ComputePipelineCache {
         }
 
         let (pipeline, layout) = unsafe {
-            let layout = (*self.device)
-                .create_pipeline_layout(
-                    &vk::PipelineLayoutCreateInfo::default()
-                        .set_layouts(set_layouts)
-                        .push_constant_ranges(push_ranges),
-                    None,
-                )
+            let layout = device.pipeline_layout_cache()
+                .get_or_create(set_layouts, push_ranges)
                 .map_err(|e| RenderError::PipelineCreation(format!("compute layout: {e}")))?;
 
             let stage = shader.stage_create_info();
@@ -497,13 +680,12 @@ impl ComputePipelineCache {
             let pipeline = (*self.device)
                 .create_compute_pipelines(vk::PipelineCache::null(), &[ci], None)
                 .map_err(|(_, e)| {
-                    (*self.device).destroy_pipeline_layout(layout, None);
+                    // Layout is owned by PipelineLayoutCache; do not destroy here.
                     RenderError::PipelineCreation(format!("compute pipeline: {e}"))
                 })?
                 .into_iter()
                 .next()
                 .ok_or_else(|| {
-                    (*self.device).destroy_pipeline_layout(layout, None);
                     RenderError::PipelineCreation("no compute pipeline created".into())
                 })?;
 
@@ -515,7 +697,7 @@ impl ComputePipelineCache {
         if let Some(entry) = cache.get(&key) {
             unsafe {
                 (*self.device).destroy_pipeline(pipeline, None);
-                (*self.device).destroy_pipeline_layout(layout, None);
+                // Layout is owned by PipelineLayoutCache; do not destroy here.
             }
             return Ok(entry.pipeline);
         }
@@ -559,9 +741,7 @@ impl Drop for ComputePipelineCache {
                     if entry.pipeline != vk::Pipeline::null() {
                         dev.destroy_pipeline(entry.pipeline, None);
                     }
-                    if entry.layout != vk::PipelineLayout::null() {
-                        dev.destroy_pipeline_layout(entry.layout, None);
-                    }
+                    // Pipeline layouts are owned by PipelineLayoutCache; do not destroy here.
                 }
             }
         }
@@ -650,6 +830,23 @@ impl GraphicsPipelineVariantCache {
     pub fn is_empty(&self) -> bool {
         self.cache.lock().is_empty()
     }
+
+    /// Destroy all cached pipelines and clear the cache. Used for shader hot-reload.
+    pub fn clear(&self) {
+        unsafe {
+            if !self.device.is_null() {
+                let dev = &*self.device;
+                let mut cache = self.cache.lock();
+                for entry in cache.values() {
+                    if entry.pipeline != vk::Pipeline::null() {
+                        dev.destroy_pipeline(entry.pipeline, None);
+                    }
+                    // Pipeline layouts are owned by PipelineLayoutCache; do not destroy here.
+                }
+                cache.clear();
+            }
+        }
+    }
 }
 
 impl Drop for GraphicsPipelineVariantCache {
@@ -662,9 +859,7 @@ impl Drop for GraphicsPipelineVariantCache {
                     if entry.pipeline != vk::Pipeline::null() {
                         dev.destroy_pipeline(entry.pipeline, None);
                     }
-                    if entry.layout != vk::PipelineLayout::null() {
-                        dev.destroy_pipeline_layout(entry.layout, None);
-                    }
+                    // Pipeline layouts are owned by PipelineLayoutCache; do not destroy here.
                 }
             }
         }

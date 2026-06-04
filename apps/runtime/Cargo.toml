@@ -30,3 +30,27 @@ rfd = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 dirs = "6"
+
+[package.metadata.deb]
+name = "rustix-engine"
+maintainer = "Rustix Team <dev@rustix.dev>"
+copyright = "2025-2026, Rustix Team"
+extended-description = "Rustix Engine game runtime and editor."
+section = "games"
+priority = "optional"
+depends = "libvulkan1"
+assets = [
+    ["target/release/rustix-runtime", "usr/bin/rustix-engine", "755"],
+    ["packaging/rustix.desktop", "usr/share/applications/rustix.desktop", "644"],
+]
+
+[package.metadata.rpm]
+name = "rustix-engine"
+summary = "Rustix Engine game runtime and editor"
+license = "MIT OR Apache-2.0"
+group = "Amusement/Games"
+assets = [
+    { source = "target/release/rustix-runtime", dest = "/usr/bin/rustix-engine", mode = "755" },
+    { source = "packaging/rustix.desktop", dest = "/usr/share/applications/rustix.desktop", mode = "644" },
+]
+requires = "vulkan-loader"

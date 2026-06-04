@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Rustix Engine
+GenericName=Game Engine
+Comment=Rustix Engine game runtime and editor
+Exec=rustix-engine
+Type=Application
+Terminal=false
+Categories=Development;Game;Graphics;
+Keywords=game;engine;editor;vulkan;rust;

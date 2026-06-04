@@ -112,6 +112,10 @@ pub fn handle_undo_redo(
                         if e == entity { *c = old; break; }
                     }
                 }
+                EditorAction::ParentChanged { entity, old_parent, .. } => {
+                    let parent = old_parent.map(|p| crate::scene::Parent(Some(p))).unwrap_or(crate::scene::Parent(None));
+                    let _ = world.insert(entity, (parent,));
+                }
                 EditorAction::ComponentAdded { entity, old_snapshot, .. } => {
                     let _ = world.despawn(entity);
                     let e = crate::scene::spawn_entity(world, &old_snapshot);
@@ -225,6 +229,10 @@ pub fn handle_undo_redo(
                     for (e, c) in world.query_mut::<(Entity, &mut Camera)>() {
                         if e == entity { *c = old; break; }
                     }
+                }
+                EditorAction::ParentChanged { entity, new_parent, .. } => {
+                    let parent = new_parent.map(|p| crate::scene::Parent(Some(p))).unwrap_or(crate::scene::Parent(None));
+                    let _ = world.insert(entity, (parent,));
                 }
                 EditorAction::ComponentAdded { entity, component, .. } => {
                     let comp = component.as_str();

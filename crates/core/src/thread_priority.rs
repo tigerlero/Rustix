@@ -47,7 +47,8 @@ impl Default for ThreadPriority {
 /// - **Windows:** Uses `SetThreadPriority`. `Realtime` → `THREAD_PRIORITY_TIME_CRITICAL`,
 ///   `High` → `THREAD_PRIORITY_HIGHEST`, `Normal` → `THREAD_PRIORITY_NORMAL`,
 ///   `Low` → `THREAD_PRIORITY_LOWEST`.
-/// - **macOS:** No-op (returns `Ok(())`).
+/// - **macOS:** Uses `pthread_set_qos_class_self_np`. `Realtime` → `QOS_CLASS_USER_INTERACTIVE`,
+///   `High` → `QOS_CLASS_USER_INITIATED`, `Normal` → `QOS_CLASS_DEFAULT`, `Low` → `QOS_CLASS_UTILITY`.
 /// - **Other:** No-op.
 pub fn set_current_thread_priority(p: ThreadPriority) -> Result<(), String> {
     #[cfg(target_os = "linux")]
@@ -120,9 +121,68 @@ pub fn set_current_thread_priority(p: ThreadPriority) -> Result<(), String> {
         }
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(target_os = "macos")]
+    {
+        let qos_class = match p {
+            ThreadPriority::Realtime { .. } => libc::QOS_CLASS_USER_INTERACTIVE,
+            ThreadPriority::High => libc::QOS_CLASS_USER_INITIATED,
+            ThreadPriority::Normal => libc::QOS_CLASS_DEFAULT,
+            ThreadPriority::Low => libc::QOS_CLASS_UTILITY,
+        };
+        let result = unsafe { libc::pthread_set_qos_class_self_np(qos_class, 0) };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(format!("pthread_set_qos_class_self_np failed: {}", std::io::Error::last_os_error()))
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
     {
         let _ = p;
+        Ok(())
+    }
+}
+
+/// Set the current thread's OS-level name.
+///
+/// # Platform-specific
+/// - **Linux:** Uses `pthread_setname_np(pthread_self(), name)`.
+/// - **Windows:** Uses `SetThreadDescription`.
+/// - **macOS:** Uses `pthread_setname_np(name)` (single-argument variant).
+/// - **Other:** No-op.
+pub fn set_current_thread_name(name: &str) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    {
+        let c_name = std::ffi::CString::new(name).map_err(|e| format!("invalid thread name: {e}"))?;
+        let result = unsafe { libc::pthread_setname_np(libc::pthread_self(), c_name.as_ptr()) };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(format!("pthread_setname_np failed: {}", std::io::Error::last_os_error()))
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = name;
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let c_name = std::ffi::CString::new(name).map_err(|e| format!("invalid thread name: {e}"))?;
+        let result = unsafe { libc::pthread_setname_np(c_name.as_ptr()) };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(format!("pthread_setname_np failed: {}", std::io::Error::last_os_error()))
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    {
+        let _ = name;
         Ok(())
     }
 }

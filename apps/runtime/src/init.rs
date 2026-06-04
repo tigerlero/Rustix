@@ -15,6 +15,8 @@ pub fn init_scene_resources(
     _shadow_descriptor_pool: &mut Option<vk::DescriptorPool>,
     _shadow_descriptor_set: &mut Option<vk::DescriptorSet>,
     shadow_map: &mut Option<rustix_render::GpuTexture>,
+    tonemap_pipeline: &mut Option<rustix_render::pipeline::ToneMapPipeline>,
+    tonemap_desc_set: &mut Option<vk::DescriptorSet>,
 ) {
     if scene_pipeline.is_some() { return; }
 
@@ -87,7 +89,8 @@ pub fn init_scene_resources(
     ) {
         (Ok(vs), Ok(fs)) => {
             let sw = renderer.swapchain.lock();
-            let variant_key = rustix_render::pipeline::PipelineVariantKey::default();
+            let mut variant_key = rustix_render::pipeline::PipelineVariantKey::default();
+            variant_key.spec_constants.set(0, 1);
             match renderer.pipeline_variant_cache().get_or_create(
                 &variant_key,
                 renderer.device(),
@@ -96,7 +99,6 @@ pub fn init_scene_resources(
                 &fs,
             ) {
                 Ok(_pipeline) => {
-                    // The pipeline is now cached; retrieve the full struct for storage.
                     if let Some(gp) = renderer.pipeline_variant_cache().get_pipeline(&variant_key) {
                         *scene_pipeline = Some(gp);
                     }
@@ -127,19 +129,44 @@ pub fn init_scene_resources(
     } else {
         tracing::error!("failed to compile shadow vertex shader");
     }
-    *shadow_map = renderer.create_shadow_map(1024).ok();
-    // Register shadow map texture and sampler into bindless heap using a batched update.
-    if let Some(ref sm) = *shadow_map {
-        let heap = renderer.bindless_heap();
-        let mut batch = rustix_render::descriptor_batch::DescriptorUpdateBatch::new(
-            renderer.device().logical(),
-            heap.set(),
-        );
-        let _texture_slot = heap.alloc_texture_into(&mut batch, sm.view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-        let _sampler_slot = heap.alloc_sampler_into(&mut batch, sm.sampler);
-        if let Err(e) = batch.flush() {
-            tracing::error!("bindless batch flush failed: {e}");
+    if shadow_map.is_none() {
+        *shadow_map = renderer.create_shadow_map(1024).ok();
+        // Register shadow map texture and sampler into bindless heap using a batched update.
+        if let Some(ref sm) = *shadow_map {
+            let heap = renderer.bindless_heap();
+            let mut batch = rustix_render::descriptor_batch::DescriptorUpdateBatch::new(
+                renderer.device().logical(),
+                heap.set(),
+            );
+            let _texture_slot = heap.alloc_texture_into(&mut batch, sm.view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+            let _sampler_slot = heap.alloc_sampler_into(&mut batch, sm.sampler);
+            if let Err(e) = batch.flush() {
+                tracing::error!("bindless batch flush failed: {e}");
+            }
         }
+    }
+
+    // Tone-mapping pipeline (HDR → SDR)
+    match (
+        rustix_render::shader::builtin::tonemap_vertex_shader(renderer.device().logical()),
+        rustix_render::shader::builtin::tonemap_fragment_shader(renderer.device().logical()),
+    ) {
+        (Ok(vs), Ok(fs)) => {
+            let sw = renderer.swapchain.lock();
+            match rustix_render::pipeline::ToneMapPipeline::create(renderer.device(), &sw, &vs, &fs, None) {
+                Ok(p) => {
+                    match renderer.allocate_descriptor_set(p.desc_layout) {
+                        Ok(ds) => *tonemap_desc_set = Some(ds),
+                        Err(e) => tracing::error!("tonemap desc set alloc failed: {e}"),
+                    }
+                    *tonemap_pipeline = Some(p);
+                }
+                Err(e) => tracing::error!("tone-map pipeline creation failed: {e}"),
+            }
+            drop(sw);
+        }
+        (Err(e), _) => tracing::error!("tonemap vertex shader compile failed: {e}"),
+        (_, Err(e)) => tracing::error!("tonemap fragment shader compile failed: {e}"),
     }
 }
 
@@ -159,7 +186,7 @@ pub fn init_2d_resources(
         let sw = renderer.swapchain.lock();
         match rustix_render::pipeline::GraphicsPipeline2D::create(renderer.device(), &sw, &vs, &fs) {
             Ok(p) => {
-                match renderer.alloc_descriptor_set(p.desc_pool, p.desc_layout) {
+                match renderer.allocate_descriptor_set(p.desc_layout) {
                     Ok(ds) => *desc_set_2d = Some(ds),
                     Err(e) => tracing::error!("2D desc set alloc failed: {e}"),
                 }
@@ -202,5 +229,123 @@ pub fn init_2d_resources(
     match renderer.create_texture(tex_size, tex_size, &pixels) {
         Ok(tex) => *texture_2d = Some(tex),
         Err(e) => tracing::error!("2D texture creation failed: {e}"),
+    }
+}
+
+/// Reload scene pipeline shaders from disk overrides (hot-reload).
+///
+/// Call this when `pbr.vert` or `pbr.frag` changed on disk.
+pub fn reload_scene_pipeline(
+    renderer: &Renderer,
+    scene_pipeline: &mut Option<rustix_render::pipeline::GraphicsPipeline>,
+) {
+    match (
+        rustix_render::shader::builtin::vertex_shader_override(renderer.device().logical()),
+        rustix_render::shader::builtin::fragment_shader_override(renderer.device().logical()),
+    ) {
+        (Ok(vs), Ok(fs)) => {
+            let sw = renderer.swapchain.lock();
+            let mut variant_key = rustix_render::pipeline::PipelineVariantKey::default();
+            variant_key.spec_constants.set(0, 1);
+            renderer.clear_pipeline_cache();
+            match renderer.pipeline_variant_cache().get_or_create(
+                &variant_key,
+                renderer.device(),
+                &sw,
+                &vs,
+                &fs,
+            ) {
+                Ok(_pipeline) => {
+                    if let Some(gp) = renderer.pipeline_variant_cache().get_pipeline(&variant_key) {
+                        *scene_pipeline = Some(gp);
+                        tracing::info!("scene pipeline hot-reloaded");
+                    }
+                }
+                Err(e) => tracing::error!("scene pipeline reload failed: {e}"),
+            }
+            drop(sw);
+        }
+        (Err(e), _) => tracing::error!("vertex shader reload failed: {e}"),
+        (_, Err(e)) => tracing::error!("fragment shader reload failed: {e}"),
+    }
+}
+
+/// Reload shadow pipeline shader from disk override (hot-reload).
+pub fn reload_shadow_pipeline(
+    renderer: &Renderer,
+    shadow_pipeline: &mut Option<rustix_render::pipeline::ShadowPipeline>,
+    bindless_layout: vk::DescriptorSetLayout,
+) {
+    match rustix_render::shader::builtin::shadow_vertex_shader_override(renderer.device().logical()) {
+        Ok(sv) => {
+            match rustix_render::pipeline::ShadowPipeline::create(renderer.device(), &sv, bindless_layout) {
+                Ok(p) => {
+                    *shadow_pipeline = Some(p);
+                    tracing::info!("shadow pipeline hot-reloaded");
+                }
+                Err(e) => tracing::error!("shadow pipeline reload failed: {e}"),
+            }
+        }
+        Err(e) => tracing::error!("shadow vertex shader reload failed: {e}"),
+    }
+}
+
+/// Reload tone-map pipeline shaders from disk overrides (hot-reload).
+pub fn reload_tonemap_pipeline(
+    renderer: &Renderer,
+    tonemap_pipeline: &mut Option<rustix_render::pipeline::ToneMapPipeline>,
+    tonemap_desc_set: &mut Option<vk::DescriptorSet>,
+) {
+    match (
+        rustix_render::shader::builtin::tonemap_vertex_shader_override(renderer.device().logical()),
+        rustix_render::shader::builtin::tonemap_fragment_shader_override(renderer.device().logical()),
+    ) {
+        (Ok(vs), Ok(fs)) => {
+            let sw = renderer.swapchain.lock();
+            match rustix_render::pipeline::ToneMapPipeline::create(renderer.device(), &sw, &vs, &fs, None) {
+                Ok(p) => {
+                    match renderer.allocate_descriptor_set(p.desc_layout) {
+                        Ok(ds) => *tonemap_desc_set = Some(ds),
+                        Err(e) => tracing::error!("tonemap desc set alloc failed: {e}"),
+                    }
+                    *tonemap_pipeline = Some(p);
+                    tracing::info!("tonemap pipeline hot-reloaded");
+                }
+                Err(e) => tracing::error!("tonemap pipeline reload failed: {e}"),
+            }
+            drop(sw);
+        }
+        (Err(e), _) => tracing::error!("tonemap vertex shader reload failed: {e}"),
+        (_, Err(e)) => tracing::error!("tonemap fragment shader reload failed: {e}"),
+    }
+}
+
+/// Reload 2D sprite pipeline shaders from disk overrides (hot-reload).
+pub fn reload_2d_pipeline(
+    renderer: &Renderer,
+    pipeline_2d: &mut Option<rustix_render::pipeline::GraphicsPipeline2D>,
+    desc_set_2d: &mut Option<vk::DescriptorSet>,
+) {
+    match (
+        rustix_render::shader::builtin::vertex_2d_shader_override(renderer.device().logical()),
+        rustix_render::shader::builtin::fragment_2d_shader_override(renderer.device().logical()),
+    ) {
+        (Ok(vs), Ok(fs)) => {
+            let sw = renderer.swapchain.lock();
+            match rustix_render::pipeline::GraphicsPipeline2D::create(renderer.device(), &sw, &vs, &fs) {
+                Ok(p) => {
+                    match renderer.allocate_descriptor_set(p.desc_layout) {
+                        Ok(ds) => *desc_set_2d = Some(ds),
+                        Err(e) => tracing::error!("2D desc set alloc failed: {e}"),
+                    }
+                    *pipeline_2d = Some(p);
+                    tracing::info!("2D pipeline hot-reloaded");
+                }
+                Err(e) => tracing::error!("2D pipeline reload failed: {e}"),
+            }
+            drop(sw);
+        }
+        (Err(e), _) => tracing::error!("2D vertex shader reload failed: {e}"),
+        (_, Err(e)) => tracing::error!("2D fragment shader reload failed: {e}"),
     }
 }
