@@ -1,0 +1,318 @@
+use std::collections::HashMap;
+use std::path::Path;
+use std::time::Instant;
+use ash::vk;
+use rustix_core::ecs::EcsWorld;
+use rustix_core::math::{Vec3, Vec4, Mat4};
+use rustix_platform::input::InputManager;
+use rustix_platform::window::WindowHandle;
+use rustix_render::{Renderer, DirectionalLight};
+use rustix_render::mesh::Mesh;
+use rustix_audio::{AudioEngine, SoundInstance};
+use rustix_animation::{Animator, AnimationClip, update_animators};
+use rustix_physics::{RigidBody, PhysicsWorld, step_physics};
+use rustix_asset::mmap::MappedFile;
+
+use crate::camera::EditorCamera;
+use crate::project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo, load_project_file, create_project_file, add_recent_project, write_project_file};
+use crate::scene::{Transform, Name, MeshComponent, Material, world_transform, scene_to_world, world_to_scene};
+use crate::undo::UndoHistory;
+
+pub struct AppState {
+    pub screen: AppScreen,
+    pub recent_projects: Vec<crate::project::ProjectEntry>,
+    pub current_project: Option<ProjectInfo>,
+    pub project_dir: Option<String>,
+    pub ecs_world: EcsWorld,
+    pub meshes: HashMap<String, Mesh>,
+    pub animation_clips: HashMap<String, AnimationClip>,
+    pub physics_world: PhysicsWorld,
+
+    pub scene_pipeline: Option<rustix_render::pipeline::GraphicsPipeline>,
+    pub scene_descriptor_pool: Option<vk::DescriptorPool>,
+    pub scene_descriptor_set: Option<vk::DescriptorSet>,
+    pub scene_uniform_buffer: Option<rustix_render::memory::GpuBuffer>,
+    pub scene_depth_buffer: Option<rustix_render::DepthBuffer>,
+    pub shadow_pipeline: Option<rustix_render::pipeline::ShadowPipeline>,
+    pub shadow_descriptor_pool: Option<vk::DescriptorPool>,
+    pub shadow_descriptor_set: Option<vk::DescriptorSet>,
+    pub csm_resources: Option<crate::render::CsmResources>,
+    pub point_shadow_resources: Option<crate::render::PointShadowResources>,
+    pub spot_shadow_resources: Option<crate::render::SpotShadowResources>,
+    pub shadow_layout: vk::ImageLayout,
+    pub frame_graph_snapshot: Option<rustix_render::graph::FrameGraphSnapshot>,
+    pub show_frame_graph_overlay: bool,
+    pub fwd_plus_resources: Option<crate::render::ForwardPlusResources>,
+    pub gbuffer_resources: Option<crate::render::GBufferResources>,
+
+    pub hdr_framebuffer: Option<rustix_render::HdrFramebuffer>,
+    pub hdr_fb_size: (u32, u32),
+    pub tonemap_pipeline: Option<rustix_render::pipeline::ToneMapPipeline>,
+    pub tonemap_desc_set: Option<vk::DescriptorSet>,
+
+    pub viewport_framebuffers: Vec<[Option<rustix_render::Framebuffer>; 3]>,
+    pub viewport_fb_sizes: Vec<(u32, u32)>,
+
+    pub pipeline_2d: Option<rustix_render::pipeline::GraphicsPipeline2D>,
+    pub ubo_2d: Option<rustix_render::memory::GpuBuffer>,
+    pub desc_set_2d: Option<vk::DescriptorSet>,
+    pub quad_buffer_2d: Option<rustix_render::memory::GpuBuffer>,
+    pub texture_2d: Option<rustix_render::GpuTexture>,
+
+    pub selected_entity: std::rc::Rc<std::cell::RefCell<Option<hecs::Entity>>>,
+    pub pending_delete: std::rc::Rc<std::cell::RefCell<Option<hecs::Entity>>>,
+    pub dirty: std::rc::Rc<std::cell::Cell<bool>>,
+    pub show_confirm: std::rc::Rc<std::cell::Cell<bool>>,
+    pub confirm_target: std::rc::Rc<std::cell::Cell<ConfirmTarget>>,
+    pub show_settings: std::rc::Rc<std::cell::Cell<bool>>,
+    pub renaming: std::rc::Rc<std::cell::RefCell<Option<hecs::Entity>>>,
+    pub rename_buffer: std::rc::Rc<std::cell::RefCell<String>>,
+    pub undo_history: std::rc::Rc<std::cell::RefCell<UndoHistory>>,
+    pub show_new_project_type: std::rc::Rc<std::cell::Cell<bool>>,
+    pub new_project_type: std::rc::Rc<std::cell::Cell<ProjectType>>,
+
+    pub sprite_editor: crate::sprite_editor::SpriteEditor,
+    pub audio_engine: Option<AudioEngine>,
+    pub audio_instance: Option<SoundInstance>,
+    pub waveform_viewer: crate::waveform::WaveformViewer,
+
+    pub open_project: std::rc::Rc<std::cell::RefCell<Option<String>>>,
+    pub new_project: std::rc::Rc<std::cell::RefCell<Option<String>>>,
+    pub pending_mesh_load: std::rc::Rc<std::cell::RefCell<Option<String>>>,
+
+    pub input_recorder: rustix_platform::recorder::InputRecorder,
+    pub recording_dir: std::path::PathBuf,
+    pub start_time: Instant,
+}
+
+impl AppState {
+    pub fn new() -> Self {
+        let mut ecs_world = EcsWorld::new();
+        for i in 0..3 {
+            let e = ecs_world.spawn((
+                Transform { position: Vec3::new(i as f32 * 2.0, 0.0, 0.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
+                Name(format!("Entity {}", i)),
+                MeshComponent("Cube".into()),
+                Material { base_color: Vec3::new(0.6 + i as f32 * 0.15, 0.4 + i as f32 * 0.1, 0.5), roughness: 0.3 + i as f32 * 0.2, metallic: 0.0, ao: 1.0, emissive: 0.0 },
+            ));
+            tracing::info!("created entity {}: {:?}", i, e);
+        }
+        tracing::info!("startup world has {} named entities", ecs_world.query::<&Name>().iter().count());
+
+        Self {
+            screen: AppScreen::Startup,
+            recent_projects: crate::project::load_recent_projects(),
+            current_project: None,
+            project_dir: None,
+            ecs_world,
+            meshes: HashMap::new(),
+            animation_clips: HashMap::new(),
+            physics_world: PhysicsWorld::default(),
+
+            scene_pipeline: None,
+            scene_descriptor_pool: None,
+            scene_descriptor_set: None,
+            scene_uniform_buffer: None,
+            scene_depth_buffer: None,
+            shadow_pipeline: None,
+            shadow_descriptor_pool: None,
+            shadow_descriptor_set: None,
+            csm_resources: None,
+            point_shadow_resources: None,
+            spot_shadow_resources: None,
+            shadow_layout: vk::ImageLayout::UNDEFINED,
+            frame_graph_snapshot: None,
+            show_frame_graph_overlay: false,
+            fwd_plus_resources: None,
+            gbuffer_resources: None,
+
+            hdr_framebuffer: None,
+            hdr_fb_size: (0, 0),
+            tonemap_pipeline: None,
+            tonemap_desc_set: None,
+
+            viewport_framebuffers: (0..crate::ui::viewport::MAX_VIEWPORTS)
+                .map(|_| [None, None, None])
+                .collect(),
+            viewport_fb_sizes: vec![(0, 0); crate::ui::viewport::MAX_VIEWPORTS],
+
+            pipeline_2d: None,
+            ubo_2d: None,
+            desc_set_2d: None,
+            quad_buffer_2d: None,
+            texture_2d: None,
+
+            selected_entity: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            pending_delete: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            dirty: std::rc::Rc::new(std::cell::Cell::new(false)),
+            show_confirm: std::rc::Rc::new(std::cell::Cell::new(false)),
+            confirm_target: std::rc::Rc::new(std::cell::Cell::new(ConfirmTarget::None)),
+            show_settings: std::rc::Rc::new(std::cell::Cell::new(false)),
+            renaming: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            rename_buffer: std::rc::Rc::new(std::cell::RefCell::new(String::new())),
+            undo_history: std::rc::Rc::new(std::cell::RefCell::new(UndoHistory::new(100))),
+            show_new_project_type: std::rc::Rc::new(std::cell::Cell::new(false)),
+            new_project_type: std::rc::Rc::new(std::cell::Cell::new(ProjectType::Dim3)),
+
+            sprite_editor: crate::sprite_editor::SpriteEditor::default(),
+            audio_engine: AudioEngine::new().ok(),
+            audio_instance: None,
+            waveform_viewer: crate::waveform::WaveformViewer::new(),
+
+            open_project: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            new_project: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            pending_mesh_load: std::rc::Rc::new(std::cell::RefCell::new(None)),
+
+            input_recorder: rustix_platform::recorder::InputRecorder::new(),
+            recording_dir: dirs::config_dir()
+                .map(|d| d.join("rustix").join("recordings"))
+                .unwrap_or_else(|| std::path::PathBuf::from("recordings")),
+            start_time: Instant::now(),
+        }
+    }
+
+    pub fn init_scene_resources(&mut self, renderer: &Renderer) {
+        crate::init::init_scene_resources(
+            renderer, &mut self.meshes,
+            &mut self.scene_pipeline, &mut self.scene_descriptor_pool, &mut self.scene_descriptor_set,
+            &mut self.scene_uniform_buffer, &mut self.scene_depth_buffer,
+            &mut self.shadow_pipeline, &mut self.shadow_descriptor_pool, &mut self.shadow_descriptor_set,
+            &mut self.csm_resources,
+            &mut self.point_shadow_resources,
+            &mut self.spot_shadow_resources,
+            &mut self.tonemap_pipeline, &mut self.tonemap_desc_set,
+        );
+    }
+
+    pub fn init_2d_resources(&mut self, renderer: &Renderer) {
+        crate::init::init_2d_resources(
+            renderer,
+            &mut self.pipeline_2d, &mut self.ubo_2d, &mut self.desc_set_2d,
+            &mut self.quad_buffer_2d, &mut self.texture_2d,
+        );
+    }
+
+    pub fn try_create_fwd_plus(&mut self, renderer: &Renderer) {
+        if self.fwd_plus_resources.is_none() {
+            match crate::render::ForwardPlusResources::new(renderer) {
+                Ok(res) => self.fwd_plus_resources = Some(res),
+                Err(e) => tracing::error!("failed to create Forward+ resources: {e}"),
+            }
+        }
+    }
+
+    pub fn try_create_gbuffer(&mut self, renderer: &Renderer, extent: vk::Extent2D) {
+        if self.gbuffer_resources.is_none() {
+            if let Some(ref depth) = self.scene_depth_buffer {
+                match crate::render::GBufferResources::new(renderer, extent, depth) {
+                    Ok(res) => self.gbuffer_resources = Some(res),
+                    Err(e) => tracing::error!("failed to create GBuffer resources: {e}"),
+                }
+            }
+        }
+    }
+
+    pub fn try_recreate_hdr_framebuffer(&mut self, renderer: &Renderer, sw_extent: vk::Extent2D) {
+        if self.hdr_fb_size != (sw_extent.width, sw_extent.height) {
+            self.hdr_framebuffer = None;
+            self.hdr_fb_size = (sw_extent.width, sw_extent.height);
+            self.gbuffer_resources = None;
+        }
+        if self.hdr_framebuffer.is_none() {
+            match rustix_render::HdrFramebuffer::new(renderer, sw_extent.width, sw_extent.height) {
+                Ok(fb) => self.hdr_framebuffer = Some(fb),
+                Err(e) => tracing::error!("HDR framebuffer creation failed: {e}"),
+            }
+        }
+    }
+
+    pub fn handle_hot_reload(&mut self, renderer: &Renderer) {
+        if renderer.frame_index() > 0 {
+            if let Some(reloader) = renderer.hot_reloader() {
+                for path in reloader.take_events() {
+                    let file = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    match file {
+                        "pbr.vert" | "pbr.frag" => {
+                            crate::init::reload_scene_pipeline(renderer, &mut self.scene_pipeline);
+                        }
+                        "shadow.vert" => {
+                            let bindless_layout = renderer.bindless_heap().layout();
+                            crate::init::reload_shadow_pipeline(renderer, &mut self.shadow_pipeline, bindless_layout);
+                        }
+                        "tonemap.vert" | "tonemap.frag" => {
+                            crate::init::reload_tonemap_pipeline(renderer, &mut self.tonemap_pipeline, &mut self.tonemap_desc_set);
+                        }
+                        "sprite.vert" | "sprite.frag" => {
+                            crate::init::reload_2d_pipeline(renderer, &mut self.pipeline_2d, &mut self.desc_set_2d);
+                        }
+                        "light_cull.comp" => {
+                            renderer.compute_pipeline_cache().clear();
+                        }
+                        "gbuffer.vert" | "gbuffer.frag" => {
+                            if let Some(ref mut gbuf) = self.gbuffer_resources {
+                                let bindless_layout = renderer.bindless_heap().layout();
+                                match (
+                                    rustix_render::shader::builtin::gbuffer_vertex_shader_override(renderer.device().logical()),
+                                    rustix_render::shader::builtin::gbuffer_fragment_shader_override(renderer.device().logical()),
+                                ) {
+                                    (Ok(vs), Ok(fs)) => {
+                                        match rustix_render::pipeline::GBufferPipeline::create(renderer.device(), &vs, &fs, bindless_layout) {
+                                            Ok(p) => gbuf.gbuffer_pipeline = p,
+                                            Err(e) => tracing::error!("gbuffer pipeline reload failed: {e}"),
+                                        }
+                                    }
+                                    (Err(e), _) | (_, Err(e)) => tracing::error!("gbuffer shader reload failed: {e}"),
+                                }
+                            }
+                        }
+                        "deferred.vert" | "deferred.frag" => {
+                            if let Some(ref mut gbuf) = self.gbuffer_resources {
+                                let bindless_layout = renderer.bindless_heap().layout();
+                                match (
+                                    rustix_render::shader::builtin::deferred_vertex_shader_override(renderer.device().logical()),
+                                    rustix_render::shader::builtin::deferred_fragment_shader_override(renderer.device().logical()),
+                                ) {
+                                    (Ok(vs), Ok(fs)) => {
+                                        match rustix_render::pipeline::DeferredLightingPipeline::create(renderer.device(), &vs, &fs, bindless_layout) {
+                                            Ok(p) => gbuf.deferred_pipeline = p,
+                                            Err(e) => tracing::error!("deferred pipeline reload failed: {e}"),
+                                        }
+                                    }
+                                    (Err(e), _) | (_, Err(e)) => tracing::error!("deferred shader reload failed: {e}"),
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn handle_pending_mesh_load(&mut self, renderer: &Renderer) {
+        if let Some(path) = self.pending_mesh_load.borrow_mut().take() {
+            if let Ok(data) = MappedFile::open(Path::new(&path)) {
+                let mesh_name = Path::new(&path)
+                    .file_stem().and_then(|s| s.to_str()).unwrap_or("Imported")
+                    .to_string();
+                if let Ok(result) = crate::gltf_loader::load_glb(renderer, &data, &mesh_name) {
+                    tracing::info!("loaded mesh {mesh_name} from {path} (base={:?} rough={:.2} metal={:.2})",
+                        result.base_color, result.roughness, result.metallic);
+                    self.meshes.insert(mesh_name.clone(), result.mesh);
+                    let e = self.ecs_world.spawn((
+                        Transform { position: Vec3::new(0.0, 1.0, 0.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
+                        Name(mesh_name.clone()),
+                        MeshComponent(mesh_name),
+                        Material { base_color: Vec3::from(result.base_color), roughness: result.roughness, metallic: result.metallic, ao: 1.0, emissive: 0.0 },
+                    ));
+                    *self.selected_entity.borrow_mut() = Some(e);
+                    self.dirty.set(true);
+                } else {
+                    tracing::error!("failed to load mesh from {path}");
+                }
+            } else {
+                tracing::error!("failed to read file {path}");
+            }
+        }
+    }
+}
