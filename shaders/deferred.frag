@@ -1,7 +1,5 @@
 #version 460
-struct PointLight { vec4 position; vec4 color; };
-layout(binding = 0) uniform SceneUBO { mat4 view_proj; vec4 cam_pos; uint light_count; PointLight lights[8]; vec4 fog; mat4 light_view_proj; } ubo;
-layout(push_constant) uniform PC { mat4 model; vec4 dir_light; vec4 dir_color; vec4 base_color; vec4 material; } pc;
+layout(binding = 0) uniform SceneUBO { mat4 view_proj; vec4 cam_pos; uint light_count; vec4 _pad[9]; vec4 fog; mat4 light_view_proj; } ubo;
 layout(binding = 10) uniform CsmUBO {
     mat4 light_view_proj[3];
     vec4 cascade_splits;
@@ -28,11 +26,22 @@ layout(binding = 3, std430) readonly buffer LightBuffer {
 layout(binding = 4, std430) readonly buffer TileLightList {
     uint data[];
 } tile_list;
-layout(location = 0) in vec3 fragNormal;
-layout(location = 1) in vec3 fragWorldPos;
+layout(binding = 5) uniform texture2D gbufferAlbedo;
+layout(binding = 6) uniform texture2D gbufferNormal;
+layout(binding = 7) uniform texture2D gbufferMaterial;
+layout(binding = 8) uniform texture2D depthTex;
+layout(binding = 9) uniform sampler gbufferSamp;
+layout(push_constant) uniform PC {
+    mat4 inv_view_proj;
+    vec4 cam_pos;
+    vec4 dir_light;
+    vec4 dir_color;
+    uint light_count;
+    uint max_lights_per_tile;
+} pc;
+layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 outColor;
 
-const int SHADOW_PCF_RADIUS = 1;
 #define TILE_SIZE 16
 #define MAX_LIGHTS_PER_TILE 32
 
@@ -92,7 +101,7 @@ float pointShadow(vec3 worldPos, vec3 lightPos, float lightIdx) {
     vec3 to_light = worldPos - lightPos;
     float currentDepth = length(to_light);
     float sampled = texture(samplerCubeArray(pointShadowTex, pointShadowSamp), vec4(to_light, lightIdx)).r;
-    float far_plane = 25.0; // should match shadow projection far plane
+    float far_plane = 25.0;
     sampled *= far_plane;
     float bias = 0.05;
     return (currentDepth - bias > sampled) ? 0.0 : 1.0;
@@ -110,7 +119,7 @@ float spotShadow(vec3 worldPos, int idx) {
 }
 
 float csmShadow(vec3 worldPos) {
-    float dist = length(worldPos - ubo.cam_pos.xyz);
+    float dist = length(worldPos - pc.cam_pos.xyz);
     int cascade = 0;
     if (dist > csm.cascade_splits.x) cascade = 1;
     if (dist > csm.cascade_splits.y) cascade = 2;
@@ -124,23 +133,38 @@ float csmShadow(vec3 worldPos) {
     float bias = 0.005;
     vec2 texelSize = vec2(1.0 / 2048.0);
     float shadow = 0.0;
-    for(int x = -SHADOW_PCF_RADIUS; x <= SHADOW_PCF_RADIUS; ++x) {
-        for(int y = -SHADOW_PCF_RADIUS; y <= SHADOW_PCF_RADIUS; ++y) {
+    const int radius = 1;
+    for(int x = -radius; x <= radius; ++x) {
+        for(int y = -radius; y <= radius; ++y) {
             shadow += sampleShadow(cascade, proj.xy + vec2(x, y) * texelSize, currentDepth, bias);
         }
     }
-    int samples = (2 * SHADOW_PCF_RADIUS + 1) * (2 * SHADOW_PCF_RADIUS + 1);
+    int samples = (2 * radius + 1) * (2 * radius + 1);
     return shadow / float(samples);
 }
 
+vec3 reconstructWorldPos(vec2 uv_coord, float depth) {
+    vec4 clip = vec4(uv_coord * 2.0 - 1.0, depth, 1.0);
+    clip.y = -clip.y; // flip Y for Vulkan NDC
+    vec4 world = pc.inv_view_proj * clip;
+    return world.xyz / world.w;
+}
+
 void main() {
-    vec3 N = normalize(fragNormal);
-    vec3 V = normalize(ubo.cam_pos.xyz - fragWorldPos);
-    vec3 base = pc.base_color.rgb;
-    float rough = pc.material.x;
-    float metal = pc.material.y;
-    float ao = pc.material.z;
-    float emissive = pc.material.w;
+    vec4 albedo_metal = texture(sampler2D(gbufferAlbedo, gbufferSamp), uv);
+    vec4 normal_enc = texture(sampler2D(gbufferNormal, gbufferSamp), uv);
+    vec4 material = texture(sampler2D(gbufferMaterial, gbufferSamp), uv);
+    float depth = texture(sampler2D(depthTex, gbufferSamp), uv).r;
+
+    vec3 base = albedo_metal.rgb;
+    float metal = albedo_metal.a;
+    vec3 N = normalize(normal_enc.xyz);
+    float rough = material.r;
+    float ao = material.g;
+    float emissive = material.b;
+
+    vec3 fragWorldPos = reconstructWorldPos(uv, depth);
+    vec3 V = normalize(pc.cam_pos.xyz - fragWorldPos);
 
     // Directional light + shadow
     vec3 L_dir = normalize(pc.dir_light.xyz);

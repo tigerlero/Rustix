@@ -14,7 +14,9 @@ pub fn init_scene_resources(
     shadow_pipeline: &mut Option<rustix_render::pipeline::ShadowPipeline>,
     _shadow_descriptor_pool: &mut Option<vk::DescriptorPool>,
     _shadow_descriptor_set: &mut Option<vk::DescriptorSet>,
-    shadow_map: &mut Option<rustix_render::GpuTexture>,
+    csm_resources: &mut Option<crate::render::CsmResources>,
+    point_shadow_resources: &mut Option<crate::render::PointShadowResources>,
+    spot_shadow_resources: &mut Option<crate::render::SpotShadowResources>,
     tonemap_pipeline: &mut Option<rustix_render::pipeline::ToneMapPipeline>,
     tonemap_desc_set: &mut Option<vk::DescriptorSet>,
 ) {
@@ -129,20 +131,28 @@ pub fn init_scene_resources(
     } else {
         tracing::error!("failed to compile shadow vertex shader");
     }
-    if shadow_map.is_none() {
-        *shadow_map = renderer.create_shadow_map(1024).ok();
-        // Register shadow map texture and sampler into bindless heap using a batched update.
-        if let Some(ref sm) = *shadow_map {
-            let heap = renderer.bindless_heap();
-            let mut batch = rustix_render::descriptor_batch::DescriptorUpdateBatch::new(
-                renderer.device().logical(),
-                heap.set(),
-            );
-            let _texture_slot = heap.alloc_texture_into(&mut batch, sm.view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-            let _sampler_slot = heap.alloc_sampler_into(&mut batch, sm.sampler);
-            if let Err(e) = batch.flush() {
-                tracing::error!("bindless batch flush failed: {e}");
+    if csm_resources.is_none() {
+        match crate::render::CsmResources::new(renderer, 2048) {
+            Ok(csm) => {
+                *csm_resources = Some(csm);
             }
+            Err(e) => tracing::error!("csm resources creation failed: {e}"),
+        }
+    }
+    if point_shadow_resources.is_none() {
+        match crate::render::PointShadowResources::new(renderer, 512, 4) {
+            Ok(ps) => {
+                *point_shadow_resources = Some(ps);
+            }
+            Err(e) => tracing::error!("point shadow resources creation failed: {e}"),
+        }
+    }
+    if spot_shadow_resources.is_none() {
+        match crate::render::SpotShadowResources::new(renderer, 512, 4) {
+            Ok(ss) => {
+                *spot_shadow_resources = Some(ss);
+            }
+            Err(e) => tracing::error!("spot shadow resources creation failed: {e}"),
         }
     }
 

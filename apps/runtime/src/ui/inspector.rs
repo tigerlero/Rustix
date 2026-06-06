@@ -350,6 +350,8 @@ pub fn show_inspector(
                 mat.base_color = Vec3::new(mat_rgb[0] as f32 / 255.0, mat_rgb[1] as f32 / 255.0, mat_rgb[2] as f32 / 255.0);
                 ui.add(egui::DragValue::new(&mut mat.roughness).prefix("Roughness: ").speed(0.01).range(0.0..=1.0));
                 ui.add(egui::DragValue::new(&mut mat.metallic).prefix("Metallic: ").speed(0.01).range(0.0..=1.0));
+                ui.add(egui::DragValue::new(&mut mat.ao).prefix("AO: ").speed(0.01).range(0.0..=1.0));
+                ui.add(egui::DragValue::new(&mut mat.emissive).prefix("Emissive: ").speed(0.01).range(0.0..=10.0));
             }
             if let Some(ref mut aud) = selected_audio_source {
                 ui.separator();
@@ -646,7 +648,7 @@ pub fn show_inspector(
                 }
                 if !has_mat && ui.button("Material").clicked() {
                     let snapshot = crate::scene::entity_to_scene_entity(world, target);
-                    let _ = world.insert(target, (Material { base_color: Vec3::new(0.7, 0.7, 0.7), roughness: 0.5, metallic: 0.0 },));
+                    let _ = world.insert(target, (Material { base_color: Vec3::new(0.7, 0.7, 0.7), roughness: 0.5, metallic: 0.0, ao: 1.0, emissive: 0.0 },));
                     undo_history.borrow_mut().push(EditorAction::ComponentAdded { entity: target, component: "Material".into(), old_snapshot: snapshot });
                     dirty.set(true);
                     ui.close();

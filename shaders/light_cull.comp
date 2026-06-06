@@ -1,0 +1,74 @@
+#version 460
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+struct LightData {
+    vec4 position_radius; // xyz = world-space position, w = radius
+    vec4 color;           // rgb = color, a = intensity
+};
+
+layout(binding = 3, std430) readonly buffer LightBuffer {
+    LightData lights[];
+} light_buffer;
+
+layout(binding = 4, std430) buffer TileLightList {
+    uint data[];
+} tile_list;
+
+layout(push_constant) uniform PushConstants {
+    mat4 view_proj;
+    vec4 cam_pos;
+    uvec2 screen_size;
+    uvec2 tile_count;
+    uint light_count;
+    uint max_lights_per_tile;
+} pc;
+
+#define MAX_LIGHTS_PER_TILE 32
+
+// Compute screen-space AABB of a light (return true if light is in front of camera)
+bool getLightScreenBounds(LightData light, out vec2 min_xy, out vec2 max_xy) {
+    vec4 clip = pc.view_proj * vec4(light.position_radius.xyz, 1.0);
+    if (clip.w <= 0.0) {
+        min_xy = vec2(0.0);
+        max_xy = vec2(0.0);
+        return false;
+    }
+    vec3 ndc = clip.xyz / clip.w;
+    vec2 screen = (ndc.xy * 0.5 + 0.5) * vec2(pc.screen_size);
+
+    // Approximate screen-space radius: project sphere radius at light distance
+    float dist = length(light.position_radius.xyz - pc.cam_pos.xyz);
+    float screen_radius = light.position_radius.w / max(dist, 0.001) * float(pc.screen_size.y) * 0.5;
+
+    min_xy = screen - screen_radius;
+    max_xy = screen + screen_radius;
+    return true;
+}
+
+void main() {
+    uvec2 tile_id = gl_GlobalInvocationID.xy;
+    if (tile_id.x >= pc.tile_count.x || tile_id.y >= pc.tile_count.y) return;
+
+    uint tile_index = tile_id.y * pc.tile_count.x + tile_id.x;
+    uint base_offset = tile_index * (MAX_LIGHTS_PER_TILE + 1);
+
+    float tile_size = float(pc.screen_size.x) / float(pc.tile_count.x);
+    vec2 tile_min = vec2(tile_id) * tile_size;
+    vec2 tile_max = tile_min + vec2(tile_size);
+
+    uint count = 0;
+    for (uint i = 0; i < pc.light_count; i++) {
+        vec2 lmin, lmax;
+        if (!getLightScreenBounds(light_buffer.lights[i], lmin, lmax)) continue;
+
+        // AABB overlap test in screen space
+        if (lmax.x >= tile_min.x && lmin.x <= tile_max.x &&
+            lmax.y >= tile_min.y && lmin.y <= tile_max.y) {
+            if (count < MAX_LIGHTS_PER_TILE) {
+                tile_list.data[base_offset + 1 + count] = i;
+                count++;
+            }
+        }
+    }
+    tile_list.data[base_offset] = count;
+}

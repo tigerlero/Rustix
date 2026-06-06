@@ -78,7 +78,7 @@ impl super::Renderer {
                 &vk::ImageCreateInfo::default().image_type(vk::ImageType::TYPE_2D).format(fmt)
                     .extent(vk::Extent3D { width: extent.width, height: extent.height, depth: 1 })
                     .mip_levels(1).array_layers(1).samples(vk::SampleCountFlags::TYPE_1)
-                    .tiling(vk::ImageTiling::OPTIMAL).usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
+                    .tiling(vk::ImageTiling::OPTIMAL).usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED)
                     .sharing_mode(vk::SharingMode::EXCLUSIVE), None,
             ).map_err(|e| RenderError::DeviceCreation(format!("depth img: {e}")))?
         };
@@ -143,6 +143,79 @@ impl super::Renderer {
             .get_or_create(&shadow_sampler_info())
             .map_err(|e| RenderError::DeviceCreation(format!("shadow sampler: {e}")))?;
         Ok(GpuTexture { image: img, view, sampler, _allocation: alloc })
+    }
+
+    pub fn create_cubemap_array_shadow(&self, face_size: u32, num_cubes: u32) -> Result<GpuTexture, RenderError> {
+        let total_layers = num_cubes * 6;
+        let info = vk::ImageCreateInfo::default()
+            .image_type(vk::ImageType::TYPE_2D)
+            .format(vk::Format::D32_SFLOAT)
+            .extent(vk::Extent3D { width: face_size, height: face_size, depth: 1 })
+            .mip_levels(1)
+            .array_layers(total_layers)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .tiling(vk::ImageTiling::OPTIMAL)
+            .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .flags(vk::ImageCreateFlags::CUBE_COMPATIBLE);
+        let fmt = info.format;
+        let img = unsafe {
+            self.device.logical().create_image(&info, None)
+                .map_err(|e| RenderError::DeviceCreation(format!("cubemap shadow img: {e}")))?
+        };
+        let req = unsafe { self.device.logical().get_image_memory_requirements(img) };
+        let alloc = self.allocator.lock().allocate("cubemap_shadow", req, gpu_allocator::MemoryLocation::GpuOnly, false)?;
+        unsafe { self.device.logical().bind_image_memory(img, alloc.memory(), alloc.offset())?; }
+        let view = unsafe {
+            self.device.logical().create_image_view(
+                &vk::ImageViewCreateInfo::default().image(img).view_type(vk::ImageViewType::CUBE_ARRAY).format(fmt)
+                    .subresource_range(vk::ImageSubresourceRange { aspect_mask: vk::ImageAspectFlags::DEPTH, base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: total_layers }), None,
+            ).map_err(|e| RenderError::DeviceCreation(format!("cubemap shadow view: {e}")))?
+        };
+        let sampler = self.device.sampler_cache()
+            .get_or_create(&shadow_sampler_info())
+            .map_err(|e| RenderError::DeviceCreation(format!("cubemap shadow sampler: {e}")))?;
+        Ok(GpuTexture { image: img, view, sampler, _allocation: alloc })
+    }
+
+    pub fn create_2d_array_shadow(&self, size: u32, layers: u32) -> Result<GpuTexture, RenderError> {
+        let info = vk::ImageCreateInfo::default()
+            .image_type(vk::ImageType::TYPE_2D)
+            .format(vk::Format::D32_SFLOAT)
+            .extent(vk::Extent3D { width: size, height: size, depth: 1 })
+            .mip_levels(1)
+            .array_layers(layers)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .tiling(vk::ImageTiling::OPTIMAL)
+            .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let fmt = info.format;
+        let img = unsafe {
+            self.device.logical().create_image(&info, None)
+                .map_err(|e| RenderError::DeviceCreation(format!("2d array shadow img: {e}")))?
+        };
+        let req = unsafe { self.device.logical().get_image_memory_requirements(img) };
+        let alloc = self.allocator.lock().allocate("2d_array_shadow", req, gpu_allocator::MemoryLocation::GpuOnly, false)?;
+        unsafe { self.device.logical().bind_image_memory(img, alloc.memory(), alloc.offset())?; }
+        let view = unsafe {
+            self.device.logical().create_image_view(
+                &vk::ImageViewCreateInfo::default().image(img).view_type(vk::ImageViewType::TYPE_2D_ARRAY).format(fmt)
+                    .subresource_range(vk::ImageSubresourceRange { aspect_mask: vk::ImageAspectFlags::DEPTH, base_mip_level: 0, level_count: 1, base_array_layer: 0, layer_count: layers }), None,
+            ).map_err(|e| RenderError::DeviceCreation(format!("2d array shadow view: {e}")))?
+        };
+        let sampler = self.device.sampler_cache()
+            .get_or_create(&shadow_sampler_info())
+            .map_err(|e| RenderError::DeviceCreation(format!("2d array shadow sampler: {e}")))?;
+        Ok(GpuTexture { image: img, view, sampler, _allocation: alloc })
+    }
+
+    pub fn create_layer_view(&self, image: vk::Image, format: vk::Format, layer: u32) -> Result<vk::ImageView, RenderError> {
+        unsafe {
+            self.device.logical().create_image_view(
+                &vk::ImageViewCreateInfo::default().image(image).view_type(vk::ImageViewType::TYPE_2D).format(format)
+                    .subresource_range(vk::ImageSubresourceRange { aspect_mask: vk::ImageAspectFlags::DEPTH, base_mip_level: 0, level_count: 1, base_array_layer: layer, layer_count: 1 }), None,
+            ).map_err(|e| RenderError::DeviceCreation(format!("layer view: {e}")))
+        }
     }
 
     pub fn transition_image_layout(&self, cmd: vk::CommandBuffer, image: vk::Image, aspect: vk::ImageAspectFlags, old_layout: vk::ImageLayout, new_layout: vk::ImageLayout) {

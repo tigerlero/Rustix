@@ -11,6 +11,7 @@ use crate::RenderError;
 pub const PUSH_CONSTANT_SIZE: u32 = 128; // Mat4(64) + dir_light(16) + dir_color(16) + base_color(16) + rough_metal(16)
 pub const UBO_SCENE_SIZE: u64 = 432; // view_proj(64)+cam(16)+count(4)+pad(12)+8*PointLight(256)+fog(16)+light_view_proj(64)
 pub const PUSH_CONSTANT_SIZE_2D: u32 = 64;
+pub const DEFERRED_PUSH_CONSTANT_SIZE: u32 = 128; // inv_view_proj(64) + cam_pos(16) + dir_light(16) + dir_color(16) + light_count(4) + max_lights_per_tile(4) + pad(4)
 
 /// Pure function returning the descriptor set layout binding for the shadow pass UBO.
 pub fn shadow_descriptor_set_bindings() -> [vk::DescriptorSetLayoutBinding<'static>; 1] {
@@ -336,6 +337,7 @@ impl GraphicsPipeline {
     }
 }
 
+#[derive(Clone)]
 pub struct ShadowPipeline {
     pub pipeline: vk::Pipeline,
     pub layout: vk::PipelineLayout,
@@ -590,6 +592,172 @@ impl ToneMapPipeline {
     }
 }
 
+/// G-buffer geometry pass pipeline.
+///
+/// Writes albedo+metallic, world normal, and roughness/AO/emissive into
+/// three color attachments plus depth. Uses the same bindless descriptor
+/// set layout and push constants as the forward scene pipeline.
+pub struct GBufferPipeline {
+    pub pipeline: vk::Pipeline,
+    pub layout: vk::PipelineLayout,
+    pub descriptor_set_layout: vk::DescriptorSetLayout,
+}
+
+impl GBufferPipeline {
+    pub fn create(
+        device: &GpuDevice,
+        vs: &ShaderModule,
+        fs: &ShaderModule,
+        bindless_layout: vk::DescriptorSetLayout,
+    ) -> Result<Self, RenderError> {
+        let stages = [
+            vs.stage_create_info(),
+            fs.stage_create_info(),
+        ];
+
+        let set_layouts = [bindless_layout];
+        let push_range = vk::PushConstantRange::default()
+            .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
+            .offset(0)
+            .size(PUSH_CONSTANT_SIZE);
+        let push_ranges = [push_range];
+
+        let layout = device.pipeline_layout_cache()
+            .get_or_create(&set_layouts, &push_ranges)
+            .map_err(|e| RenderError::PipelineCreation(format!("gbuffer layout: {e}")))?;
+
+        let stride = 24u32;
+        let vb = vk::VertexInputBindingDescription::default().binding(0).stride(stride).input_rate(vk::VertexInputRate::VERTEX);
+        let va = [
+            vk::VertexInputAttributeDescription::default().binding(0).location(0).format(vk::Format::R32G32B32_SFLOAT).offset(0),
+            vk::VertexInputAttributeDescription::default().binding(0).location(1).format(vk::Format::R32G32B32_SFLOAT).offset(12),
+        ];
+        let vbs = [vb];
+        let vi = vk::PipelineVertexInputStateCreateInfo::default().vertex_binding_descriptions(&vbs).vertex_attribute_descriptions(&va);
+        let ia = vk::PipelineInputAssemblyStateCreateInfo::default().topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+        let vps = [vk::Viewport::default()]; let scs = [vk::Rect2D::default()];
+        let vp = vk::PipelineViewportStateCreateInfo::default().viewports(&vps).scissors(&scs);
+        let rs = vk::PipelineRasterizationStateCreateInfo::default()
+            .polygon_mode(vk::PolygonMode::FILL)
+            .cull_mode(vk::CullModeFlags::NONE)
+            .front_face(vk::FrontFace::CLOCKWISE)
+            .line_width(1.0);
+        let ms = vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(vk::SampleCountFlags::TYPE_1);
+        let ds = vk::PipelineDepthStencilStateCreateInfo::default()
+            .depth_test_enable(true)
+            .depth_write_enable(true)
+            .depth_compare_op(vk::CompareOp::LESS);
+        // 3 color attachments, no blending
+        let ba = [
+            vk::PipelineColorBlendAttachmentState::default().color_write_mask(vk::ColorComponentFlags::RGBA).blend_enable(false),
+            vk::PipelineColorBlendAttachmentState::default().color_write_mask(vk::ColorComponentFlags::RGBA).blend_enable(false),
+            vk::PipelineColorBlendAttachmentState::default().color_write_mask(vk::ColorComponentFlags::RGBA).blend_enable(false),
+        ];
+        let cb = vk::PipelineColorBlendStateCreateInfo::default().attachments(&ba);
+        let dyns = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+        let dy = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dyns);
+
+        let cfs = [
+            vk::Format::R8G8B8A8_UNORM,   // albedo + metallic
+            vk::Format::R16G16B16A16_SFLOAT, // normal
+            vk::Format::R8G8B8A8_UNORM,   // roughness + AO + emissive
+        ];
+        let depth_fmt = vk::Format::D32_SFLOAT;
+        let mut dr = vk::PipelineRenderingCreateInfoKHR::default()
+            .color_attachment_formats(&cfs)
+            .depth_attachment_format(depth_fmt);
+
+        let ci = vk::GraphicsPipelineCreateInfo::default()
+            .stages(&stages).vertex_input_state(&vi).input_assembly_state(&ia)
+            .viewport_state(&vp).rasterization_state(&rs).multisample_state(&ms)
+            .depth_stencil_state(&ds).color_blend_state(&cb).dynamic_state(&dy)
+            .layout(layout).base_pipeline_handle(vk::Pipeline::null()).base_pipeline_index(-1)
+            .push_next(&mut dr);
+
+        let pipeline = unsafe {
+            device.logical().create_graphics_pipelines(device.pipeline_cache(), &[ci], None)
+                .map_err(|(_, e)| RenderError::PipelineCreation(format!("gbuffer pipeline: {e}")))?
+                .into_iter().next().ok_or_else(|| RenderError::PipelineCreation("no gbuffer pipeline created".into()))?
+        };
+
+        tracing::info!("GBuffer pipeline created");
+        Ok(Self { pipeline, layout, descriptor_set_layout: bindless_layout })
+    }
+}
+
+/// Deferred lighting pass pipeline.
+///
+/// Full-screen triangle that samples the G-buffer textures and computes
+/// lighting (directional + Forward+ point lights). Outputs HDR color.
+pub struct DeferredLightingPipeline {
+    pub pipeline: vk::Pipeline,
+    pub layout: vk::PipelineLayout,
+    pub descriptor_set_layout: vk::DescriptorSetLayout,
+}
+
+impl DeferredLightingPipeline {
+    pub fn create(
+        device: &GpuDevice,
+        vs: &ShaderModule,
+        fs: &ShaderModule,
+        bindless_layout: vk::DescriptorSetLayout,
+    ) -> Result<Self, RenderError> {
+        let stages = [
+            vs.stage_create_info(),
+            fs.stage_create_info(),
+        ];
+
+        let set_layouts = [bindless_layout];
+        let push_range = vk::PushConstantRange::default()
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+            .offset(0)
+            .size(DEFERRED_PUSH_CONSTANT_SIZE);
+        let push_ranges = [push_range];
+
+        let layout = device.pipeline_layout_cache()
+            .get_or_create(&set_layouts, &push_ranges)
+            .map_err(|e| RenderError::PipelineCreation(format!("deferred layout: {e}")))?;
+
+        // No vertex input — fullscreen triangle from gl_VertexIndex
+        let vi = vk::PipelineVertexInputStateCreateInfo::default();
+        let ia = vk::PipelineInputAssemblyStateCreateInfo::default().topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+        let vps = [vk::Viewport::default()]; let scs = [vk::Rect2D::default()];
+        let vp = vk::PipelineViewportStateCreateInfo::default().viewports(&vps).scissors(&scs);
+        let rs = vk::PipelineRasterizationStateCreateInfo::default()
+            .polygon_mode(vk::PolygonMode::FILL)
+            .cull_mode(vk::CullModeFlags::NONE)
+            .front_face(vk::FrontFace::CLOCKWISE)
+            .line_width(1.0);
+        let ms = vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(vk::SampleCountFlags::TYPE_1);
+        let ds = vk::PipelineDepthStencilStateCreateInfo::default();
+        let ba = [vk::PipelineColorBlendAttachmentState::default()
+            .color_write_mask(vk::ColorComponentFlags::RGBA)
+            .blend_enable(false)];
+        let cb = vk::PipelineColorBlendStateCreateInfo::default().attachments(&ba);
+        let dyns = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+        let dy = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dyns);
+
+        let cfs = [vk::Format::R16G16B16A16_SFLOAT];
+        let mut dr = vk::PipelineRenderingCreateInfoKHR::default().color_attachment_formats(&cfs);
+
+        let ci = vk::GraphicsPipelineCreateInfo::default()
+            .stages(&stages).vertex_input_state(&vi).input_assembly_state(&ia)
+            .viewport_state(&vp).rasterization_state(&rs).multisample_state(&ms)
+            .depth_stencil_state(&ds).color_blend_state(&cb).dynamic_state(&dy)
+            .layout(layout).base_pipeline_handle(vk::Pipeline::null()).base_pipeline_index(-1)
+            .push_next(&mut dr);
+
+        let pipeline = unsafe {
+            device.logical().create_graphics_pipelines(device.pipeline_cache(), &[ci], None)
+                .map_err(|(_, e)| RenderError::PipelineCreation(format!("deferred pipeline: {e}")))?
+                .into_iter().next().ok_or_else(|| RenderError::PipelineCreation("no deferred pipeline created".into()))?
+        };
+
+        tracing::info!("deferred lighting pipeline created");
+        Ok(Self { pipeline, layout, descriptor_set_layout: bindless_layout })
+    }
+}
+
 /// Compute pipeline wrapper.
 pub struct ComputePipeline {
     pub pipeline: vk::Pipeline,
@@ -653,7 +821,7 @@ impl ComputePipelineCache {
         shader: &ShaderModule,
         set_layouts: &[vk::DescriptorSetLayout],
         push_ranges: &[vk::PushConstantRange],
-    ) -> Result<vk::Pipeline, RenderError> {
+    ) -> Result<(vk::Pipeline, vk::PipelineLayout), RenderError> {
         let key = ComputePipelineKey {
             shader: shader.module,
             set_layouts: set_layouts.to_vec(),
@@ -663,7 +831,7 @@ impl ComputePipelineCache {
         {
             let cache = self.cache.lock();
             if let Some(entry) = cache.get(&key) {
-                return Ok(entry.pipeline);
+                return Ok((entry.pipeline, entry.layout));
             }
         }
 
@@ -699,11 +867,11 @@ impl ComputePipelineCache {
                 (*self.device).destroy_pipeline(pipeline, None);
                 // Layout is owned by PipelineLayoutCache; do not destroy here.
             }
-            return Ok(entry.pipeline);
+            return Ok((entry.pipeline, entry.layout));
         }
 
         cache.insert(key, ComputePipeline { pipeline, layout });
-        Ok(pipeline)
+        Ok((pipeline, layout))
     }
 
     /// Retrieve an existing compute pipeline by key without creating one.
@@ -728,6 +896,23 @@ impl ComputePipelineCache {
 
     pub fn is_empty(&self) -> bool {
         self.cache.lock().is_empty()
+    }
+
+    /// Destroy all cached pipelines and clear the cache. Used for shader hot-reload.
+    pub fn clear(&self) {
+        unsafe {
+            if !self.device.is_null() {
+                let dev = &*self.device;
+                let mut cache = self.cache.lock();
+                for entry in cache.values() {
+                    if entry.pipeline != vk::Pipeline::null() {
+                        dev.destroy_pipeline(entry.pipeline, None);
+                    }
+                    // Pipeline layouts are owned by PipelineLayoutCache; do not destroy here.
+                }
+                cache.clear();
+            }
+        }
     }
 }
 

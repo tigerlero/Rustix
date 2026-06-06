@@ -63,6 +63,7 @@ pub struct GpuDevice {
     graphics_queue: vk::Queue,
     present_queue: vk::Queue,
     transfer_queue: vk::Queue,
+    compute_queue: vk::Queue,
     pipeline_cache: vk::PipelineCache,
     descriptor_layout_cache: DescriptorSetLayoutCache,
     pipeline_layout_cache: PipelineLayoutCache,
@@ -182,6 +183,8 @@ impl GpuDevice {
             unsafe { logical.get_device_queue(queue_families.present.ok_or_else(|| RenderError::DeviceCreation("no present queue".into()))?, 0) };
         let transfer_queue =
             unsafe { logical.get_device_queue(queue_families.transfer.ok_or_else(|| RenderError::DeviceCreation("no transfer queue".into()))?, 0) };
+        let compute_queue =
+            unsafe { logical.get_device_queue(queue_families.compute.ok_or_else(|| RenderError::DeviceCreation("no compute queue".into()))?, 0) };
 
         let pc_create_info = vk::PipelineCacheCreateInfo::default();
         let pipeline_cache = unsafe {
@@ -202,6 +205,7 @@ impl GpuDevice {
             graphics_queue,
             present_queue,
             transfer_queue,
+            compute_queue,
             pipeline_cache,
             descriptor_layout_cache,
             pipeline_layout_cache,
@@ -266,11 +270,15 @@ impl GpuDevice {
     pub fn graphics_queue(&self) -> vk::Queue { self.graphics_queue }
     pub fn present_queue(&self) -> vk::Queue { self.present_queue }
     pub fn transfer_queue(&self) -> vk::Queue { self.transfer_queue }
+    pub fn compute_queue(&self) -> vk::Queue { self.compute_queue }
     pub fn graphics_queue_family_index(&self) -> u32 {
         self.queue_families.graphics.unwrap_or(0)
     }
     pub fn transfer_queue_family_index(&self) -> u32 {
         self.queue_families.transfer.unwrap_or(self.queue_families.graphics.unwrap_or(0))
+    }
+    pub fn compute_queue_family_index(&self) -> u32 {
+        self.queue_families.compute.unwrap_or(self.queue_families.graphics.unwrap_or(0))
     }
     pub fn pipeline_cache(&self) -> vk::PipelineCache { self.pipeline_cache }
     pub fn descriptor_layout_cache(&self) -> &DescriptorSetLayoutCache { &self.descriptor_layout_cache }

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use ash::vk;
 use parking_lot::Mutex;
 use crate::instance::VulkanInstance;
@@ -11,7 +12,7 @@ use crate::texture::Framebuffer;
 use crate::error::RenderError;
 use crate::profiler::GpuProfiler;
 use crate::bindless::BindlessDescriptorHeap;
-use crate::pipeline::GraphicsPipelineVariantCache;
+use crate::pipeline::{GraphicsPipelineVariantCache, ComputePipelineCache};
 use crate::descriptor_allocator::DescriptorSetAllocator;
 use rustix_core::config::RenderConfig;
 
@@ -27,14 +28,19 @@ pub struct Renderer {
     command_pool: vk::CommandPool,
     transfer_command_pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
+    compute_command_pool: vk::CommandPool,
+    compute_command_buffers: Vec<vk::CommandBuffer>,
+    compute_sync_semaphores: Vec<vk::Semaphore>,
     frame_complete_semaphore: vk::Semaphore,
     profiler: Option<GpuProfiler>,
     bindless_heap: BindlessDescriptorHeap,
     pipeline_variant_cache: GraphicsPipelineVariantCache,
+    compute_pipeline_cache: ComputePipelineCache,
     descriptor_allocator: Mutex<DescriptorSetAllocator>,
     hot_reloader: Option<crate::hot_reload::ShaderHotReloader>,
     frame_index: usize,
     initialized: bool,
+    compute_signal_value: AtomicU64,
 }
 
 impl Renderer {
@@ -62,6 +68,26 @@ impl Renderer {
                     .level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(3),
             )?
         };
+        let compute_pool = unsafe {
+            device.logical().create_command_pool(
+                &vk::CommandPoolCreateInfo::default()
+                    .queue_family_index(device.compute_queue_family_index())
+                    .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER), None,
+            )?
+        };
+        let compute_bufs = unsafe {
+            device.logical().allocate_command_buffers(
+                &vk::CommandBufferAllocateInfo::default().command_pool(compute_pool)
+                    .level(vk::CommandBufferLevel::PRIMARY).command_buffer_count(3),
+            )?
+        };
+        let sem_create = vk::SemaphoreCreateInfo::default();
+        let compute_sems: Vec<vk::Semaphore> = (0..3)
+            .map(|_| unsafe {
+                device.logical().create_semaphore(&sem_create, None)
+                    .expect("compute sync semaphore")
+            })
+            .collect();
         let mut timeline_create = vk::SemaphoreTypeCreateInfo::default()
             .semaphore_type(vk::SemaphoreType::TIMELINE)
             .initial_value(0);
@@ -75,6 +101,7 @@ impl Renderer {
             device.logical(),
             bindless_heap.layout(),
         );
+        let compute_pipeline_cache = ComputePipelineCache::new(device.logical());
         let desc_pool_sizes = [
             vk::DescriptorPoolSize { ty: vk::DescriptorType::UNIFORM_BUFFER, descriptor_count: 128 },
             vk::DescriptorPoolSize { ty: vk::DescriptorType::SAMPLED_IMAGE, descriptor_count: 128 },
@@ -87,7 +114,27 @@ impl Renderer {
         if hot_reloader.is_none() {
             tracing::warn!("shader hot-reload disabled: could not start file watcher");
         }
-        Ok(Self { instance, device, swapchain: Arc::new(Mutex::new(Swapchain::new())), allocator: Arc::new(Mutex::new(allocator)), command_pool: cmd_pool, transfer_command_pool: transfer_pool, command_buffers: cmd_bufs, frame_complete_semaphore, profiler, bindless_heap, pipeline_variant_cache, descriptor_allocator, hot_reloader, frame_index: 0, initialized: false })
+        Ok(Self {
+            instance, device,
+            swapchain: Arc::new(Mutex::new(Swapchain::new())),
+            allocator: Arc::new(Mutex::new(allocator)),
+            command_pool: cmd_pool,
+            transfer_command_pool: transfer_pool,
+            command_buffers: cmd_bufs,
+            compute_command_pool: compute_pool,
+            compute_command_buffers: compute_bufs,
+            compute_sync_semaphores: compute_sems,
+            frame_complete_semaphore,
+            profiler,
+            bindless_heap,
+            pipeline_variant_cache,
+            compute_pipeline_cache,
+            descriptor_allocator,
+            hot_reloader,
+            frame_index: 0,
+            initialized: false,
+            compute_signal_value: AtomicU64::new(0),
+        })
     }
 
     pub fn init_surface(&mut self, rw: raw_window_handle::RawWindowHandle, rd: raw_window_handle::RawDisplayHandle, w: u32, h: u32) -> Result<(), RenderError> {
@@ -162,15 +209,27 @@ impl Renderer {
         let ws = [sw.image_available_semaphore(frame_idx)];
         let ss = [sw.render_finished_semaphore(frame_idx)];
         drop(sw);
-        let wst = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT]; let cmds = [cmd];
+        let has_compute = self.compute_signal_value.load(std::sync::atomic::Ordering::Relaxed) > 0;
+        let mut wait_sems = vec![ws[0]];
+        let mut wait_stages = vec![vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+        let mut wait_values = vec![0u64];
+        if has_compute {
+            let sem = self.compute_sync_semaphores[frame_idx % 3];
+            wait_sems.push(sem);
+            wait_stages.push(vk::PipelineStageFlags::ALL_COMMANDS);
+            wait_values.push(0);
+            self.compute_signal_value.store(0, std::sync::atomic::Ordering::Relaxed);
+        }
+        let cmds = [cmd];
         let signal_value = (frame_idx + 1) as u64;
-        let signal_values = [0u64, signal_value]; // 0 for binary semaphore, value for timeline
+        let mut signal_values = vec![0u64, signal_value];
+        let mut signal_sems = vec![ss[0], self.frame_complete_semaphore];
         let mut timeline_si = vk::TimelineSemaphoreSubmitInfo::default()
+            .wait_semaphore_values(&wait_values)
             .signal_semaphore_values(&signal_values);
-        let signal_sems = [ss[0], self.frame_complete_semaphore];
         let si = vk::SubmitInfo::default()
-            .wait_semaphores(&ws)
-            .wait_dst_stage_mask(&wst)
+            .wait_semaphores(&wait_sems)
+            .wait_dst_stage_mask(&wait_stages)
             .command_buffers(&cmds)
             .signal_semaphores(&signal_sems)
             .push_next(&mut timeline_si);
@@ -183,11 +242,19 @@ impl Renderer {
     }
 
     pub fn current_cmd(&self) -> vk::CommandBuffer { self.command_buffers[self.frame_index % 3] }
+    pub fn compute_cmd(&self) -> vk::CommandBuffer { self.compute_command_buffers[self.frame_index % 3] }
+    pub fn compute_sync_semaphore(&self) -> vk::Semaphore { self.compute_sync_semaphores[self.frame_index % 3] }
+    /// Notify the renderer that compute work was submitted this frame so
+    /// `end_frame()` includes the compute sync semaphore in the graphics submit.
+    pub fn notify_compute_submitted(&self) {
+        self.compute_signal_value.store(1, std::sync::atomic::Ordering::Relaxed);
+    }
     pub fn frame_index(&self) -> usize { self.frame_index }
     pub fn device(&self) -> &GpuDevice { &self.device }
     pub fn bindless_heap(&self) -> &BindlessDescriptorHeap { &self.bindless_heap }
     pub fn bindless_heap_mut(&mut self) -> &mut BindlessDescriptorHeap { &mut self.bindless_heap }
     pub fn pipeline_variant_cache(&self) -> &GraphicsPipelineVariantCache { &self.pipeline_variant_cache }
+    pub fn compute_pipeline_cache(&self) -> &ComputePipelineCache { &self.compute_pipeline_cache }
     pub fn hot_reloader(&self) -> Option<&crate::hot_reload::ShaderHotReloader> { self.hot_reloader.as_ref() }
 
     /// Clear all cached graphics pipeline variants. Call after shader hot-reload.
@@ -226,6 +293,11 @@ impl Drop for Renderer {
             if let Some(ref profiler) = self.profiler {
                 self.device.logical().destroy_query_pool(profiler.query_pool, None);
             }
+            for &sem in &self.compute_sync_semaphores {
+                self.device.logical().destroy_semaphore(sem, None);
+            }
+            self.device.logical().free_command_buffers(self.compute_command_pool, &[]);
+            self.device.logical().destroy_command_pool(self.compute_command_pool, None);
             self.device.logical().free_command_buffers(self.transfer_command_pool, &[]);
             self.device.logical().destroy_command_pool(self.transfer_command_pool, None);
             self.device.logical().free_command_buffers(self.command_pool, &[]);

@@ -436,6 +436,80 @@ void main() {
             try_override(device, "tonemap.frag", TONEMAP_FRAGMENT_GLSL, vk::ShaderStageFlags::FRAGMENT)
         }
     }
+
+    pub fn light_cull_compute_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+        if cfg!(not(debug_assertions)) {
+            ShaderModule::from_archive_name(device, "light_cull.comp", vk::ShaderStageFlags::COMPUTE)
+        } else {
+            ShaderModule::from_file(device, std::path::Path::new("shaders/light_cull.comp"), Some(vk::ShaderStageFlags::COMPUTE))
+        }
+    }
+
+    pub fn light_cull_compute_shader_override(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+        if cfg!(not(debug_assertions)) {
+            ShaderModule::from_archive_name(device, "light_cull.comp", vk::ShaderStageFlags::COMPUTE)
+        } else {
+            try_override(device, "light_cull.comp", "", vk::ShaderStageFlags::COMPUTE)
+        }
+    }
+
+    pub fn gbuffer_vertex_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+        if cfg!(not(debug_assertions)) {
+            ShaderModule::from_archive_name(device, "gbuffer.vert", vk::ShaderStageFlags::VERTEX)
+        } else {
+            ShaderModule::from_file(device, std::path::Path::new("shaders/gbuffer.vert"), Some(vk::ShaderStageFlags::VERTEX))
+        }
+    }
+    pub fn gbuffer_fragment_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+        if cfg!(not(debug_assertions)) {
+            ShaderModule::from_archive_name(device, "gbuffer.frag", vk::ShaderStageFlags::FRAGMENT)
+        } else {
+            ShaderModule::from_file(device, std::path::Path::new("shaders/gbuffer.frag"), Some(vk::ShaderStageFlags::FRAGMENT))
+        }
+    }
+    pub fn deferred_vertex_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+        if cfg!(not(debug_assertions)) {
+            ShaderModule::from_archive_name(device, "deferred.vert", vk::ShaderStageFlags::VERTEX)
+        } else {
+            ShaderModule::from_file(device, std::path::Path::new("shaders/deferred.vert"), Some(vk::ShaderStageFlags::VERTEX))
+        }
+    }
+    pub fn deferred_fragment_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+        if cfg!(not(debug_assertions)) {
+            ShaderModule::from_archive_name(device, "deferred.frag", vk::ShaderStageFlags::FRAGMENT)
+        } else {
+            ShaderModule::from_file(device, std::path::Path::new("shaders/deferred.frag"), Some(vk::ShaderStageFlags::FRAGMENT))
+        }
+    }
+
+    pub fn gbuffer_vertex_shader_override(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+        if cfg!(not(debug_assertions)) {
+            ShaderModule::from_archive_name(device, "gbuffer.vert", vk::ShaderStageFlags::VERTEX)
+        } else {
+            try_override(device, "gbuffer.vert", "", vk::ShaderStageFlags::VERTEX)
+        }
+    }
+    pub fn gbuffer_fragment_shader_override(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+        if cfg!(not(debug_assertions)) {
+            ShaderModule::from_archive_name(device, "gbuffer.frag", vk::ShaderStageFlags::FRAGMENT)
+        } else {
+            try_override(device, "gbuffer.frag", "", vk::ShaderStageFlags::FRAGMENT)
+        }
+    }
+    pub fn deferred_vertex_shader_override(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+        if cfg!(not(debug_assertions)) {
+            ShaderModule::from_archive_name(device, "deferred.vert", vk::ShaderStageFlags::VERTEX)
+        } else {
+            try_override(device, "deferred.vert", "", vk::ShaderStageFlags::VERTEX)
+        }
+    }
+    pub fn deferred_fragment_shader_override(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+        if cfg!(not(debug_assertions)) {
+            ShaderModule::from_archive_name(device, "deferred.frag", vk::ShaderStageFlags::FRAGMENT)
+        } else {
+            try_override(device, "deferred.frag", "", vk::ShaderStageFlags::FRAGMENT)
+        }
+    }
 }
 
 #[cfg(test)]

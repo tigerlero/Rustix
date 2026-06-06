@@ -18,7 +18,7 @@ mod waveform;
 use ash::vk;
 use rustix_core::config;
 use rustix_core::ecs::{EcsWorld, Entity};
-use rustix_core::math::Vec3;
+use rustix_core::math::{Vec3, Vec4, Mat4};
 use rustix_platform::input::InputManager;
 use rustix_platform::window::{WindowConfig, WindowHandle};
 use rustix_render::{Renderer, DirectionalLight};
@@ -108,7 +108,7 @@ fn main() {
             Transform { position: Vec3::new(i as f32 * 2.0, 0.0, 0.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
             Name(format!("Entity {}", i)),
             MeshComponent("Cube".into()),
-            Material { base_color: Vec3::new(0.6 + i as f32 * 0.15, 0.4 + i as f32 * 0.1, 0.5), roughness: 0.3 + i as f32 * 0.2, metallic: 0.0 },
+            Material { base_color: Vec3::new(0.6 + i as f32 * 0.15, 0.4 + i as f32 * 0.1, 0.5), roughness: 0.3 + i as f32 * 0.2, metallic: 0.0, ao: 1.0, emissive: 0.0 },
         ));
         tracing::info!("created entity {}: {:?}", i, e);
     }
@@ -126,8 +126,14 @@ fn main() {
     let mut shadow_pipeline: Option<rustix_render::pipeline::ShadowPipeline> = None;
     let mut shadow_descriptor_pool: Option<vk::DescriptorPool> = None;
     let mut shadow_descriptor_set: Option<vk::DescriptorSet> = None;
-    let mut shadow_map: Option<rustix_render::GpuTexture> = None;
+    let mut csm_resources: Option<crate::render::CsmResources> = None;
+    let mut point_shadow_resources: Option<crate::render::PointShadowResources> = None;
+    let mut spot_shadow_resources: Option<crate::render::SpotShadowResources> = None;
     let mut shadow_layout = vk::ImageLayout::UNDEFINED;
+    let mut frame_graph_snapshot: Option<rustix_render::graph::FrameGraphSnapshot> = None;
+    let mut show_frame_graph_overlay = false;
+    let mut fwd_plus_resources: Option<crate::render::ForwardPlusResources> = None;
+    let mut gbuffer_resources: Option<crate::render::GBufferResources> = None;
 
     // HDR framebuffer for primary viewport (recreated on swapchain resize).
     let mut hdr_framebuffer: Option<rustix_render::HdrFramebuffer> = None;
@@ -360,9 +366,27 @@ fn main() {
                             &mut scene_pipeline, &mut scene_descriptor_pool, &mut scene_descriptor_set,
                             &mut scene_uniform_buffer, &mut scene_depth_buffer,
                             &mut shadow_pipeline, &mut shadow_descriptor_pool, &mut shadow_descriptor_set,
-                            &mut shadow_map,
+                            &mut csm_resources,
+                            &mut point_shadow_resources,
+                            &mut spot_shadow_resources,
                             &mut tonemap_pipeline, &mut tonemap_desc_set,
                         );
+
+                        if fwd_plus_resources.is_none() {
+                            match crate::render::ForwardPlusResources::new(&renderer) {
+                                Ok(res) => fwd_plus_resources = Some(res),
+                                Err(e) => tracing::error!("failed to create Forward+ resources: {e}"),
+                            }
+                        }
+
+                        if gbuffer_resources.is_none() {
+                            if let Some(ref depth) = scene_depth_buffer {
+                                match crate::render::GBufferResources::new(&renderer, renderer.swapchain.lock().extent(), depth) {
+                                    Ok(res) => gbuffer_resources = Some(res),
+                                    Err(e) => tracing::error!("failed to create GBuffer resources: {e}"),
+                                }
+                            }
+                        }
 
                         init::init_2d_resources(
                             &renderer,
@@ -371,27 +395,68 @@ fn main() {
                         );
 
                         // Shader hot-reload: poll file watcher and recreate affected pipelines.
-                        if let Some(reloader) = renderer.hot_reloader() {
-                            for path in reloader.take_events() {
-                                let file = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                                match file {
-                                    "pbr.vert" | "pbr.frag" => {
-                                        init::reload_scene_pipeline(&renderer, &mut scene_pipeline);
+                        // Skip on frame 0 to avoid processing initial file-watcher create events.
+                        if renderer.frame_index() > 0 {
+                            if let Some(reloader) = renderer.hot_reloader() {
+                                for path in reloader.take_events() {
+                                    let file = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                                    match file {
+                                        "pbr.vert" | "pbr.frag" => {
+                                            init::reload_scene_pipeline(&renderer, &mut scene_pipeline);
+                                        }
+                                        "shadow.vert" => {
+                                            let bindless_layout = renderer.bindless_heap().layout();
+                                            init::reload_shadow_pipeline(&renderer, &mut shadow_pipeline, bindless_layout);
+                                        }
+                                        "tonemap.vert" | "tonemap.frag" => {
+                                            init::reload_tonemap_pipeline(&renderer, &mut tonemap_pipeline, &mut tonemap_desc_set);
+                                        }
+                                        "sprite.vert" | "sprite.frag" => {
+                                            init::reload_2d_pipeline(&renderer, &mut pipeline_2d, &mut desc_set_2d);
+                                        }
+                                        "light_cull.comp" => {
+                                            // Clear compute pipeline cache so the Forward+ compute pipeline is recreated next frame.
+                                            renderer.compute_pipeline_cache().clear();
+                                        }
+                                        "gbuffer.vert" | "gbuffer.frag" => {
+                                        if let Some(ref mut gbuf) = gbuffer_resources {
+                                            let bindless_layout = renderer.bindless_heap().layout();
+                                            match (
+                                                rustix_render::shader::builtin::gbuffer_vertex_shader_override(renderer.device().logical()),
+                                                rustix_render::shader::builtin::gbuffer_fragment_shader_override(renderer.device().logical()),
+                                            ) {
+                                                (Ok(vs), Ok(fs)) => {
+                                                    match rustix_render::pipeline::GBufferPipeline::create(renderer.device(), &vs, &fs, bindless_layout) {
+                                                        Ok(p) => gbuf.gbuffer_pipeline = p,
+                                                        Err(e) => tracing::error!("gbuffer pipeline reload failed: {e}"),
+                                                    }
+                                                }
+                                                (Err(e), _) | (_, Err(e)) => tracing::error!("gbuffer shader reload failed: {e}"),
+                                            }
+                                        }
                                     }
-                                    "shadow.vert" => {
-                                        let bindless_layout = renderer.bindless_heap().layout();
-                                        init::reload_shadow_pipeline(&renderer, &mut shadow_pipeline, bindless_layout);
-                                    }
-                                    "tonemap.vert" | "tonemap.frag" => {
-                                        init::reload_tonemap_pipeline(&renderer, &mut tonemap_pipeline, &mut tonemap_desc_set);
-                                    }
-                                    "sprite.vert" | "sprite.frag" => {
-                                        init::reload_2d_pipeline(&renderer, &mut pipeline_2d, &mut desc_set_2d);
+                                    "deferred.vert" | "deferred.frag" => {
+                                        if let Some(ref mut gbuf) = gbuffer_resources {
+                                            let bindless_layout = renderer.bindless_heap().layout();
+                                            match (
+                                                rustix_render::shader::builtin::deferred_vertex_shader_override(renderer.device().logical()),
+                                                rustix_render::shader::builtin::deferred_fragment_shader_override(renderer.device().logical()),
+                                            ) {
+                                                (Ok(vs), Ok(fs)) => {
+                                                    match rustix_render::pipeline::DeferredLightingPipeline::create(renderer.device(), &vs, &fs, bindless_layout) {
+                                                        Ok(p) => gbuf.deferred_pipeline = p,
+                                                        Err(e) => tracing::error!("deferred pipeline reload failed: {e}"),
+                                                    }
+                                                }
+                                                (Err(e), _) | (_, Err(e)) => tracing::error!("deferred shader reload failed: {e}"),
+                                            }
+                                        }
                                     }
                                     _ => {}
                                 }
                             }
                         }
+                    }
 
                         if let Some(path) = pending_mesh_load.borrow_mut().take() {
                             if let Ok(data) = MappedFile::open(Path::new(&path)) {
@@ -406,7 +471,7 @@ fn main() {
                                         Transform { position: Vec3::new(0.0, 1.0, 0.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
                                         Name(mesh_name.clone()),
                                         MeshComponent(mesh_name),
-                                        Material { base_color: Vec3::from(result.base_color), roughness: result.roughness, metallic: result.metallic },
+                                        Material { base_color: Vec3::from(result.base_color), roughness: result.roughness, metallic: result.metallic, ao: 1.0, emissive: 0.0 },
                                     ));
                                     *selected_entity.borrow_mut() = Some(e);
                                     dirty.set(true);
@@ -452,11 +517,12 @@ fn main() {
                             }
                         }
 
-                        // Ensure HDR framebuffer matches swapchain size.
+                        // Ensure HDR framebuffer and GBuffer match swapchain size.
                         let sw_extent = renderer.swapchain.lock().extent();
                         if hdr_fb_size != (sw_extent.width, sw_extent.height) {
                             hdr_framebuffer = None;
                             hdr_fb_size = (sw_extent.width, sw_extent.height);
+                            gbuffer_resources = None; // Will be recreated below
                         }
                         if hdr_framebuffer.is_none() {
                             match rustix_render::HdrFramebuffer::new(&renderer, sw_extent.width, sw_extent.height) {
@@ -464,8 +530,16 @@ fn main() {
                                 Err(e) => tracing::error!("HDR framebuffer creation failed: {e}"),
                             }
                         }
+                        if gbuffer_resources.is_none() {
+                            if let Some(ref depth) = scene_depth_buffer {
+                                match crate::render::GBufferResources::new(&renderer, sw_extent, depth) {
+                                    Ok(res) => gbuffer_resources = Some(res),
+                                    Err(e) => tracing::error!("failed to create GBuffer resources: {e}"),
+                                }
+                            }
+                        }
 
-                        let mut shadow_layout_opt = if shadow_map.is_some() { Some(shadow_layout) } else { None };
+                        let mut shadow_layout_opt = if csm_resources.is_some() { Some(shadow_layout) } else { None };
                         let mut used_hdr = false;
                         if scene_pipeline.is_some() && scene_depth_buffer.is_some() && scene_uniform_buffer.is_some() {
                             // Clear swapchain once before any offscreen rendering.
@@ -493,17 +567,42 @@ fn main() {
 
                                 if let Some(ref fb) = offscreen_fb {
                                     let cam = &viewport_manager.viewports[vp_idx].camera;
+                                    // Compute CSM cascades for viewport
+                                    if let Some(ref mut c) = csm_resources {
+                                        let aspect = fb.extent.width as f32 / fb.extent.height as f32;
+                                        let cam_view = match cam.mode {
+                                            crate::camera::CameraMode::Orbit => Mat4::look_at_rh(cam.eye_pos(), cam.center, Vec3::Y),
+                                            crate::camera::CameraMode::FirstPerson => {
+                                                let forward = Vec3::new(cam.pitch.cos() * cam.yaw.sin(), cam.pitch.sin(), cam.pitch.cos() * cam.yaw.cos());
+                                                Mat4::look_at_rh(cam.position, cam.position + forward, Vec3::Y)
+                                            }
+                                        };
+                                        let cam_proj = Mat4::perspective_rh_gl(std::f32::consts::FRAC_PI_4, aspect, 0.1, 100.0);
+                                        let light_dir = {
+                                            let mut d = Vec3::new(0.5, 0.8, 0.3);
+                                            for (dirlight, xform) in ecs_world.query::<(&DirectionalLight, &Transform)>().iter() {
+                                                d = render::directional_light_dir_from_euler(xform.rotation);
+                                                break;
+                                            }
+                                            d
+                                        };
+                                        c.compute_cascades(&cam_view, &cam_proj, light_dir);
+                                        c.upload_ubo();
+                                    }
                                     shadow_layout_opt = render::render_3d_scene(
                                         &renderer, cmd,
                                         scene_pipeline.as_ref().unwrap(),
                                         shadow_pipeline.as_ref(),
                                         scene_depth_buffer.as_ref().unwrap(),
-                                        shadow_map.as_ref(),
+                                        csm_resources.as_ref(),
+                                        point_shadow_resources.as_ref(),
+                                        spot_shadow_resources.as_mut(),
                                         shadow_layout_opt,
                                         scene_uniform_buffer.as_ref().unwrap(),
                                         &meshes, &ecs_world, cam,
                                         Some(fb),
                                         None,
+                                        fwd_plus_resources.as_ref(),
                                     );
                                     let tex_id = ui::viewport::viewport_texture_id(vp_idx);
                                     tracing::trace!("main: registering viewport {} framebuffer color_view={:?} as user texture {:?}", vp_idx, fb.color_view, tex_id);
@@ -518,19 +617,49 @@ fn main() {
                                     // Primary viewport with no offscreen: render to HDR, then tone-map to swapchain.
                                     let cam = &viewport_manager.viewports[vp_idx].camera;
                                     let hfb = hdr_framebuffer.as_ref().unwrap();
-                                    shadow_layout_opt = render::render_3d_scene(
-                                        &renderer, cmd,
-                                        scene_pipeline.as_ref().unwrap(),
-                                        shadow_pipeline.as_ref(),
-                                        scene_depth_buffer.as_ref().unwrap(),
-                                        shadow_map.as_ref(),
-                                        shadow_layout_opt,
-                                        scene_uniform_buffer.as_ref().unwrap(),
-                                        &meshes, &ecs_world, cam,
-                                        None,
-                                        Some(hfb),
-                                    );
+                                    let use_deferred = false; // Toggle: set true for deferred shading
+                                    let (new_layout, snapshot) = if use_deferred && gbuffer_resources.is_some() {
+                                        render::render_deferred_with_graph(
+                                            &renderer, cmd,
+                                            scene_pipeline.as_ref().unwrap(),
+                                            shadow_pipeline.as_ref(),
+                                            scene_depth_buffer.as_ref().unwrap(),
+                                            csm_resources.as_mut(),
+                                            point_shadow_resources.as_ref(),
+                                            spot_shadow_resources.as_mut(),
+                                            shadow_layout_opt,
+                                            scene_uniform_buffer.as_ref().unwrap(),
+                                            &meshes, &ecs_world, cam,
+                                            hfb,
+                                            tonemap_pipeline.as_ref().unwrap(),
+                                            tonemap_desc_set.unwrap(),
+                                            egui_r.sampler(),
+                                            gbuffer_resources.as_ref().unwrap(),
+                                            fwd_plus_resources.as_ref(),
+                                        )
+                                    } else {
+                                        render::render_hdr_with_graph(
+                                            &renderer, cmd,
+                                            scene_pipeline.as_ref().unwrap(),
+                                            shadow_pipeline.as_ref(),
+                                            scene_depth_buffer.as_ref().unwrap(),
+                                            csm_resources.as_mut(),
+                                            point_shadow_resources.as_ref(),
+                                            spot_shadow_resources.as_mut(),
+                                            shadow_layout_opt,
+                                            scene_uniform_buffer.as_ref().unwrap(),
+                                            &meshes, &ecs_world, cam,
+                                            hfb,
+                                            tonemap_pipeline.as_ref().unwrap(),
+                                            tonemap_desc_set.unwrap(),
+                                            egui_r.sampler(),
+                                            fwd_plus_resources.as_ref(),
+                                        )
+                                    };
+                                    shadow_layout_opt = new_layout;
+                                    frame_graph_snapshot = snapshot;
                                     used_hdr = true;
+
                                     let valid_key = egui::Id::new(format!("viewport_offscreen_valid_{}", vp_idx));
                                     egui_ctx.data_mut(|d| d.remove_temp::<bool>(valid_key));
                                 } else {
@@ -539,13 +668,7 @@ fn main() {
                                 }
                             }
 
-                            // Tone-map HDR result to swapchain when primary viewport used HDR.
-                            if used_hdr {
-                                if let (Some(ref hfb), Some(ref tp), Some(ds)) = (&hdr_framebuffer, &tonemap_pipeline, tonemap_desc_set) {
-                                    renderer.update_tonemap_descriptor_set(ds, hfb.color_view, egui_r.sampler());
-                                    renderer.tone_map_pass(cmd, tp, ds, sw_extent);
-                                }
-                            }
+                            // Tonemap is now handled inside render_hdr_with_graph via the declarative frame graph.
                         } else if renderer.frame_index() % 60 == 0 {
                             tracing::warn!("3D scene skipped: pipeline={} depth={} ubo={}",
                                 scene_pipeline.is_some(), scene_depth_buffer.is_some(),
@@ -574,6 +697,9 @@ fn main() {
                             });
                         }
                         let out = egui_ctx.run(raw_input, |ctx| {
+                            if ctx.input(|i| i.key_pressed(egui::Key::F10)) {
+                                show_frame_graph_overlay = !show_frame_graph_overlay;
+                            }
                             match screen {
                                 AppScreen::Startup => {
                                     ui::startup_screen(ctx, &recent_projects, &mut screen, &open_project, &new_project, &*show_new_project_type, &*new_project_type);
@@ -588,6 +714,11 @@ fn main() {
                                     let proj_name = current_project.as_ref().map(|p| p.name.as_str()).unwrap_or("Untitled");
                                     let proj_name_owned = proj_name.to_string();
                                     ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut screen, &input, target, &ww, &wh, &mut fps, &open_project, &new_project, &proj_name_owned, &mut current_project, &mut project_dir, &mut ecs_world, &*selected_entity, &*pending_delete, &*dirty, &*show_confirm, &*confirm_target, &*show_settings, &*renaming, &*rename_buffer, &*undo_history, &mut sprite_editor, &pending_mesh_load, &mut audio_engine, &mut audio_instance, &mut waveform_viewer);
+                                }
+                            }
+                            if show_frame_graph_overlay {
+                                if let Some(ref snap) = frame_graph_snapshot {
+                                    ui::show_frame_graph_overlay(ctx, &mut show_frame_graph_overlay, snap);
                                 }
                             }
                         });
@@ -624,7 +755,7 @@ fn main() {
                                     Transform { position: Vec3::ZERO, rotation: Vec3::ZERO, scale: Vec3::ONE },
                                     Name("Cube".into()),
                                     MeshComponent("Cube".into()),
-                                    Material { base_color: Vec3::new(0.7, 0.7, 0.7), roughness: 0.5, metallic: 0.0 },
+                                    Material { base_color: Vec3::new(0.7, 0.7, 0.7), roughness: 0.5, metallic: 0.0, ao: 1.0, emissive: 0.0 },
                                 ));
                                 ecs_world.spawn((
                                     Transform { position: Vec3::new(5.0, 10.0, 5.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
@@ -651,6 +782,9 @@ fn main() {
 
                         if let Err(e) = renderer.end_frame() {
                             tracing::error!("end_frame: {e}");
+                        }
+                        if renderer.frame_index() % 60 == 0 {
+                            tracing::info!("frame {} rendered", renderer.frame_index());
                         }
                         input.end_tick();
 

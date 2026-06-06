@@ -366,7 +366,7 @@ pub fn show_hierarchy(
                     Name(format!("{} {}", name, count + 1)),
                     Transform { position: Vec3::new(0.0, 0.5 + count as f32 * 0.5, 0.0), ..Default::default() },
                     MeshComponent(mesh.into()),
-                    Material { base_color: color, roughness: 0.5, metallic: 0.0 },
+                    Material { base_color: color, roughness: 0.5, metallic: 0.0, ao: 1.0, emissive: 0.0 },
                 ));
                 tracing::info!("spawned {} entity {:?}", name, e);
                 let snapshot = crate::scene::entity_to_scene_entity(world, e);
@@ -405,7 +405,7 @@ pub fn show_hierarchy(
         });
         ui.menu_button("Create Light", |ui| {
             if ui.button("Directional").clicked() {
-                let e = world.spawn((Name("Directional Light".to_string()), Transform::default(), DirectionalLight::default(), MeshComponent("Cube".into()), Material { base_color: Vec3::new(1.0, 0.95, 0.8), roughness: 0.3, metallic: 0.0 }));
+                let e = world.spawn((Name("Directional Light".to_string()), Transform::default(), DirectionalLight::default(), MeshComponent("Cube".into()), Material { base_color: Vec3::new(1.0, 0.95, 0.8), roughness: 0.3, metallic: 0.0, ao: 1.0, emissive: 0.0 }));
                 let snapshot = crate::scene::entity_to_scene_entity(world, e);
                 undo_history.borrow_mut().push(EditorAction::AddEntity { entity: e, snapshot });
                 *selected_entity.borrow_mut() = Some(e);
@@ -413,7 +413,7 @@ pub fn show_hierarchy(
                 ui.close();
             }
             if ui.button("Point").clicked() {
-                let e = world.spawn((Name("Point Light".to_string()), Transform { position: Vec3::new(0.0, 3.0, 0.0), ..Default::default() }, PointLight::default(), MeshComponent("Cube".into()), Material { base_color: Vec3::new(1.0, 0.9, 0.6), roughness: 0.3, metallic: 0.0 }));
+                let e = world.spawn((Name("Point Light".to_string()), Transform { position: Vec3::new(0.0, 3.0, 0.0), ..Default::default() }, PointLight::default(), MeshComponent("Cube".into()), Material { base_color: Vec3::new(1.0, 0.9, 0.6), roughness: 0.3, metallic: 0.0, ao: 1.0, emissive: 0.0 }));
                 let snapshot = crate::scene::entity_to_scene_entity(world, e);
                 undo_history.borrow_mut().push(EditorAction::AddEntity { entity: e, snapshot });
                 *selected_entity.borrow_mut() = Some(e);
@@ -421,7 +421,7 @@ pub fn show_hierarchy(
                 ui.close();
             }
             if ui.button("Spot").clicked() {
-                let e = world.spawn((Name("Spot Light".to_string()), Transform { position: Vec3::new(0.0, 3.0, 0.0), ..Default::default() }, SpotLight::default(), MeshComponent("Cube".into()), Material { base_color: Vec3::new(1.0, 0.95, 0.7), roughness: 0.3, metallic: 0.0 }));
+                let e = world.spawn((Name("Spot Light".to_string()), Transform { position: Vec3::new(0.0, 3.0, 0.0), ..Default::default() }, SpotLight::default(), MeshComponent("Cube".into()), Material { base_color: Vec3::new(1.0, 0.95, 0.7), roughness: 0.3, metallic: 0.0, ao: 1.0, emissive: 0.0 }));
                 let snapshot = crate::scene::entity_to_scene_entity(world, e);
                 undo_history.borrow_mut().push(EditorAction::AddEntity { entity: e, snapshot });
                 *selected_entity.borrow_mut() = Some(e);

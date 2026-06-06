@@ -9,7 +9,7 @@ use crate::scene::{Transform, Name, MeshComponent, Material};
 use crate::undo::{UndoHistory, EditorAction};
 
 fn default_material() -> Material {
-    Material { base_color: Vec3::new(0.7, 0.7, 0.7), roughness: 0.5, metallic: 0.0 }
+    Material { base_color: Vec3::new(0.7, 0.7, 0.7), roughness: 0.5, metallic: 0.0, ao: 1.0, emissive: 0.0 }
 }
 fn default_audio_source() -> AudioSource {
     AudioSource { position: Vec3::ZERO, min_distance: 1.0, max_distance: 100.0, rolloff: 1.0 }

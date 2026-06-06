@@ -169,19 +169,19 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 - [x] Pre-compiled shader archive for release builds — `build.rs` in `crates/render/build.rs` scans `shaders/` at compile time, compiles every `.vert`/`.frag`/`.comp`/`.glsl` file to SPIR-V via `naga::front::glsl` + `naga::back::spv`, and generates `shader_archive_gen.rs` in `OUT_DIR`. The generated file contains a `lookup(name) -> Option<(&[u32], ShaderStage)>` function backed by static `&[u32]` slices. `crates/render/src/shader_archive.rs` re-exports this lookup. In **release** builds (`cfg!(not(debug_assertions))`) all `builtin` shader loaders (`vertex_shader()`, `fragment_shader()`, `shadow_vertex_shader()`, etc.) bypass GLSL parsing and create `ShaderModule`s directly from the archive via `ShaderModule::from_archive_name()`. In **debug** builds the embedded GLSL strings and file-override paths remain active so hot-reload and `#include` resolution still work.
 
 ### 3.7 Frame Graph
-- [ ] Declarative render graph
-- [ ] Automatic resource barriers
-- [ ] Transient resource memory aliasing
-- [ ] Render pass merging
-- [ ] Async compute pass scheduling
-- [ ] Frame graph visualization (debug overlay)
+- [x] Declarative render graph
+- [x] Automatic resource barriers
+- [x] Transient resource memory aliasing
+- [x] Render pass merging
+- [x] Async compute pass scheduling
+- [x] Frame graph visualization (debug overlay)
 
 ### 3.8 Rendering Features
-- [ ] Forward+ lighting (tiled light culling)
-- [ ] Deferred shading (GBuffer: albedo, normal, PBR params, depth)
-- [ ] Directional light with cascaded shadow maps (CSM)
-- [ ] Point/spot lights (shadow maps + cubemap arrays)
-- [ ] PBR material system (metal-rough workflow)
+- [x] Forward+ lighting (tiled light culling) — bindless storage buffer bindings (3 = light data SSBO, 4 = tile light list SSBO), compute shader `light_cull.comp` with 16x16 tile dispatch, screen-space AABB culling per light, and per-tile light list consumed by `pbr.frag`. Supports up to 256 dynamic point/spot lights with 32 lights per tile.
+- [x] Deferred shading (GBuffer: albedo, normal, PBR params, depth) — `GBufferPipeline` / `DeferredLightingPipeline` in `crates/render/src/pipeline.rs`. GBuffer pass writes albedo (RGBA8), normals (RGBA16F), and material (RGBA8) into dedicated render targets with a shared depth buffer. The deferred lighting pass draws a full-screen triangle that samples the G-buffer via fixed bindless bindings (5-9), reconstructs world position from depth, and computes directional light + Forward+ tiled point lights. Shaders: `gbuffer.vert`/`gbuffer.frag`, `deferred.vert`/`deferred.frag`. Integrated into the frame graph with automatic layout transitions. Toggle via `use_deferred` flag in `apps/runtime/src/main.rs`.
+- [x] Directional light with cascaded shadow maps (CSM) — 3 cascades with split distances computed per-frame based on camera frustum, shadow map resolution 2048. CSM UBO (binding 10) stores light view-projection matrices and cascade split distances. Three shadow map textures (bindings 11-13) sampled in `pbr.frag` and `deferred.frag` with cascade selection based on view-space depth, PCF filtering, and 0.005 shadow bias. Shadow passes render to each cascade using dynamic rendering. Integrated into frame graph with automatic layout transitions.
+- [x] Point/spot lights with shadow maps — cubemap array shadow maps for up to 4 point lights (512x512 faces, binding 15) and 2D array shadow maps for up to 4 spot lights (512x512, binding 17). Point light cubemap faces rendered using 90-degree perspective projections for +X/-X/+Y/-Y/+Z/-Z. Spot light shadow matrices stored in `SpotShadowUBO` (binding 19) with view-projection and layer index params. Both sampled in `pbr.frag` and `deferred.frag` with distance comparison for point lights and projected depth comparison for spot lights. Fixed bindless bindings: cubemap texture at 15, point sampler at 16, spot array texture at 17, spot sampler at 18, spot UBO at 19. Resources: `PointShadowResources` and `SpotShadowResources` in `apps/runtime/src/render.rs`, created in `init.rs`.
+- [x] PBR material system (metal-rough workflow) — Cook-Torrance GGX microfacet BRDF with Schlick Fresnel, Smith-GGX geometry/visibility, and Trowbridge-Reitz NDF. `scene::Material` component stores base_color, roughness, metallic, ao, and emissive. Push constants pass material params as vec4(roughness, metallic, ao, emissive) to both forward (`pbr.frag`) and deferred (`gbuffer.frag`/`deferred.frag`) paths. GBuffer material channel encodes roughness in R, AO in G, emissive in B. Inspector UI exposes all five material parameters with AO range 0-1 and emissive range 0-10. Default values: roughness 0.5, metallic 0.0, AO 1.0, emissive 0.0.
 - [ ] HDR rendering + tonemapping
 - [ ] Bloom (gaussian pyramid)
 - [ ] SSAO (HBAO)

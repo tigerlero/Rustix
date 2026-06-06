@@ -217,10 +217,10 @@ impl super::Renderer {
         }
     }
 
-    pub fn begin_shadow_pass(&self, cmd: vk::CommandBuffer, shadow_map: &GpuTexture, size: u32) {
+    pub fn begin_shadow_pass(&self, cmd: vk::CommandBuffer, shadow_view: vk::ImageView, size: u32) {
         let extent = vk::Extent2D { width: size, height: size };
         let da = vk::RenderingAttachmentInfoKHR::default()
-            .image_view(shadow_map.view).image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+            .image_view(shadow_view).image_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
             .load_op(vk::AttachmentLoadOp::CLEAR).store_op(vk::AttachmentStoreOp::STORE)
             .clear_value(vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } });
         let ri = vk::RenderingInfoKHR::default()
