@@ -246,9 +246,6 @@ layout(binding = 0, std430) readonly buffer InstanceBuffer {
 layout(binding = 1, std430) writeonly buffer VisibilityBuffer {
     uint flags[];
 } visibility_buffer;
-layout(binding = 2, std430) buffer AtomicCounterBuffer {
-    uint counters[];
-} atomic_counters;
 layout(push_constant) uniform PushConstants {
     mat4 view_proj;
     vec4 frustum_planes[6];
@@ -279,9 +276,7 @@ void main() {
     vec3 world_center = (model * vec4(local_center, 1.0)).xyz;
     vec3 world_extent = abs(mat3(model) * local_extent);
     bool visible = aabb_intersects_frustum(world_center, world_extent, pc.frustum_planes);
-    uint mesh_idx = uint(inst.aabb_min.w);
     visibility_buffer.flags[instance_id] = visible ? 1u : 0u;
-    if (visible) { atomicAdd(atomic_counters.counters[mesh_idx], 1u); }
 }
 "#;
 
@@ -299,9 +294,9 @@ struct BatchInfo {
     uint instance_count;
     uint index_count;
 };
-layout(binding = 0, std430) readonly buffer CounterBuffer {
-    uint counters[];
-} counter_buffer;
+layout(binding = 0, std430) readonly buffer VisibilityBuffer {
+    uint flags[];
+} visibility_buffer;
 layout(binding = 1, std430) writeonly buffer DrawCommandBuffer {
     DrawCommand commands[];
 } draw_command_buffer;
@@ -316,7 +311,10 @@ void main() {
     uint batch_id = gl_GlobalInvocationID.x;
     if (batch_id >= pc.batch_count) return;
     BatchInfo batch = batch_info_buffer.batches[batch_id];
-    uint visible_count = counter_buffer.counters[batch_id];
+    uint visible_count = 0;
+    for (uint i = batch.instance_offset; i < batch.instance_offset + batch.instance_count; i++) {
+        visible_count += visibility_buffer.flags[i];
+    }
     draw_command_buffer.commands[batch_id] = DrawCommand(
         batch.index_count,
         visible_count,

@@ -1,4 +1,5 @@
 use super::*;
+use rustix_core::math::Vec3;
 
 #[test]
 fn gizmo_mode_e_selects_translate() {

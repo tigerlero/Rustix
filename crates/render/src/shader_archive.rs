@@ -14,6 +14,6 @@
 pub use generated::lookup;
 
 mod generated {
-    use naga::ShaderStage;
+    
     include!(concat!(env!("OUT_DIR"), "/shader_archive_gen.rs"));
 }

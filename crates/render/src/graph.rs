@@ -274,7 +274,7 @@ impl<'a> FrameGraph<'a> {
         for pass_idx in 0..self.passes.len() {
             let pass = &self.passes[pass_idx].desc;
             let mut before = Vec::new();
-            let mut after = Vec::new();
+            let after = Vec::new();
 
             // Barrier for each color attachment
             for &rid in &pass.color_attachments {

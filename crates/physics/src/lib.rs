@@ -393,6 +393,8 @@ fn resolve_collision<F, G>(
 
 #[cfg(test)]
 pub mod lib_tests;
+#[cfg(test)]
+pub mod rapier_tests;
 
 pub mod rapier;
 pub use rapier::RapierPhysicsWorld;

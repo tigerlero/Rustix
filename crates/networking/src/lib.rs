@@ -33,6 +33,16 @@ pub use matchmaking::{Lobby, LobbyId, LobbyManager, LobbyPlayer, MatchmakingRequ
 
 #[cfg(test)]
 pub mod protocol_tests;
+#[cfg(test)]
+pub mod udp_tests;
+#[cfg(test)]
+pub mod prediction_tests;
+#[cfg(test)]
+pub mod replication_tests;
+#[cfg(test)]
+pub mod matchmaking_tests;
+#[cfg(test)]
+pub mod nat_tests;
 
 use serde::{Serialize, Deserialize};
 use std::collections::VecDeque;

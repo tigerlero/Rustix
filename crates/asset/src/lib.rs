@@ -31,6 +31,52 @@ pub mod handle_tests;
 pub mod cache_tests;
 #[cfg(test)]
 pub mod vfs_tests;
+#[cfg(test)]
+mod mesh_tests;
+#[cfg(test)]
+mod texture_tests;
+#[cfg(test)]
+mod material_tests;
+#[cfg(test)]
+mod shader_tests;
+#[cfg(test)]
+mod skeleton_tests;
+#[cfg(test)]
+mod animation_tests;
+#[cfg(test)]
+mod audio_tests;
+#[cfg(test)]
+mod physics_tests;
+#[cfg(test)]
+mod font_tests;
+#[cfg(test)]
+mod prefab_tests;
+#[cfg(test)]
+mod region_tests;
+#[cfg(test)]
+mod importer_tests;
+#[cfg(test)]
+mod load_state_tests;
+#[cfg(test)]
+mod streaming_tests;
+#[cfg(test)]
+mod cook_tests;
+#[cfg(test)]
+mod texture_compress_tests;
+#[cfg(test)]
+mod server_tests;
+#[cfg(test)]
+mod hot_reload_tests;
+#[cfg(test)]
+mod mesh_opt_tests;
+#[cfg(test)]
+mod decoder_pool_tests;
+#[cfg(test)]
+pub mod loader_tests;
+#[cfg(test)]
+pub mod dependency_graph_tests;
+#[cfg(test)]
+pub mod mmap_tests;
 
 pub use handle::*;
 pub use loader::*;

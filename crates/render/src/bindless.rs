@@ -194,7 +194,7 @@ impl BindlessDescriptorHeap {
                 .stage_flags(vk::ShaderStageFlags::FRAGMENT),
         ];
 
-        let mut binding_flags = [
+        let binding_flags = [
             vk::DescriptorBindingFlags::empty(), // UBO: traditional
             vk::DescriptorBindingFlags::PARTIALLY_BOUND
                 | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND,

@@ -1,6 +1,5 @@
 //! Terrain editor: sculpt, paint, vegetation placement.
 
-use rustix_core::math::Vec3;
 use rustix_terrain::sculpt::{SculptBrush, BrushMode};
 use rustix_terrain::Heightmap;
 

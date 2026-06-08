@@ -46,3 +46,27 @@ pub use ash;
 
 #[cfg(test)]
 pub mod components_tests;
+#[cfg(test)]
+pub mod wireframe_tests;
+#[cfg(test)]
+pub mod spec_constants_tests;
+#[cfg(test)]
+pub mod msaa_tests;
+#[cfg(test)]
+pub mod error_tests;
+#[cfg(test)]
+pub mod renderdoc_tests;
+#[cfg(test)]
+pub mod tracy_gpu_tests;
+#[cfg(test)]
+pub mod hot_reload_tests;
+#[cfg(test)]
+pub mod spv_reflect_tests;
+#[cfg(test)]
+pub mod debug_label_tests;
+#[cfg(test)]
+pub mod gizmo_tests;
+#[cfg(test)]
+pub mod shader_include_tests;
+#[cfg(test)]
+pub mod sampler_cache_tests;

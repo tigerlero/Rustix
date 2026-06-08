@@ -118,7 +118,7 @@ impl AudioEngine {
         self.preview.as_ref().map(|p| p.is_playing()).unwrap_or(false)
     }
 
-    pub fn play_asset(&self, asset: &rustix_asset::audio::AudioAsset, volume: f32, looping: bool) -> Result<SoundInstance, AudioError> {
+    pub fn play_asset(&self, asset: &rustix_asset::audio::AudioAsset, _volume: f32, _looping: bool) -> Result<SoundInstance, AudioError> {
         let decoded = asset.samples.clone();
         let sample_rate = asset.sample_rate;
         let channels = asset.channels;

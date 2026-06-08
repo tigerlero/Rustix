@@ -6,7 +6,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use rustix_core::math::{Vec3, Quat};
+use rustix_core::math::Quat;
 
 use crate::handle::{Asset, AssetTypeId};
 use crate::importer::{ImportResult, Importer};

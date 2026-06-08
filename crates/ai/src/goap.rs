@@ -182,35 +182,3 @@ impl GoapPlanner {
         None
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_goap_plan_simple() {
-        let actions = vec![
-            GoapAction::new("get_axe", 1)
-                .effect("has_axe", true),
-            GoapAction::new("chop_wood", 1)
-                .pre("has_axe", true)
-                .effect("has_wood", true),
-        ];
-
-        let planner = GoapPlanner::new(actions);
-        let initial = WorldState::new().with("has_axe", false).with("has_wood", false);
-        let goal = vec![("has_wood".to_string(), true)];
-
-        let plan = planner.plan(&initial, &goal).unwrap();
-        assert_eq!(plan, vec!["get_axe", "chop_wood"]);
-    }
-
-    #[test]
-    fn test_goap_already_satisfied() {
-        let planner = GoapPlanner::new(vec![]);
-        let initial = WorldState::new().with("has_wood", true);
-        let goal = vec![("has_wood".to_string(), true)];
-        let plan = planner.plan(&initial, &goal).unwrap();
-        assert!(plan.is_empty());
-    }
-}

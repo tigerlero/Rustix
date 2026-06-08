@@ -26,6 +26,40 @@ pub mod thread_priority;
 pub mod math_tests;
 #[cfg(test)]
 pub mod components_tests;
+#[cfg(test)]
+pub mod ecs_tests;
+#[cfg(test)]
+pub mod job_tests;
+#[cfg(test)]
+pub mod memory_tests;
+#[cfg(test)]
+pub mod memory_tracker_tests;
+#[cfg(test)]
+pub mod change_tracker_tests;
+#[cfg(test)]
+pub mod command_buffer_tests;
+#[cfg(test)]
+pub mod component_groups_tests;
+#[cfg(test)]
+pub mod world_registry_tests;
+#[cfg(test)]
+pub mod config_tests;
+#[cfg(test)]
+pub mod gpu_staging_tests;
+#[cfg(test)]
+pub mod transform_hierarchy_tests;
+#[cfg(test)]
+pub mod system_monitor_tests;
+#[cfg(test)]
+pub mod task_graph_tests;
+#[cfg(test)]
+pub mod task_priority_tests;
+#[cfg(test)]
+pub mod dev_toggles_tests;
+#[cfg(test)]
+pub mod thread_local_arena_tests;
+#[cfg(test)]
+pub mod thread_priority_tests;
 
 pub use ecs::*;
 pub use component_registry::*;

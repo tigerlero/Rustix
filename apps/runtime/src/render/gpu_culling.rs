@@ -68,8 +68,6 @@ pub struct GpuCullingResources {
     pub input_buffer: GpuBuffer,
     /// Output buffer with per-instance visibility flags (culling binding 1).
     pub visibility_buffer: GpuBuffer,
-    /// Atomic counter buffer for per-batch visible counts (culling binding 2).
-    pub counter_buffer: GpuBuffer,
     /// Indirect draw command buffer, written by compute (gen binding 1).
     pub draw_command_buffer: GpuBuffer,
     /// Batch info buffer for command generation (gen binding 2).
@@ -103,7 +101,6 @@ impl GpuCullingResources {
     ) -> Result<Self, RenderError> {
         let instance_size = (max_instances * std::mem::size_of::<CullInstance>()) as u64;
         let visibility_size = (max_instances * std::mem::size_of::<u32>()) as u64;
-        let counter_size = (max_batches * std::mem::size_of::<u32>()) as u64;
         let draw_cmd_size = (max_batches * std::mem::size_of::<vk::DrawIndexedIndirectCommand>()) as u64;
         let batch_info_size = (max_batches * std::mem::size_of::<BatchInfo>()) as u64;
 
@@ -114,11 +111,6 @@ impl GpuCullingResources {
         )?;
         let visibility_buffer = renderer.create_buffer(
             "cull_visibility", visibility_size,
-            vk::BufferUsageFlags::STORAGE_BUFFER,
-            gpu_allocator::MemoryLocation::CpuToGpu,
-        )?;
-        let counter_buffer = renderer.create_buffer(
-            "cull_counters", counter_size,
             vk::BufferUsageFlags::STORAGE_BUFFER,
             gpu_allocator::MemoryLocation::CpuToGpu,
         )?;
@@ -133,11 +125,10 @@ impl GpuCullingResources {
             gpu_allocator::MemoryLocation::CpuToGpu,
         )?;
 
-        // Culling descriptor layout: bindings 0, 1, 2
+        // Culling descriptor layout: bindings 0, 1
         let cull_bindings = [
             vk::DescriptorSetLayoutBinding::default().binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
             vk::DescriptorSetLayoutBinding::default().binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
-            vk::DescriptorSetLayoutBinding::default().binding(2).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).descriptor_count(1).stage_flags(vk::ShaderStageFlags::COMPUTE),
         ];
         let cull_desc_layout = unsafe {
             device.logical().create_descriptor_set_layout(
@@ -151,12 +142,10 @@ impl GpuCullingResources {
         let cull_bi = [
             vk::DescriptorBufferInfo::default().buffer(input_buffer.buffer).offset(0).range(instance_size),
             vk::DescriptorBufferInfo::default().buffer(visibility_buffer.buffer).offset(0).range(visibility_size),
-            vk::DescriptorBufferInfo::default().buffer(counter_buffer.buffer).offset(0).range(counter_size),
         ];
         let cull_writes = [
             vk::WriteDescriptorSet::default().dst_set(cull_desc_set).dst_binding(0).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(std::slice::from_ref(&cull_bi[0])),
             vk::WriteDescriptorSet::default().dst_set(cull_desc_set).dst_binding(1).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(std::slice::from_ref(&cull_bi[1])),
-            vk::WriteDescriptorSet::default().dst_set(cull_desc_set).dst_binding(2).descriptor_type(vk::DescriptorType::STORAGE_BUFFER).buffer_info(std::slice::from_ref(&cull_bi[2])),
         ];
 
         // Gen descriptor layout: bindings 0, 1, 2
@@ -175,7 +164,7 @@ impl GpuCullingResources {
             .map_err(|e| RenderError::DeviceCreation(format!("gen desc set: {e}")))?;
 
         let gen_bi = [
-            vk::DescriptorBufferInfo::default().buffer(counter_buffer.buffer).offset(0).range(counter_size),
+            vk::DescriptorBufferInfo::default().buffer(visibility_buffer.buffer).offset(0).range(visibility_size),
             vk::DescriptorBufferInfo::default().buffer(draw_command_buffer.buffer).offset(0).range(draw_cmd_size),
             vk::DescriptorBufferInfo::default().buffer(batch_info_buffer.buffer).offset(0).range(batch_info_size),
         ];
@@ -207,7 +196,7 @@ impl GpuCullingResources {
         )?;
 
         Ok(Self {
-            input_buffer, visibility_buffer, counter_buffer,
+            input_buffer, visibility_buffer,
             draw_command_buffer, batch_info_buffer,
             cull_desc_layout, cull_desc_set,
             gen_desc_layout, gen_desc_set,
@@ -245,16 +234,6 @@ impl GpuCullingResources {
             }
         }
         count
-    }
-
-    /// Reset atomic counters to zero.
-    pub fn reset_counters(&mut self, batch_count: usize) {
-        let count = batch_count.min(self.max_batches);
-        if let Some(ptr) = self.counter_buffer.mapped_ptr {
-            unsafe {
-                std::ptr::write_bytes(ptr, 0, count * std::mem::size_of::<u32>());
-            }
-        }
     }
 
     pub fn destroy(&mut self, device: &ash::Device) {

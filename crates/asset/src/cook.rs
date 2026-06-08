@@ -11,12 +11,10 @@ use std::path::{Path, PathBuf};
 
 use crate::cache::DiskCache;
 use crate::dependency_graph::DependencyGraph;
-use crate::importer::Importer;
-use crate::mesh::{MeshAsset, export_rxmesh};
+use crate::mesh::export_rxmesh;
 use crate::material::{MaterialAsset, export_rxmat};
-use crate::texture::{TextureAsset, export_rxtex};
-use crate::animation::{AnimationAsset, export_rxanim};
-use crate::skeleton::{SkeletonAsset, export_rxskel};
+use crate::animation::export_rxanim;
+use crate::skeleton::export_rxskel;
 
 /// A single cooking task: source path → cooked path.
 #[derive(Debug, Clone)]
@@ -323,7 +321,7 @@ pub fn cook_texture_bc7(source: &[u8], _hint: Option<&str>) -> Result<Vec<u8>, S
     use crate::texture_compress::{TextureCompressor, CompressedBlockFormat};
 
     let tex = import_png(source)?;
-    let compressed = TextureCompressor::compress(&tex, CompressedBlockFormat::BC7_UNORM_SRGB)
+    let compressed = TextureCompressor::compress(&tex, CompressedBlockFormat::Bc7UnormSrgb)
         .map_err(|e| format!("compress: {e}"))?;
     // Write as a minimal wrapper: width, height, format, mip_levels, block_data
     let mut out = Vec::new();

@@ -154,26 +154,3 @@ impl InfluenceMap {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_stamp_and_highest() {
-        let mut map = InfluenceMap::new(10, 10, 1.0, [0.0, 0.0]);
-        map.stamp_influence(5.0, 5.0, 10.0, 2.0);
-        let (x, y, v) = map.highest_cell().unwrap();
-        assert_eq!(x, 5);
-        assert_eq!(y, 5);
-        assert!(v > 0.0);
-    }
-
-    #[test]
-    fn test_decay() {
-        let mut map = InfluenceMap::new(2, 2, 1.0, [0.0, 0.0]);
-        map.set(0, 0, 10.0);
-        map.decay(0.5);
-        assert!((map.get(0, 0) - 5.0).abs() < 0.001);
-    }
-}

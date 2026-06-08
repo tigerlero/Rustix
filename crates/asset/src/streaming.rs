@@ -9,9 +9,8 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::path::PathBuf;
-use std::sync::Arc;
 
-use crate::handle::{Asset, Handle, UntypedHandle};
+use crate::handle::UntypedHandle;
 use crate::server::AssetServer;
 
 /// Priority levels for streaming.  Higher values = more urgent.

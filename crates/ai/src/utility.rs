@@ -125,35 +125,3 @@ impl UtilityReasoner {
         ranked
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_utility_select() {
-        let actions = vec![
-            UtilityAction::new("attack")
-                .with(Consideration::new("enemy_distance", Curve::Inverse, 1.0))
-                .with(Consideration::new("health", Curve::Linear, 0.5)),
-            UtilityAction::new("heal")
-                .with(Consideration::new("health", Curve::Inverse, 1.0)),
-        ];
-
-        let reasoner = UtilityReasoner::new(actions);
-
-        // Low health, enemy far: heal wins
-        let mut inputs = std::collections::HashMap::new();
-        inputs.insert("enemy_distance".to_string(), 0.9);
-        inputs.insert("health".to_string(), 0.2);
-        let (name, score) = reasoner.select(&inputs).unwrap();
-        assert_eq!(name, "heal");
-        assert!(score > 0.0);
-
-        // High health, enemy close: attack wins
-        inputs.insert("health".to_string(), 0.9);
-        inputs.insert("enemy_distance".to_string(), 0.1);
-        let (name, _score) = reasoner.select(&inputs).unwrap();
-        assert_eq!(name, "attack");
-    }
-}

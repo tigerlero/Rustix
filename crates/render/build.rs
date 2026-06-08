@@ -123,4 +123,5 @@ fn main() {
 fn sanitize_ident(name: &str) -> String {
     name.replace(|c: char| !c.is_alphanumeric() && c != '_', "_")
         .replace('.', "_")
+        .to_ascii_uppercase()
 }

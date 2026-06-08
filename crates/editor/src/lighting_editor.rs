@@ -1,6 +1,6 @@
 //! Lighting editor: place lights, bake lightmaps, IBL probes.
 
-use rustix_core::math::{Vec3, Vec4};
+use rustix_core::math::Vec3;
 
 /// Editable light types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -52,7 +52,7 @@ pub struct TouchPoint {
     pub force: Option<f32>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum InputEvent {
     KeyPress(KeyCode),
     KeyRelease(KeyCode),

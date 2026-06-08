@@ -14,6 +14,18 @@ pub use clipboard::*;
 
 #[cfg(test)]
 pub mod actions_tests;
+#[cfg(test)]
+mod input_tests;
+#[cfg(test)]
+mod recorder_tests;
+#[cfg(test)]
+mod window_tests;
+#[cfg(test)]
+mod lib_tests;
+#[cfg(test)]
+mod clipboard_tests;
+#[cfg(test)]
+mod gamepad_tests;
 
 use thiserror::Error;
 

@@ -18,3 +18,12 @@ pub mod decoder;
 
 pub mod engine;
 pub use engine::{AudioEngine, StreamingInstance};
+
+#[cfg(test)]
+pub mod types_tests;
+#[cfg(test)]
+pub mod engine_tests;
+#[cfg(test)]
+pub mod stream_tests;
+#[cfg(test)]
+pub mod waveform_tests;

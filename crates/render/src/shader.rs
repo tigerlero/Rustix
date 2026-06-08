@@ -173,7 +173,7 @@ fn spv_options() -> naga::back::spv::Options<'static> {
     }
 }
 
-fn compile_wgsl_to_spirv(source: &str, stage: naga::ShaderStage) -> Result<Vec<u32>, RenderError> {
+fn compile_wgsl_to_spirv(source: &str, _stage: naga::ShaderStage) -> Result<Vec<u32>, RenderError> {
     let module = naga::front::wgsl::parse_str(source)
         .map_err(|e| RenderError::ShaderCompile(format!("WGSL: {e}")))?;
     let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())

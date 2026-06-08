@@ -98,8 +98,8 @@ impl EditorCamera {
 
                 let orbit_active = input.mouse().down(rustix_platform::input::MouseButton::Right);
                 if orbit_active {
-                    self.yaw += dx * 0.001;
-                    self.pitch = (self.pitch - dy * 0.001).clamp(-1.4, 1.4);
+                    self.yaw += dx * 0.005;
+                    self.pitch = (self.pitch - dy * 0.005).clamp(-1.4, 1.4);
                 }
                 if input.mouse().down(rustix_platform::input::MouseButton::Middle) {
                     self.center += Vec3::new(-dx * 0.01 * self.distance * 0.05, dy * 0.01 * self.distance * 0.05, 0.0);
@@ -123,8 +123,8 @@ impl EditorCamera {
                 }
 
                 if input.mouse().down(rustix_platform::input::MouseButton::Right) {
-                    self.yaw += dx * 0.001;
-                    self.pitch = (self.pitch - dy * 0.001).clamp(-1.4, 1.4);
+                    self.yaw += dx * 0.005;
+                    self.pitch = (self.pitch - dy * 0.005).clamp(-1.4, 1.4);
                 }
             }
         }

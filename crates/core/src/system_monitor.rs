@@ -74,46 +74,9 @@ impl SystemMonitor {
 /// assert_eq!(recommended_threads(8, 1.0, 2, 8), 2);
 /// assert_eq!(recommended_threads(8, 0.5, 2, 8), 5); // linear interpolation
 /// ```
-pub fn recommended_threads(current: usize, cpu_usage: f32, min: usize, max: usize) -> usize {
+pub fn recommended_threads(_current: usize, cpu_usage: f32, min: usize, max: usize) -> usize {
     let clamped = cpu_usage.clamp(0.0, 1.0);
     let available = max.saturating_sub(min);
     let reduction = (clamped * available as f32).round() as usize;
     max.saturating_sub(reduction).clamp(min, max)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn monitor_first_call_returns_zero() {
-        let mut m = SystemMonitor::new();
-        assert_eq!(m.cpu_usage(), 0.0);
-    }
-
-    #[test]
-    fn recommended_at_zero_load() {
-        assert_eq!(recommended_threads(8, 0.0, 2, 8), 8);
-    }
-
-    #[test]
-    fn recommended_at_full_load() {
-        assert_eq!(recommended_threads(8, 1.0, 2, 8), 2);
-    }
-
-    #[test]
-    fn recommended_at_half_load() {
-        assert_eq!(recommended_threads(8, 0.5, 2, 8), 5);
-    }
-
-    #[test]
-    fn recommended_respects_bounds() {
-        assert_eq!(recommended_threads(8, -0.5, 2, 8), 8);
-        assert_eq!(recommended_threads(8, 1.5, 2, 8), 2);
-    }
-
-    #[test]
-    fn recommended_min_equals_max() {
-        assert_eq!(recommended_threads(4, 0.5, 4, 4), 4);
-    }
 }

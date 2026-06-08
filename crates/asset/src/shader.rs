@@ -232,7 +232,7 @@ fn compile_glsl(source: &str, stage: naga::ShaderStage) -> Result<Vec<u32>, Stri
         .map_err(|e| format!("SPIR-V emit: {e}"))
 }
 
-fn compile_wgsl(source: &str, stage: naga::ShaderStage) -> Result<Vec<u32>, String> {
+fn compile_wgsl(source: &str, _stage: naga::ShaderStage) -> Result<Vec<u32>, String> {
     let m = naga::front::wgsl::parse_str(source)
         .map_err(|e| format!("WGSL parse: {e}"))?;
     let info = naga::valid::Validator::new(

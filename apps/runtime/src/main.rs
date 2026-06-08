@@ -716,7 +716,6 @@ fn main() {
                                                         });
                                                     }
                                                 }
-                                                cull_res.reset_counters(batch_infos.len());
                                                 cull_res.write_input(&cull_instances);
                                                 cull_res.write_batch_info(&batch_infos);
                                             }

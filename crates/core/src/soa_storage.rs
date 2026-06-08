@@ -1,6 +1,5 @@
 use std::alloc::{self, Layout};
 use std::collections::HashMap;
-use std::marker::PhantomData;
 
 use hecs::Entity;
 

@@ -6,26 +6,26 @@ use crate::RenderError;
 
 /// Hashable key derived from `vk::SamplerCreateInfo` fields that affect sampler behaviour.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct SamplerKey {
-    mag_filter: vk::Filter,
-    min_filter: vk::Filter,
-    mipmap_mode: vk::SamplerMipmapMode,
-    address_mode_u: vk::SamplerAddressMode,
-    address_mode_v: vk::SamplerAddressMode,
-    address_mode_w: vk::SamplerAddressMode,
-    mip_lod_bias: u32, // f32 as bits for hash
-    anisotropy_enable: bool,
-    max_anisotropy: u32, // f32 as bits for hash
-    compare_enable: bool,
-    compare_op: vk::CompareOp,
-    min_lod: u32, // f32 as bits for hash
-    max_lod: u32, // f32 as bits for hash
-    border_color: vk::BorderColor,
-    unnormalized_coordinates: bool,
+pub(crate) struct SamplerKey {
+    pub(crate) mag_filter: vk::Filter,
+    pub(crate) min_filter: vk::Filter,
+    pub(crate) mipmap_mode: vk::SamplerMipmapMode,
+    pub(crate) address_mode_u: vk::SamplerAddressMode,
+    pub(crate) address_mode_v: vk::SamplerAddressMode,
+    pub(crate) address_mode_w: vk::SamplerAddressMode,
+    pub(crate) mip_lod_bias: u32, // f32 as bits for hash
+    pub(crate) anisotropy_enable: bool,
+    pub(crate) max_anisotropy: u32, // f32 as bits for hash
+    pub(crate) compare_enable: bool,
+    pub(crate) compare_op: vk::CompareOp,
+    pub(crate) min_lod: u32, // f32 as bits for hash
+    pub(crate) max_lod: u32, // f32 as bits for hash
+    pub(crate) border_color: vk::BorderColor,
+    pub(crate) unnormalized_coordinates: bool,
 }
 
 impl SamplerKey {
-    fn from_info(info: &vk::SamplerCreateInfo) -> Self {
+    pub(crate) fn from_info(info: &vk::SamplerCreateInfo) -> Self {
         // ash stores f32 fields as f32; we hash the bits for stability.
         Self {
             mag_filter: info.mag_filter,

@@ -11,28 +11,28 @@ use crate::importer::{ImportResult, Importer};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextureFormat {
     /// 8-bit RGBA, sRGB-ish. Standard diffuse / color textures.
-    R8G8B8A8_UNORM = 0,
+    R8g8b8a8Unorm = 0,
     /// 16-bit half-float RGBA. HDR / environment maps.
-    R16G16B16A16_SFLOAT = 1,
+    R16g16b16a16Sfloat = 1,
     /// 32-bit float RGBA. High precision HDR.
-    R32G32B32A32_SFLOAT = 2,
+    R32g32b32a32Sfloat = 2,
 }
 
 impl TextureFormat {
     pub fn from_u32(v: u32) -> Option<Self> {
         match v {
-            0 => Some(TextureFormat::R8G8B8A8_UNORM),
-            1 => Some(TextureFormat::R16G16B16A16_SFLOAT),
-            2 => Some(TextureFormat::R32G32B32A32_SFLOAT),
+            0 => Some(TextureFormat::R8g8b8a8Unorm),
+            1 => Some(TextureFormat::R16g16b16a16Sfloat),
+            2 => Some(TextureFormat::R32g32b32a32Sfloat),
             _ => None,
         }
     }
 
     pub fn bytes_per_pixel(&self) -> usize {
         match self {
-            TextureFormat::R8G8B8A8_UNORM => 4,
-            TextureFormat::R16G16B16A16_SFLOAT => 8,
-            TextureFormat::R32G32B32A32_SFLOAT => 16,
+            TextureFormat::R8g8b8a8Unorm => 4,
+            TextureFormat::R16g16b16a16Sfloat => 8,
+            TextureFormat::R32g32b32a32Sfloat => 16,
         }
     }
 }
@@ -148,7 +148,7 @@ pub fn import_png(bytes: &[u8]) -> ImportResult<TextureAsset> {
         .map_err(|e| format!("PNG decode: {e}"))?;
     let rgba = img.to_rgba8();
     let (width, height) = (rgba.width(), rgba.height());
-    Ok(TextureAsset::new(width, height, TextureFormat::R8G8B8A8_UNORM, rgba.into_raw()))
+    Ok(TextureAsset::new(width, height, TextureFormat::R8g8b8a8Unorm, rgba.into_raw()))
 }
 
 // ── HDR Importer ──
@@ -179,7 +179,7 @@ fn import_hdr(bytes: &[u8]) -> ImportResult<TextureAsset> {
             pixels.extend_from_slice(&h.to_le_bytes());
         }
     }
-    Ok(TextureAsset::new(width, height, TextureFormat::R16G16B16A16_SFLOAT, pixels))
+    Ok(TextureAsset::new(width, height, TextureFormat::R16g16b16a16Sfloat, pixels))
 }
 
 // ── KTX2 Importer ──
@@ -208,9 +208,9 @@ fn import_ktx2(bytes: &[u8]) -> ImportResult<TextureAsset> {
 
     // Determine format from KTX2 vk_format
     let (format, bpp) = match header.format {
-        Some(ktx2::Format::R8G8B8A8_UNORM) => (TextureFormat::R8G8B8A8_UNORM, 4),
-        Some(ktx2::Format::R16G16B16A16_SFLOAT) => (TextureFormat::R16G16B16A16_SFLOAT, 8),
-        Some(ktx2::Format::R32G32B32A32_SFLOAT) => (TextureFormat::R32G32B32A32_SFLOAT, 16),
+        Some(ktx2::Format::R8G8B8A8_UNORM) => (TextureFormat::R8g8b8a8Unorm, 4),
+        Some(ktx2::Format::R16G16B16A16_SFLOAT) => (TextureFormat::R16g16b16a16Sfloat, 8),
+        Some(ktx2::Format::R32G32B32A32_SFLOAT) => (TextureFormat::R32g32b32a32Sfloat, 16),
         Some(ktx2::Format::R8G8B8_UNORM) => {
             // Expand RGB8 to RGBA8
             let mut all_pixels = Vec::new();
@@ -222,7 +222,7 @@ fn import_ktx2(bytes: &[u8]) -> ImportResult<TextureAsset> {
                     all_pixels.push(255);
                 }
             }
-            return Ok(TextureAsset::new(width, height, TextureFormat::R8G8B8A8_UNORM, all_pixels).with_mips(mip_levels));
+            return Ok(TextureAsset::new(width, height, TextureFormat::R8g8b8a8Unorm, all_pixels).with_mips(mip_levels));
         }
         Some(other) => {
             tracing::warn!("KTX2 format {:?} not directly supported, attempting RGBA8 fallback", other);
@@ -231,9 +231,9 @@ fn import_ktx2(bytes: &[u8]) -> ImportResult<TextureAsset> {
         None => {
             // No VkFormat — try to infer from type-size
             match header.type_size {
-                1 => (TextureFormat::R8G8B8A8_UNORM, 4),
-                2 => (TextureFormat::R16G16B16A16_SFLOAT, 8),
-                4 => (TextureFormat::R32G32B32A32_SFLOAT, 16),
+                1 => (TextureFormat::R8g8b8a8Unorm, 4),
+                2 => (TextureFormat::R16g16b16a16Sfloat, 8),
+                4 => (TextureFormat::R32g32b32a32Sfloat, 16),
                 _ => return Err(format!("KTX2 unknown type_size {}", header.type_size)),
             }
         }

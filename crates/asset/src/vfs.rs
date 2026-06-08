@@ -6,7 +6,7 @@
 //! user/mods can override engine assets by mounting later.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// A physical source for files: either a directory on disk or an archive.
 #[derive(Debug, Clone)]

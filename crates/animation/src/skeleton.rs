@@ -50,7 +50,7 @@ impl Skeleton {
     /// Returns a Vec of world matrices in bone-index order.
     pub fn compute_world_matrices(&self) -> Vec<Mat4> {
         let mut matrices = Vec::with_capacity(self.bones.len());
-        for (i, bone) in self.bones.iter().enumerate() {
+        for (_i, bone) in self.bones.iter().enumerate() {
             let local = Mat4::from_scale_rotation_translation(
                 bone.local_scl,
                 rustix_core::math::Quat::from_euler(

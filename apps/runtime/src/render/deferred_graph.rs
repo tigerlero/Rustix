@@ -335,7 +335,7 @@ pub fn render_deferred_with_graph(
 
     // GBuffer geometry pass
     let gbuffer_pipeline = &gbuf.gbuffer_pipeline;
-    let gbuffer_pipeline_clone = gbuffer_pipeline.clone();
+    let gbuffer_pipeline_clone = gbuffer_pipeline;
 
     graph.add_pass(PassDesc {
         name: "gbuffer",

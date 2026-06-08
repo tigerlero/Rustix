@@ -193,7 +193,7 @@ pub fn flex_layout(container: Vec2, items: &mut [LayoutItem], config: &FlexLayou
         + (items.len().saturating_sub(1) as f32) * config.gap;
 
     // Main-axis positioning (justify)
-    let mut cursor_main = match config.justify {
+    let _cursor_main = match config.justify {
         Justify::Start | Justify::SpaceBetween | Justify::SpaceAround | Justify::SpaceEvenly => {
             config.padding[3] // left (row) or top (column via padding[0], but we map left->top for column)
         }
@@ -225,7 +225,7 @@ pub fn flex_layout(container: Vec2, items: &mut [LayoutItem], config: &FlexLayou
         _ => config.gap,
     };
 
-    for (i, item) in items.iter_mut().enumerate() {
+    for (_i, item) in items.iter_mut().enumerate() {
         if config.justify == Justify::SpaceAround {
             cursor_main += gap_extra * 0.5;
         } else if config.justify == Justify::SpaceEvenly {

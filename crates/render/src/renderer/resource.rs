@@ -117,7 +117,7 @@ impl super::Renderer {
         self.bindless_heap.write_ubo(ubo.buffer, ubo.size);
     }
 
-    pub fn update_descriptor_set_with_shadow(&self, _set: vk::DescriptorSet, ubo: &GpuBuffer, shadow_map: &GpuTexture) {
+    pub fn update_descriptor_set_with_shadow(&self, _set: vk::DescriptorSet, ubo: &GpuBuffer, _shadow_map: &GpuTexture) {
         self.bindless_heap.write_ubo(ubo.buffer, ubo.size);
         // Shadow map should already be registered in the bindless heap.
         // If not, this is a no-op; the caller manages heap registration.

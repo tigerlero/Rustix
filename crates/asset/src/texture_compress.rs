@@ -11,35 +11,35 @@ use crate::texture::{TextureAsset, TextureFormat};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompressedBlockFormat {
     /// BC7 (BPTC) RGBA, linear. 16 bytes per 4×4 block (~1 byte/pixel).
-    BC7_UNORM,
+    Bc7Unorm,
     /// BC7 (BPTC) RGBA, sRGB. 16 bytes per 4×4 block.
-    BC7_UNORM_SRGB,
+    Bc7UnormSrgb,
     /// ASTC 4×4 LDR, linear. 16 bytes per 4×4 block.
-    ASTC_4x4_UNORM,
+    Astc4x4Unorm,
     /// ASTC 4×4 LDR, sRGB.
-    ASTC_4x4_UNORM_SRGB,
+    Astc4x4UnormSrgb,
     /// ASTC 6×6 LDR, linear. 16 bytes per 6×6 block (~0.44 byte/pixel).
-    ASTC_6x6_UNORM,
+    Astc6x6Unorm,
     /// ASTC 6×6 LDR, sRGB.
-    ASTC_6x6_UNORM_SRGB,
+    Astc6x6UnormSrgb,
     /// ASTC 8×8 LDR, linear. 16 bytes per 8×8 block (~0.25 byte/pixel).
-    ASTC_8x8_UNORM,
+    Astc8x8Unorm,
     /// ASTC 8×8 LDR, sRGB.
-    ASTC_8x8_UNORM_SRGB,
+    Astc8x8UnormSrgb,
 }
 
 impl CompressedBlockFormat {
     /// Dimensions of one block in texels.
     pub fn block_dims(&self) -> (u32, u32) {
         match self {
-            CompressedBlockFormat::BC7_UNORM
-            | CompressedBlockFormat::BC7_UNORM_SRGB
-            | CompressedBlockFormat::ASTC_4x4_UNORM
-            | CompressedBlockFormat::ASTC_4x4_UNORM_SRGB => (4, 4),
-            CompressedBlockFormat::ASTC_6x6_UNORM
-            | CompressedBlockFormat::ASTC_6x6_UNORM_SRGB => (6, 6),
-            CompressedBlockFormat::ASTC_8x8_UNORM
-            | CompressedBlockFormat::ASTC_8x8_UNORM_SRGB => (8, 8),
+            CompressedBlockFormat::Bc7Unorm
+            | CompressedBlockFormat::Bc7UnormSrgb
+            | CompressedBlockFormat::Astc4x4Unorm
+            | CompressedBlockFormat::Astc4x4UnormSrgb => (4, 4),
+            CompressedBlockFormat::Astc6x6Unorm
+            | CompressedBlockFormat::Astc6x6UnormSrgb => (6, 6),
+            CompressedBlockFormat::Astc8x8Unorm
+            | CompressedBlockFormat::Astc8x8UnormSrgb => (8, 8),
         }
     }
 
@@ -52,10 +52,10 @@ impl CompressedBlockFormat {
     pub fn is_srgb(&self) -> bool {
         matches!(
             self,
-            CompressedBlockFormat::BC7_UNORM_SRGB
-                | CompressedBlockFormat::ASTC_4x4_UNORM_SRGB
-                | CompressedBlockFormat::ASTC_6x6_UNORM_SRGB
-                | CompressedBlockFormat::ASTC_8x8_UNORM_SRGB
+            CompressedBlockFormat::Bc7UnormSrgb
+                | CompressedBlockFormat::Astc4x4UnormSrgb
+                | CompressedBlockFormat::Astc6x6UnormSrgb
+                | CompressedBlockFormat::Astc8x8UnormSrgb
         )
     }
 
@@ -96,9 +96,9 @@ impl TextureCompressor {
         asset: &TextureAsset,
         target: CompressedBlockFormat,
     ) -> Result<CompressedTexture, String> {
-        if asset.format != TextureFormat::R8G8B8A8_UNORM {
+        if asset.format != TextureFormat::R8g8b8a8Unorm {
             return Err(format!(
-                "texture compression: source format {:?} not supported, expected R8G8B8A8_UNORM",
+                "texture compression: source format {:?} not supported, expected R8g8b8a8Unorm",
                 asset.format
             ));
         }
@@ -174,28 +174,28 @@ impl TextureCompressor {
         };
 
         let (ctt_format, encoder) = match target {
-            CompressedBlockFormat::BC7_UNORM => {
+            CompressedBlockFormat::Bc7Unorm => {
                 (ctt::Format::BC7_UNORM_BLOCK, ctt::encoders::Encoder::Auto)
             }
-            CompressedBlockFormat::BC7_UNORM_SRGB => {
+            CompressedBlockFormat::Bc7UnormSrgb => {
                 (ctt::Format::BC7_SRGB_BLOCK, ctt::encoders::Encoder::Auto)
             }
-            CompressedBlockFormat::ASTC_4x4_UNORM => {
+            CompressedBlockFormat::Astc4x4Unorm => {
                 (ctt::Format::ASTC_4x4_UNORM_BLOCK, ctt::encoders::Encoder::Auto)
             }
-            CompressedBlockFormat::ASTC_4x4_UNORM_SRGB => {
+            CompressedBlockFormat::Astc4x4UnormSrgb => {
                 (ctt::Format::ASTC_4x4_SRGB_BLOCK, ctt::encoders::Encoder::Auto)
             }
-            CompressedBlockFormat::ASTC_6x6_UNORM => {
+            CompressedBlockFormat::Astc6x6Unorm => {
                 (ctt::Format::ASTC_6x6_UNORM_BLOCK, ctt::encoders::Encoder::Auto)
             }
-            CompressedBlockFormat::ASTC_6x6_UNORM_SRGB => {
+            CompressedBlockFormat::Astc6x6UnormSrgb => {
                 (ctt::Format::ASTC_6x6_SRGB_BLOCK, ctt::encoders::Encoder::Auto)
             }
-            CompressedBlockFormat::ASTC_8x8_UNORM => {
+            CompressedBlockFormat::Astc8x8Unorm => {
                 (ctt::Format::ASTC_8x8_UNORM_BLOCK, ctt::encoders::Encoder::Auto)
             }
-            CompressedBlockFormat::ASTC_8x8_UNORM_SRGB => {
+            CompressedBlockFormat::Astc8x8UnormSrgb => {
                 (ctt::Format::ASTC_8x8_SRGB_BLOCK, ctt::encoders::Encoder::Auto)
             }
         };
@@ -253,5 +253,5 @@ fn halve_rgba8(src: &TextureAsset) -> Result<TextureAsset, String> {
         }
     }
 
-    Ok(TextureAsset::new(new_w, new_h, TextureFormat::R8G8B8A8_UNORM, dst))
+    Ok(TextureAsset::new(new_w, new_h, TextureFormat::R8g8b8a8Unorm, dst))
 }

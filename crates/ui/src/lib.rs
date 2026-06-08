@@ -165,7 +165,7 @@ impl UIContext {
     }
 
     /// Layout children vertically, returns total height used.
-    pub fn vstack(&mut self, x: f32, y: f32, spacing: f32, children: impl FnOnce(&mut Self)) {
+    pub fn vstack(&mut self, x: f32, y: f32, _spacing: f32, children: impl FnOnce(&mut Self)) {
         self.cursor = Vec2::new(x, y);
         children(self);
     }
@@ -673,3 +673,6 @@ void main() {
         }
     }
 }
+
+#[cfg(test)]
+pub mod lib_tests;

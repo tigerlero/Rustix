@@ -110,31 +110,3 @@ pub fn load_file_bytes(path: &Path) -> Result<MappedFile, String> {
 pub fn load_file_bytes_vec(path: &Path) -> Result<Vec<u8>, String> {
     std::fs::read(path).map_err(|e| format!("failed to read {}: {}", path.display(), e))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
-
-    #[test]
-    fn mapped_file_reads_correct_bytes() {
-        let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        let content = b"hello mmap world";
-        tmp.write_all(content).unwrap();
-        tmp.flush().unwrap();
-
-        let mf = MappedFile::open(tmp.path()).unwrap();
-        assert_eq!(&*mf, content);
-    }
-
-    #[test]
-    fn small_file_uses_heap() {
-        let mut tmp = tempfile::NamedTempFile::new().unwrap();
-        tmp.write_all(b"tiny").unwrap();
-        tmp.flush().unwrap();
-
-        let mf = MappedFile::open(tmp.path()).unwrap();
-        assert!(mf.heap.is_some(), "small file should use heap");
-        assert!(mf.mmap.is_none());
-    }
-}

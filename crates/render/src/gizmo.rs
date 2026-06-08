@@ -5,7 +5,7 @@
 //! module is intentionally pure — it only produces CPU-side vertex buffers.
 //! The caller uploads them to GPU and issues a line-list draw call.
 
-use rustix_core::math::{Vec3, Mat4};
+use rustix_core::math::Vec3;
 
 /// A single colored vertex for a debug line.
 #[repr(C)]
@@ -48,7 +48,7 @@ pub fn wireframe_sphere(center: Vec3, radius: f32, color: [f32; 4], segments: u3
         let phi1 = ((i + 1) as f32 / seg as f32) * std::f32::consts::PI * 2.0;
         for j in 0..seg {
             let theta0 = (j as f32 / seg as f32) * std::f32::consts::PI;
-            let theta1 = ((j + 1) as f32 / seg as f32) * std::f32::consts::PI;
+            let _theta1 = ((j + 1) as f32 / seg as f32) * std::f32::consts::PI;
 
             // Only add lines on the "equator" ring (theta = PI/2) to keep density reasonable
             if (theta0 - std::f32::consts::FRAC_PI_2).abs() < 0.01 {
@@ -231,35 +231,4 @@ fn spherical_to_cartesian(r: f32, theta: f32, phi: f32) -> Vec3 {
         r * theta.cos(),
         r * theta.sin() * phi.sin(),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_wireframe_box() {
-        let lines = wireframe_box(Vec3::ZERO, Vec3::ONE, [1.0; 4]);
-        assert_eq!(lines.len(), 12);
-    }
-
-    #[test]
-    fn test_audio_gizmo() {
-        let gizmo = AudioGizmo {
-            position: Vec3::new(1.0, 2.0, 3.0),
-            min_distance: 1.0,
-            max_distance: 5.0,
-            direction: Some(Vec3::Y),
-            ..Default::default()
-        };
-        let lines = generate_audio_gizmo(&gizmo);
-        assert!(!lines.is_empty());
-    }
-
-    #[test]
-    fn test_flatten() {
-        let lines = wireframe_box(Vec3::ZERO, Vec3::ONE, [1.0; 4]);
-        let flat = flatten_gizmo_lines(&lines);
-        assert_eq!(flat.len(), lines.len() * 14);
-    }
 }

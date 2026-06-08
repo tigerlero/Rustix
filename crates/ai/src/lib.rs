@@ -27,6 +27,10 @@ pub mod utility_tests;
 pub mod btree_tests;
 #[cfg(test)]
 pub mod debug_draw_tests;
+#[cfg(test)]
+pub mod path_tests;
+#[cfg(test)]
+pub mod nav_tests;
 
 pub use btree::{BehaviorTree, Blackboard, Status, BehaviorNode, Action, Condition, Sequence, Selector, Parallel, Invert, Repeat};
 pub use path::{PathFinder, PathNode, a_star_grid, a_star_graph};

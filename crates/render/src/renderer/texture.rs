@@ -1,5 +1,4 @@
 use ash::vk;
-use crate::memory::GpuBuffer;
 use crate::texture::GpuTexture;
 use crate::error::RenderError;
 
@@ -183,9 +182,9 @@ impl super::Renderer {
     /// Create a `GpuTexture` from a `TextureAsset` by selecting the appropriate Vulkan format.
     pub fn create_texture_from_asset(&self, asset: &rustix_asset::texture::TextureAsset) -> Result<GpuTexture, RenderError> {
         let vk_format = match asset.format {
-            rustix_asset::texture::TextureFormat::R8G8B8A8_UNORM => vk::Format::R8G8B8A8_UNORM,
-            rustix_asset::texture::TextureFormat::R16G16B16A16_SFLOAT => vk::Format::R16G16B16A16_SFLOAT,
-            rustix_asset::texture::TextureFormat::R32G32B32A32_SFLOAT => vk::Format::R32G32B32A32_SFLOAT,
+            rustix_asset::texture::TextureFormat::R8g8b8a8Unorm => vk::Format::R8G8B8A8_UNORM,
+            rustix_asset::texture::TextureFormat::R16g16b16a16Sfloat => vk::Format::R16G16B16A16_SFLOAT,
+            rustix_asset::texture::TextureFormat::R32g32b32a32Sfloat => vk::Format::R32G32B32A32_SFLOAT,
         };
         self.create_texture_with_format(asset.width, asset.height, &asset.pixels, vk_format)
     }

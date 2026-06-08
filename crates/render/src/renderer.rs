@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use ash::vk;
 use parking_lot::Mutex;
 use crate::instance::VulkanInstance;
@@ -7,7 +7,6 @@ use crate::device::GpuDevice;
 use crate::memory::GpuMemoryAllocator;
 use crate::swapchain::Swapchain;
 use crate::surface;
-use crate::pipeline;
 use crate::texture::Framebuffer;
 use crate::error::RenderError;
 use crate::profiler::GpuProfiler;
@@ -225,8 +224,8 @@ impl Renderer {
         }
         let cmds = [cmd];
         let signal_value = (frame_idx + 1) as u64;
-        let mut signal_values = vec![0u64, signal_value];
-        let mut signal_sems = vec![ss[0], self.frame_complete_semaphore];
+        let signal_values = vec![0u64, signal_value];
+        let signal_sems = vec![ss[0], self.frame_complete_semaphore];
         let mut timeline_si = vk::TimelineSemaphoreSubmitInfo::default()
             .wait_semaphore_values(&wait_values)
             .signal_semaphore_values(&signal_values);

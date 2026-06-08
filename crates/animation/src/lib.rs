@@ -13,6 +13,15 @@ pub use ik::{CcdIkSolver, IkJoint};
 #[cfg(test)]
 pub mod lib_tests;
 
+#[cfg(test)]
+mod skeleton_tests;
+
+#[cfg(test)]
+mod state_machine_tests;
+
+#[cfg(test)]
+mod ik_tests;
+
 /// A single keyframe with a time and a Vec3 value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Keyframe {

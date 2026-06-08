@@ -44,7 +44,7 @@ impl ShaderReflection {
     }
 
     /// Build descriptor set layout bindings grouped by set index.
-    pub fn bindings_by_set(&self) -> Vec<(u32, Vec<vk::DescriptorSetLayoutBinding>)> {
+    pub fn bindings_by_set(&self) -> Vec<(u32, Vec<vk::DescriptorSetLayoutBinding<'_>>)> {
         use std::collections::BTreeMap;
         let mut map: BTreeMap<u32, Vec<vk::DescriptorSetLayoutBinding>> = BTreeMap::new();
         for res in &self.resources {
@@ -179,7 +179,7 @@ fn type_size(inner: &naga::TypeInner, module: &naga::Module) -> u32 {
         T::Scalar(scalar) => scalar.width as u32 / 8,
         T::Vector { size, scalar } => (*size as u32) * (scalar.width as u32 / 8),
         T::Matrix { columns, rows, scalar } => (*columns as u32) * (*rows as u32) * (scalar.width as u32 / 8),
-        T::Array { base, size, stride } => {
+        T::Array { base, size, stride: _ } => {
             let elem_size = type_size(&module.types[*base].inner, module);
             let count = match size {
                 naga::ArraySize::Constant(c) => c.get() as u32,

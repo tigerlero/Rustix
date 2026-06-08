@@ -17,7 +17,6 @@ pub struct ComponentInfo {
     pub size: usize,
     pub align: usize,
     pub(crate) make_default: fn() -> Box<dyn Any + Send + Sync>,
-    pub(crate) clone_raw: unsafe fn(src: *const u8, dst: *mut u8),
     pub(crate) clone_to_box: unsafe fn(src: *const u8) -> Box<dyn Any + Send + Sync>,
     pub(crate) drop_raw: unsafe fn(ptr: *mut u8),
     /// Type-erased `hecs::World::insert_one` dispatcher.
@@ -88,10 +87,6 @@ impl ComponentRegistry {
             size: std::mem::size_of::<T>(),
             align: std::mem::align_of::<T>(),
             make_default: || Box::new(T::default()),
-            clone_raw: |src, dst| unsafe {
-                let val = (src as *const T).read();
-                (dst as *mut T).write(val);
-            },
             clone_to_box: |src| unsafe {
                 let val = (src as *const T).read();
                 Box::new(val) as Box<dyn Any + Send + Sync>

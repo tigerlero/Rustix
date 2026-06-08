@@ -20,6 +20,8 @@ pub mod sculpt_tests;
 pub mod water_tests;
 #[cfg(test)]
 pub mod chunk_tests;
+#[cfg(test)]
+pub mod erosion_tests;
 
 /// 2D grid of height values.
 #[derive(Debug, Clone)]

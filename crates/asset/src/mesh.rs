@@ -85,7 +85,7 @@ const RXMESH_VERSION: u32 = 1;
 
 /// Import a `.rxmesh` file from raw bytes.
 pub fn import_rxmesh(bytes: &[u8]) -> ImportResult<MeshAsset> {
-    if bytes.len() < 52 {
+    if bytes.len() < 40 {
         return Err("rxmesh: file too small for header".to_string());
     }
 

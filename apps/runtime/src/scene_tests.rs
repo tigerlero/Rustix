@@ -8,7 +8,7 @@ fn scene_round_trip_preserved_entities() {
         Name("Cube".into()),
         Transform { position: Vec3::new(1.0, 2.0, 3.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
         MeshComponent("Cube".into()),
-        Material { base_color: Vec3::new(0.7, 0.7, 0.7), roughness: 0.5, metallic: 0.0, ao: 1.0, emissive: 0.0 },
+        Material { base_color: Vec3::new(0.7, 0.7, 0.7), alpha: 1.0, roughness: 0.5, metallic: 0.0, ao: 1.0, emissive: 0.0 },
     ));
     world.spawn((
         Name("Light".into()),

@@ -38,7 +38,7 @@ fn orbit_plain_wasd_does_nothing() {
 #[test]
 fn orbit_shift_w_zooms_in_shift_s_zooms_out() {
     let dt = 0.016;
-    let zoom_speed = 3.0 * dt;
+    let zoom_speed = 1.0 * dt;
 
     // Shift+W decreases distance
     let mut cam = EditorCamera::new();
@@ -76,7 +76,7 @@ fn orbit_shift_w_zooms_in_shift_s_zooms_out() {
 #[test]
 fn orbit_shift_a_rotates_left_shift_d_rotates_right() {
     let dt = 0.016;
-    let rot_speed = 2.0 * dt;
+    let rot_speed = 0.5 * dt;
 
     // Shift+A decreases yaw
     let mut cam = EditorCamera::new();
@@ -114,7 +114,7 @@ fn orbit_shift_a_rotates_left_shift_d_rotates_right() {
 #[test]
 fn orbit_shift_q_pitches_up_shift_e_pitches_down() {
     let dt = 0.016;
-    let rot_speed = 2.0 * dt;
+    let rot_speed = 0.5 * dt;
 
     // Shift+Q decreases pitch
     let mut cam = EditorCamera::new();
@@ -152,7 +152,7 @@ fn orbit_shift_q_pitches_up_shift_e_pitches_down() {
 #[test]
 fn orbit_shift_qe_clamping() {
     let dt = 0.016;
-    let rot_speed = 2.0 * dt;
+    let rot_speed = 0.5 * dt;
 
     // Pitch should clamp at -1.4 when looking too far up
     let mut cam = EditorCamera::new();
@@ -337,7 +337,7 @@ fn first_person_right_click_drag_looks_around() {
 #[test]
 fn first_person_shift_wasd_moves_position() {
     let dt = 0.016;
-    let move_speed = 5.0 * dt;
+    let move_speed = 2.0 * dt;
 
     let mut cam = EditorCamera::new();
     cam.mode = CameraMode::FirstPerson;

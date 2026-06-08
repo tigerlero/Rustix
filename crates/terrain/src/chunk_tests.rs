@@ -45,9 +45,9 @@ fn terrain_chunk_normals_on_flat_terrain() {
 fn terrain_chunk_positions_scaled() {
     let hm = Heightmap::flat(16, 16, 2.0);
     let chunk = TerrainChunk::from_heightmap(&hm, 0, 0, 4, 1, 2.0);
-    // Last vertex should be at x = 3 * 2.0 = 6.0
+    // resolution = 4/1 + 1 = 5, last lx = 4, so x = 4 * 2.0 = 8.0
     let last = chunk.vertices.last().unwrap();
-    assert!((last.position[0] - 6.0).abs() < 1e-3);
+    assert!((last.position[0] - 8.0).abs() < 1e-3);
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn chunked_terrain_stream_chunks() {
 }
 
 #[test]
-fn build_chunk_skirt() {
+fn chunk_skirt_generation() {
     let hm = Heightmap::flat(8, 8, 1.0);
     let chunk = TerrainChunk::from_heightmap(&hm, 0, 0, 8, 1, 1.0);
     let (skirt_verts, skirt_indices) = build_chunk_skirt(&chunk, [None, None, None, None], 2.0);

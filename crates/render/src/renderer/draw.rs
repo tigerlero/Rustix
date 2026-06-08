@@ -2,7 +2,6 @@ use ash::vk;
 use crate::memory::GpuBuffer;
 use crate::texture::{DepthBuffer, GpuTexture};
 use crate::pipeline;
-use crate::error::RenderError;
 
 impl super::Renderer {
     pub fn update_2d_descriptor_set(

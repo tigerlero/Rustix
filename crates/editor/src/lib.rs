@@ -16,6 +16,37 @@ pub mod terrain_editor;
 pub mod play_mode;
 pub mod build_pipeline;
 
+#[cfg(test)]
+mod undo_tests;
+#[cfg(test)]
+mod camera_tests;
+#[cfg(test)]
+mod plugin_tests;
+#[cfg(test)]
+mod play_mode_tests;
+#[cfg(test)]
+mod lib_tests;
+#[cfg(test)]
+mod console_tests;
+#[cfg(test)]
+mod profiler_tests;
+#[cfg(test)]
+mod hierarchy_tests;
+#[cfg(test)]
+mod build_pipeline_tests;
+#[cfg(test)]
+mod asset_browser_tests;
+#[cfg(test)]
+mod material_editor_tests;
+#[cfg(test)]
+mod inspector_tests;
+#[cfg(test)]
+mod lighting_editor_tests;
+#[cfg(test)]
+mod animation_editor_tests;
+#[cfg(test)]
+mod terrain_editor_tests;
+
 pub use plugin::{PluginRegistry, PanelId, ToolId, EditorPanel, EditorTool};
 pub use camera::{EditorCamera, CameraMode};
 pub use undo::{UndoStack, Command};
@@ -90,7 +121,7 @@ pub fn gizmo_screen_size(world_pos: Vec3, view_proj: Mat4, screen_height: f32) -
     if clip.w.abs() < 0.0001 {
         return 0.0;
     }
-    let ndc = clip.truncate() / clip.w;
+    let _ndc = clip.truncate() / clip.w;
     let pixel_per_unit = screen_height * 0.5; // approximate
     80.0 / pixel_per_unit // 80 pixels at screen center
 }

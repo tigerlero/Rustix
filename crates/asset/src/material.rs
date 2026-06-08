@@ -331,7 +331,7 @@ impl Importer for GltfMaterialImporter {
 }
 
 fn import_gltf_material(bytes: &[u8]) -> ImportResult<MaterialAsset> {
-    let (doc, buffers, _images) = gltf::import_slice(bytes)
+    let (doc, _buffers, _images) = gltf::import_slice(bytes)
         .map_err(|e| format!("glTF parse: {e}"))?;
 
     let material = doc.materials().next()

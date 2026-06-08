@@ -25,6 +25,10 @@ pub mod sandbox_tests;
 pub mod coroutine_tests;
 #[cfg(test)]
 pub mod lib_tests;
+#[cfg(test)]
+pub mod hot_reload_tests;
+#[cfg(test)]
+pub mod logging_tests;
 pub mod hot_reload;
 pub mod component_def;
 pub mod logging;

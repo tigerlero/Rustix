@@ -1,6 +1,5 @@
 //! Undo/redo system using the command pattern.
 
-use std::any::Any;
 
 /// A reversible editor command.
 pub trait Command: Send + Sync {

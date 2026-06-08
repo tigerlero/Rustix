@@ -4,6 +4,7 @@ use rustix_core::math::{Vec3, Quat};
 use crate::events::*;
 use crate::math_api::*;
 use crate::component_def::*;
+use crate::{ScriptId, Script, ScriptConfig, ScriptComponent, ScriptApi, ScriptLoader, ScriptRegistry};
 use std::collections::HashMap;
 
 // ---------- events.rs ----------
@@ -142,4 +143,77 @@ fn script_field_type_variants() {
     assert_ne!(ScriptFieldType::Float, ScriptFieldType::Int);
     assert_ne!(ScriptFieldType::Bool, ScriptFieldType::String);
     assert_eq!(ScriptFieldType::Vec3, ScriptFieldType::Vec3);
+}
+
+// ---------- lib.rs core types ----------
+
+#[test]
+fn script_id_equality() {
+    assert_eq!(ScriptId(1), ScriptId(1));
+    assert_ne!(ScriptId(1), ScriptId(2));
+}
+
+#[test]
+fn script_default() {
+    let script: Script = Default::default();
+    assert!(script.source.is_empty());
+    assert!(script.path.is_none());
+}
+
+#[test]
+fn script_config_default() {
+    let cfg = ScriptConfig::default();
+    assert!(!cfg.enabled); // Default derive sets bool to false
+}
+
+#[test]
+fn script_component_default() {
+    let comp: ScriptComponent = Default::default();
+    assert!(comp.source.is_empty());
+    assert_eq!(comp.config, ScriptConfig::default());
+}
+
+#[test]
+fn script_api_new() {
+    let api = ScriptApi::new();
+    assert!(api.instances.is_empty());
+    assert_eq!(api.next_instance_id, 0);
+}
+
+#[test]
+fn script_api_register_and_unregister() {
+    let mut api = ScriptApi::new();
+    let mut world = hecs::World::new();
+    let entity = world.spawn(());
+    let ast = rhai::AST::default();
+    let id = api.register(entity, ast);
+    assert_eq!(id, 0);
+    assert_eq!(api.instances.len(), 1);
+
+    api.unregister(id);
+    assert!(api.instances.is_empty());
+}
+
+#[test]
+fn script_loader_from_memory() {
+    let script = ScriptLoader::load_from_memory("let x = 1;");
+    assert_eq!(script.source, "let x = 1;");
+    assert!(script.path.is_none());
+}
+
+#[test]
+fn script_registry_new() {
+    let reg = ScriptRegistry::new();
+    assert!(reg.get(&ScriptId(0)).is_none());
+}
+
+#[test]
+fn script_registry_register_and_get() {
+    let mut reg = ScriptRegistry::new();
+    let _script = ScriptLoader::load_from_memory("");
+    let handle = rustix_asset::Handle::new(0, 0);
+    reg.register(ScriptId(1), handle, std::path::PathBuf::from("test.rhai"));
+    assert!(reg.get(&ScriptId(1)).is_some());
+    let (id, _) = reg.get_by_path(std::path::Path::new("test.rhai")).unwrap();
+    assert_eq!(id, ScriptId(1));
 }
