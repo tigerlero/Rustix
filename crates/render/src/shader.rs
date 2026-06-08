@@ -42,6 +42,26 @@ impl ShaderModule {
         Self::from_spirv(device, &spv, stage)
     }
 
+    /// Create a `ShaderModule` from a `ShaderAsset`.
+    /// Uses pre-compiled SPIR-V if available; otherwise compiles from stored source.
+    pub fn from_asset(
+        device: &ash::Device,
+        asset: &rustix_asset::shader::ShaderAsset,
+    ) -> Result<Self, RenderError> {
+        let stage = asset_stage_to_vk(asset.stage);
+        if !asset.compiled_spv.is_empty() {
+            Self::from_spirv(device, &asset.compiled_spv, stage)
+        } else if asset.language == rustix_asset::shader::ShaderLanguage::Glsl {
+            Self::from_glsl(device, &asset.source, stage)
+        } else if asset.language == rustix_asset::shader::ShaderLanguage::Wgsl {
+            Self::from_wgsl(device, &asset.source, stage)
+        } else {
+            Err(RenderError::ShaderCompile(
+                "ShaderAsset has no compiled SPIR-V and no recognized source language".into(),
+            ))
+        }
+    }
+
     /// Compile GLSL source with `#include` resolution relative to `base_path`.
     pub fn from_glsl_with_includes(
         device: &ash::Device,
@@ -98,6 +118,8 @@ impl ShaderModule {
             ("vert", _) => vk::ShaderStageFlags::VERTEX,
             ("frag", _) => vk::ShaderStageFlags::FRAGMENT,
             ("comp", _) => vk::ShaderStageFlags::COMPUTE,
+            ("mesh", _) => vk::ShaderStageFlags::MESH_NV,
+            ("task", _) => vk::ShaderStageFlags::TASK_NV,
             (_, Some(s)) => s,
             _ => {
                 return Err(RenderError::ShaderCompile(format!(
@@ -112,6 +134,10 @@ impl ShaderModule {
             "glsl" | "vert" | "frag" | "comp" => {
                 let base = path.parent().unwrap_or_else(|| std::path::Path::new("."));
                 Self::from_glsl_with_includes(device, &source, stage, base)
+            }
+            "mesh" | "task" => {
+                let spv = compile_mesh_glsl_to_spirv(&source, stage)?;
+                Self::from_spirv(device, &spv, stage)
             }
             "wgsl" => Self::from_wgsl(device, &source, stage),
             _ => {
@@ -128,6 +154,16 @@ fn vk_stage_to_naga(s: vk::ShaderStageFlags) -> naga::ShaderStage {
     else if s.contains(vk::ShaderStageFlags::FRAGMENT) { naga::ShaderStage::Fragment }
     else if s.contains(vk::ShaderStageFlags::COMPUTE) { naga::ShaderStage::Compute }
     else { tracing::warn!("unsupported shader stage {s:?}, defaulting to vertex"); naga::ShaderStage::Vertex }
+}
+
+fn asset_stage_to_vk(stage: rustix_asset::shader::ShaderStage) -> vk::ShaderStageFlags {
+    match stage {
+        rustix_asset::shader::ShaderStage::Vertex => vk::ShaderStageFlags::VERTEX,
+        rustix_asset::shader::ShaderStage::Fragment => vk::ShaderStageFlags::FRAGMENT,
+        rustix_asset::shader::ShaderStage::Compute => vk::ShaderStageFlags::COMPUTE,
+        rustix_asset::shader::ShaderStage::Mesh => vk::ShaderStageFlags::MESH_NV,
+        rustix_asset::shader::ShaderStage::Task => vk::ShaderStageFlags::TASK_NV,
+    }
 }
 
 fn spv_options() -> naga::back::spv::Options<'static> {
@@ -154,6 +190,42 @@ fn compile_glsl_to_spirv(source: &str, stage: naga::ShaderStage) -> Result<Vec<u
         .validate(&m).map_err(|e| RenderError::ShaderCompile(format!("validate: {e}")))?;
     naga::back::spv::write_vec(&m, &info, &spv_options(), None)
         .map_err(|e| RenderError::ShaderCompile(format!("SPIR-V: {e}")))
+}
+
+/// Compile GLSL mesh/task shader to SPIR-V using shaderc (requires `mesh-shader` feature).
+/// Falls back to naga if stage is a standard one.
+pub fn compile_mesh_glsl_to_spirv(source: &str, stage: vk::ShaderStageFlags) -> Result<Vec<u32>, RenderError> {
+    if stage == vk::ShaderStageFlags::MESH_NV || stage == vk::ShaderStageFlags::TASK_NV {
+        #[cfg(feature = "shaderc")]
+        {
+            let shader_kind = match stage {
+                vk::ShaderStageFlags::MESH_NV => shaderc::ShaderKind::Mesh,
+                vk::ShaderStageFlags::TASK_NV => shaderc::ShaderKind::Task,
+                _ => unreachable!(),
+            };
+            let compiler = shaderc::Compiler::new()
+                .ok_or_else(|| RenderError::ShaderCompile("shaderc compiler not available".into()))?;
+            let mut options = shaderc::CompileOptions::new()
+                .ok_or_else(|| RenderError::ShaderCompile("shaderc options creation failed".into()))?;
+            options.add_macro_definition("NV_mesh_shader", Some("1"));
+            let binary = compiler.compile_into_spirv(source, shader_kind, "mesh.glsl", "main", Some(&options))
+                .map_err(|e| RenderError::ShaderCompile(format!("shaderc: {e}")))?;
+            let bytes = binary.as_binary_u8();
+            let u32s: Vec<u32> = bytes.chunks_exact(4)
+                .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                .collect();
+            Ok(u32s)
+        }
+        #[cfg(not(feature = "shaderc"))]
+        {
+            Err(RenderError::ShaderCompile(
+                "mesh/task shader compilation requires the `shaderc` feature or pre-compiled SPIR-V".into(),
+            ))
+        }
+    } else {
+        let naga_stage = vk_stage_to_naga(stage);
+        compile_glsl_to_spirv(source, naga_stage)
+    }
 }
 
 pub mod builtin;

@@ -1,9 +1,51 @@
+pub mod udp;
+pub use udp::{AsyncUdpSocket, create_udp_pipeline, spawn_udp_receiver, spawn_udp_sender};
+
+pub mod protocol;
+pub use protocol::{ConnectionManager, ConnectionState, PacketType, ProtocolPacket, VirtualConnection, spawn_heartbeat_task};
+
+pub mod serialize;
+pub use serialize::{serialize, deserialize, serialize_unchecked, deserialize_unchecked};
+
+pub mod prediction;
+pub use prediction::{ClientPrediction, PredictedInput, ServerReconciliation};
+
+pub mod interpolation;
+pub use interpolation::{InterpEntityState, InterpPosition, Interpolatable, Snapshot, SnapshotBuffer};
+
+pub mod lag_compensation;
+pub use lag_compensation::{HitResult, LagCompensationBuffer, LagCompFrame, LagCompSnapshot, lag_compensated_raycast};
+
+pub mod replication;
+pub use replication::{apply_replication_message, batch_messages, ComponentRemoval, ComponentSerializer, ComponentUpdate, NetworkEntityMap, NetworkId, ReplicationMessage, ReplicationTracker, SpawnMessage};
+
+pub mod authority;
+pub use authority::{Authority, AuthorityComponent, AuthorityManager, AuthorityTransfer, ClientAuthorityManager};
+
+pub mod bandwidth;
+pub use bandwidth::{BandwidthOptimizer, DeltaCompressor, InterestCriteria, InterestManager};
+
+pub mod nat;
+pub use nat::{ConnectionMode, NatPunchThrough, RelayClient, RelayPacket, RelayServer, RendezvousClient, RendezvousMessage, connect_with_fallback};
+
+pub mod matchmaking;
+pub use matchmaking::{Lobby, LobbyId, LobbyManager, LobbyPlayer, MatchmakingRequest, MatchmakingResponse};
+
+#[cfg(test)]
+pub mod protocol_tests;
+
 use serde::{Serialize, Deserialize};
 use std::collections::VecDeque;
 
 /// Unique identifier for a connected client.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ClientId(pub u64);
+
+impl Default for ClientId {
+    fn default() -> Self {
+        Self(0)
+    }
+}
 
 /// Generic network message envelope.
 #[derive(Debug, Clone, Serialize, Deserialize)]

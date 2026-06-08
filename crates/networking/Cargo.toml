@@ -8,5 +8,7 @@ description = "Rustix engine networking: MMO-oriented QUIC transport"
 tracing = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
+tokio = { workspace = true }
+bincode = "1.3"
 
 rustix-core = { path = "../core" }

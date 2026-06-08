@@ -9,6 +9,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 rhai = { version = "1.18", features = ["serde", "std"] }
 serde = { workspace = true }
+glam = { workspace = true }
 rustix-core = { path = "../core" }
 rustix-asset = { path = "../asset" }
 hecs = { workspace = true }

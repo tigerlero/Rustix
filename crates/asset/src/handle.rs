@@ -25,7 +25,7 @@ pub trait Asset: Send + Sync + 'static {
 /// 8 bytes total: 32-bit index + 32-bit generation.
 /// Generation is incremented when an asset is replaced,
 /// preventing stale handles from accessing wrong data.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Handle<T: Asset> {
     index: u32,
     generation: u32,
@@ -36,6 +36,14 @@ pub struct Handle<T: Asset> {
 // SAFETY: Handle only contains plain integers and PhantomData.
 unsafe impl<T: Asset> Send for Handle<T> {}
 unsafe impl<T: Asset> Sync for Handle<T> {}
+
+impl<T: Asset> Clone for Handle<T> {
+    fn clone(&self) -> Self {
+        Self { index: self.index, generation: self.generation, _marker: PhantomData }
+    }
+}
+
+impl<T: Asset> Copy for Handle<T> {}
 
 impl<T: Asset> Handle<T> {
     pub fn new(index: u32, generation: u32) -> Self {

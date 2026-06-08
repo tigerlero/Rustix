@@ -7,6 +7,7 @@ description = "Rustix engine terrain: chunk-based terrain with LOD"
 [dependencies]
 tracing = { workspace = true }
 thiserror = { workspace = true }
+png = "0.17"
 
 rustix-core = { path = "../core" }
 rustix-render = { path = "../render" }

@@ -24,6 +24,16 @@ impl Mesh {
         let aabb = compute_aabb_from_vertices(vertices);
         Ok(Self { vertex_buffer: vb, index_buffer: ib, vertex_count, index_count, has_indices, aabb })
     }
+
+    /// Create a GPU `Mesh` from a CPU-side `MeshAsset`.
+    pub fn from_asset(renderer: &Renderer, name: &str, asset: &rustix_asset::mesh::MeshAsset) -> Result<Self, RenderError> {
+        let ib = if asset.has_indices() {
+            Some((asset.indices.as_slice(), asset.index_count()))
+        } else {
+            None
+        };
+        Self::new(renderer, name, bytemuck::cast_slice(&asset.vertices), asset.vertex_count(), ib)
+    }
 }
 
 fn compute_aabb_from_vertices(vertices: &[u8]) -> Aabb {

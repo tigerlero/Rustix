@@ -52,8 +52,8 @@
 - [x] Resource cleanup (Drop impls for Renderer, Swapchain, GpuBuffer, ShaderModule)
 
 ### Deferred to Phase 1
-- [ ] Offscreen 3D rendering → Scene View panel (currently renders directly to swapchain)
-- [ ] Multiple viewport support
+- [x] Offscreen 3D rendering → Scene View panel (triple-buffered per-viewport framebuffers, HDR path)
+- [x] Multiple viewport support (up to 4, independent cameras)
 - [ ] Docking / panel rearrangement
 
 ---
@@ -63,40 +63,40 @@
 **Goal:** Full PBR renderer with asset loading, physics, audio, and input.
 
 ### Weeks 5–6: Frame Graph & GPU Memory
-- [ ] Frame graph architecture (pass declaration, resource tracking)
-- [ ] Automatic barrier insertion
-- [ ] GPU memory manager (gpu-allocator integration)
-- [ ] Staging buffer pool (ring-buffer for upload)
-- [ ] Transient resource management (per-frame render targets)
-- [ ] Bindless descriptor manager (global descriptor heap)
+- [x] Frame graph architecture (pass declaration, resource tracking, automatic barriers, transient aliasing, pass merging)
+- [x] Automatic barrier insertion
+- [x] GPU memory manager (gpu-allocator integration)
+- [x] Staging buffer pool (ring-buffer for upload)
+- [x] Transient resource management (per-frame render targets)
+- [x] Bindless descriptor manager (global descriptor heap)
 - [ ] Pipeline cache persistence (disk-backed)
 
 ### Weeks 7–8: PBR Rendering
-- [ ] Forward+ renderer (tiled light culling compute shader)
-- [ ] Deferred shading pipeline (GBuffer pass + lighting pass)
-- [ ] PBR material system (metal-rough workflow)
-- [ ] Directional light with cascaded shadow maps (CSM)
-- [ ] Point/spot lights with shadow maps
-- [ ] HDR rendering + Reinhard/ACES tonemapping
-- [ ] Mesh rendering: vertex buffers, index buffers, multi-draw indirect
-- [ ] glTF 2.0 mesh loading (positions, normals, tangents, UVs)
+- [x] Forward+ renderer (tiled light culling compute shader, 256 lights / 32 per tile)
+- [x] Deferred shading pipeline (GBuffer pass + lighting pass)
+- [x] PBR material system (metal-rough workflow, Cook-Torrance GGX)
+- [x] Directional light with cascaded shadow maps (CSM, 3 cascades @ 2048)
+- [x] Point/spot lights with shadow maps (cubemap array + 2D array)
+- [x] HDR rendering + ACES filmic tone mapping
+- [x] Mesh rendering: vertex buffers, index buffers, procedural presets
+- [~] glTF 2.0 mesh loading (GLB positions/normals + material import working; tangents/UVs/animations pending)
 
 ### Weeks 9–10: Asset Pipeline
 - [ ] Asset registry with handle system (8-byte `Handle<T>`)
 - [ ] Asset importer framework (per-type plugin)
-- [ ] glTF 2.0 full import (meshes, materials, textures, animations)
+- [~] glTF 2.0 full import (meshes, materials partial; textures, animations, skeletons pending)
 - [ ] Texture loading (PNG, HDR) with BC7 compression
 - [ ] Async asset loading (tokio runtime)
 - [ ] GPU upload via transfer queue
 - [ ] Asset dependency tracking (material → textures)
-- [ ] Hot-reload watcher (notify crate) for debug mode
-- [ ] Shader compilation pipeline (glslang → SPIR-V)
-- [ ] Shader hot-reload
+- [x] Hot-reload watcher (notify crate) for debug mode
+- [x] Shader compilation pipeline (GLSL → SPIR-V via naga)
+- [x] Shader hot-reload (file watch → recompile → pipeline rebuild)
 
 ### Weeks 11–12: Physics + Audio + Input
-- [ ] Physics integration (Rapier 3D + ECS components)
-- [ ] Audio integration (cpal backend + 3D spatial)
-- [ ] Input system: action mapping, input context stacks, gamepad
+- [~] Physics integration (RigidBody + Collider ECS components exist; Rapier3D solver not wired)
+- [~] Audio integration (symphonia decode + rodio playback done; 3D spatial + effects pending)
+- [x] Input system: keyboard, mouse (absolute + raw delta), gamepad via gilrs
 
 ---
 
@@ -158,9 +158,12 @@
 | Per-Entity Meshes | 0.5 | ✅ **DONE** | GLB import, mesh registry, procedural presets |
 | Window Resize | 0.5 | ✅ **DONE** | Swapchain + depth buffer recreation |
 | Vulkan Sync | 0.5 | ✅ **DONE** | Per-frame semaphores, fence ordering, resource cleanup |
-| Frame Graph | 1 | — | Declarative render passes with auto barriers |
-| glTF Model Viewer | 1 | — | Import and render any glTF model with PBR |
-| Physics + Audio | 1 | — | Interactive physics scene with spatial audio |
+| Frame Graph | 1 | ✅ **DONE** | Declarative render passes with auto barriers |
+| Forward+ / Deferred | 1 | ✅ **DONE** | Tiled light culling + GBuffer + lighting |
+| PBR + Shadows | 1 | ✅ **DONE** | Cook-Torrance BRDF, CSM, point/spot shadows |
+| HDR + Tonemap | 1 | ✅ **DONE** | ACES filmic tone mapping |
+| glTF Model Viewer | 1 | ~ **PARTIAL** | Import and render GLB meshes with materials |
+| Physics + Audio | 1 | ~ **PARTIAL** | ECS components exist; solver/spatial audio pending |
 | Open World Terrain | 2 | — | Walkable terrain that streams in/out |
 | Animating Character | 2 | — | Character with animation state machine |
 | Two Players Connected | 3 | — | Peer-to-peer or server multiplayer |
@@ -175,9 +178,9 @@
 ```
 Phase 0: Foundation           ✅ COMPLETE
 Phase 0.5: Editor UI          ✅ COMPLETE
-Phase 1: Core Render + Assets  ████████
-Phase 2: World + Animation     ████████
-Phase 3: Multiplayer + AI      ██████████
-Phase 4: Editor + Polish       ██████████
-Phase 5: Production & Scale    ████████████
+Phase 1: Core Render + Assets  ████████████░░░░
+Phase 2: World + Animation     ████████░░░░░░░░
+Phase 3: Multiplayer + AI      ██████████░░░░░░░░
+Phase 4: Editor + Polish       ████████████░░░░░░░░
+Phase 5: Production & Scale    ████████████████░░░░
 ```

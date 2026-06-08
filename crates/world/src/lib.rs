@@ -1,5 +1,42 @@
 use std::collections::HashMap;
 
+pub mod scene_graph;
+pub mod spatial;
+pub mod time_of_day;
+pub mod weather;
+pub mod serialization;
+pub mod save_load;
+pub mod multi_scene;
+pub mod editor_meta;
+
+#[cfg(test)]
+pub mod time_of_day_tests;
+#[cfg(test)]
+pub mod weather_tests;
+#[cfg(test)]
+pub mod spatial_tests;
+#[cfg(test)]
+pub mod editor_meta_tests;
+#[cfg(test)]
+pub mod multi_scene_tests;
+#[cfg(test)]
+pub mod save_load_tests;
+#[cfg(test)]
+pub mod serialization_tests;
+#[cfg(test)]
+pub mod scene_graph_tests;
+#[cfg(test)]
+pub mod lib_tests;
+
+pub use scene_graph::{Parent, Children, LocalTransform, GlobalTransform, propagate_transforms, compute_hierarchy_depth_first};
+pub use spatial::SpatialHash;
+pub use time_of_day::TimeOfDay;
+pub use weather::{WeatherState, lerp_weather};
+pub use serialization::{SerializedEntity, WorldSnapshot, WorldSerializer, WorldDeserializer};
+pub use save_load::{SaveHeader, SaveMigrator, MigrationFn};
+pub use multi_scene::{Scene, SceneManager};
+pub use editor_meta::{EditorMetadata, EditorState, EditorLayer, GizmoMode};
+
 /// Chunk coordinates in the world grid.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChunkCoord {

@@ -4,7 +4,7 @@ use rustix_core::ecs::EcsWorld;
 use rustix_platform::input::InputManager;
 
 use crate::camera::{EditorCamera, CameraMode};
-use crate::project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo, write_project_file, EditorCameraState};
+use crate::project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo, write_project_file, EditorCameraState, LayoutState};
 use crate::scene::world_to_scene;
 use crate::sprite_editor;
 use crate::ui::viewport::{ViewportManager, MAX_VIEWPORTS};
@@ -39,6 +39,9 @@ pub fn show_menu_bar(
             let star = if dirty.get() { " *" } else { "" };
             ui.label(egui::RichText::new(format!("{project_name}{star}")).strong());
             ui.label(egui::RichText::new("\u{2014} Rustix Editor").weak());
+            if *screen == crate::project::AppScreen::PlayTest {
+                ui.label(egui::RichText::new("▶ PLAYING").color(egui::Color32::from_rgb(255, 100, 100)).strong());
+            }
             ui.separator();
             ui.separator();
             ui.menu_button("File", |ui| {
@@ -166,6 +169,58 @@ pub fn show_menu_bar(
                         }
                     }
                 }
+                ui.separator();
+
+                // Panel Position controls
+                if let Some(ref mut proj) = current_project {
+                    let layout = proj.layout.get_or_insert_with(LayoutState::default);
+                    ui.menu_button("Hierarchy Position", |ui| {
+                        let positions = [
+                            crate::project::DockPosition::Left,
+                            crate::project::DockPosition::Right,
+                            crate::project::DockPosition::Bottom,
+                            crate::project::DockPosition::Floating,
+                            crate::project::DockPosition::Hidden,
+                        ];
+                        for pos in positions {
+                            if ui.selectable_label(layout.hierarchy_dock == pos, format!("{:?}", pos)).clicked() {
+                                layout.hierarchy_dock = pos;
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.menu_button("Inspector Position", |ui| {
+                        let positions = [
+                            crate::project::DockPosition::Left,
+                            crate::project::DockPosition::Right,
+                            crate::project::DockPosition::Bottom,
+                            crate::project::DockPosition::Floating,
+                            crate::project::DockPosition::Hidden,
+                        ];
+                        for pos in positions {
+                            if ui.selectable_label(layout.inspector_dock == pos, format!("{:?}", pos)).clicked() {
+                                layout.inspector_dock = pos;
+                                ui.close();
+                            }
+                        }
+                    });
+                    ui.menu_button("Console Position", |ui| {
+                        let positions = [
+                            crate::project::DockPosition::Left,
+                            crate::project::DockPosition::Right,
+                            crate::project::DockPosition::Bottom,
+                            crate::project::DockPosition::Floating,
+                            crate::project::DockPosition::Hidden,
+                        ];
+                        for pos in positions {
+                            if ui.selectable_label(layout.console_dock == pos, format!("{:?}", pos)).clicked() {
+                                layout.console_dock = pos;
+                                ui.close();
+                            }
+                        }
+                    });
+                }
+
                 ui.separator();
                 let current = window.cursor_mode();
                 if ui.selectable_label(current == CursorMode::Normal, "Cursor: Normal").clicked() {

@@ -22,6 +22,11 @@ pub mod config;
 pub mod log_capture;
 pub mod thread_priority;
 
+#[cfg(test)]
+pub mod math_tests;
+#[cfg(test)]
+pub mod components_tests;
+
 pub use ecs::*;
 pub use component_registry::*;
 pub use job::*;

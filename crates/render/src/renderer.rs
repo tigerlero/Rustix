@@ -32,6 +32,7 @@ pub struct Renderer {
     compute_command_buffers: Vec<vk::CommandBuffer>,
     compute_sync_semaphores: Vec<vk::Semaphore>,
     frame_complete_semaphore: vk::Semaphore,
+    uploader: crate::memory::GpuUploader,
     profiler: Option<GpuProfiler>,
     bindless_heap: BindlessDescriptorHeap,
     pipeline_variant_cache: GraphicsPipelineVariantCache,
@@ -58,10 +59,11 @@ impl Renderer {
         let transfer_pool = unsafe {
             device.logical().create_command_pool(
                 &vk::CommandPoolCreateInfo::default()
-                    .queue_family_index(device.graphics_queue_family_index())
+                    .queue_family_index(device.transfer_queue_family_index())
                     .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER), None,
             )?
         };
+        let uploader = crate::memory::GpuUploader::new(&device)?;
         let cmd_bufs = unsafe {
             device.logical().allocate_command_buffers(
                 &vk::CommandBufferAllocateInfo::default().command_pool(cmd_pool)
@@ -125,6 +127,7 @@ impl Renderer {
             compute_command_buffers: compute_bufs,
             compute_sync_semaphores: compute_sems,
             frame_complete_semaphore,
+            uploader,
             profiler,
             bindless_heap,
             pipeline_variant_cache,
@@ -280,6 +283,19 @@ impl Renderer {
         self.transfer_command_pool
     }
 
+    pub fn uploader(&self) -> &crate::memory::GpuUploader {
+        &self.uploader
+    }
+
+    pub fn uploader_mut(&mut self) -> &mut crate::memory::GpuUploader {
+        &mut self.uploader
+    }
+
+    /// Poll the GPU uploader for completed transfer work.
+    pub fn poll_uploader(&mut self) -> usize {
+        self.uploader.poll_completed(self.device.logical())
+    }
+
     pub fn create_framebuffer(&self, width: u32, height: u32, format: vk::Format) -> Result<Framebuffer, RenderError> {
         Framebuffer::new(self, width, height, format)
     }
@@ -298,7 +314,7 @@ impl Drop for Renderer {
             }
             self.device.logical().free_command_buffers(self.compute_command_pool, &[]);
             self.device.logical().destroy_command_pool(self.compute_command_pool, None);
-            self.device.logical().free_command_buffers(self.transfer_command_pool, &[]);
+            self.uploader.destroy(self.device.logical());
             self.device.logical().destroy_command_pool(self.transfer_command_pool, None);
             self.device.logical().free_command_buffers(self.command_pool, &[]);
             self.device.logical().destroy_command_pool(self.command_pool, None);

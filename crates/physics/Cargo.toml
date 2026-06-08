@@ -9,5 +9,8 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 hecs = { workspace = true }
 serde = { workspace = true }
+rapier3d = { workspace = true, features = ["debug-render", "enhanced-determinism", "serde-serialize"] }
+bincode = "1.3"
 
 rustix-core = { path = "../core" }
+rustix-asset = { path = "../asset" }

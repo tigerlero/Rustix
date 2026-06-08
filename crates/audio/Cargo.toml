@@ -12,6 +12,7 @@ parking_lot = { workspace = true }
 hecs = { workspace = true }
 
 rustix-core = { path = "../core" }
+rustix-asset = { path = "../asset" }
 
 # Pure-Rust audio decoding (wav, mp3, ogg/vorbis, flac, aac)
 symphonia = { workspace = true, features = ["mp3", "wav", "flac", "vorbis", "aac"] }

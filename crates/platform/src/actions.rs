@@ -52,6 +52,10 @@ impl InputActions {
     pub fn bind(&mut self, action: &str, bindings: &[ActionBinding]) {
         self.bindings.insert(action.to_string(), bindings.to_vec());
         self.state.entry(action.to_string()).or_default();
+        for b in bindings {
+            self.binding_pressed.entry(*b).or_insert(false);
+            self.binding_value.entry(*b).or_insert(0.0);
+        }
     }
 
     /// Remove all bindings for an action.

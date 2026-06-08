@@ -1,6 +1,36 @@
 use rustix_core::ecs::Entity;
 use rustix_core::math::{Vec3, Mat4};
 
+pub mod plugin;
+pub mod camera;
+pub mod undo;
+pub mod hierarchy;
+pub mod inspector;
+pub mod asset_browser;
+pub mod console;
+pub mod profiler;
+pub mod material_editor;
+pub mod lighting_editor;
+pub mod animation_editor;
+pub mod terrain_editor;
+pub mod play_mode;
+pub mod build_pipeline;
+
+pub use plugin::{PluginRegistry, PanelId, ToolId, EditorPanel, EditorTool};
+pub use camera::{EditorCamera, CameraMode};
+pub use undo::{UndoStack, Command};
+pub use hierarchy::{HierarchyNode, FlatNode, flatten_hierarchy, ReparentCommand};
+pub use inspector::{InspectorState, ComponentDesc, FieldDesc, FieldValue};
+pub use asset_browser::{AssetBrowserState, AssetEntry};
+pub use console::{ConsoleState, ConsoleEntry, LogLevel};
+pub use profiler::{ProfilerState, ProfileSample};
+pub use material_editor::{MaterialEditorState, MaterialProperty};
+pub use lighting_editor::{LightingEditorState, EditableLight, EditableLightType, IblProbe};
+pub use animation_editor::{TimelineState, AnimationTrack, Keyframe, KeyframeValue, InterpolationType};
+pub use terrain_editor::{TerrainEditorState, TerrainEditMode};
+pub use play_mode::{PlayModeController, PlayModeState};
+pub use build_pipeline::{BuildPipeline, BuildConfig, BuildTarget, BuildProfile};
+
 /// Reusable editor gizmo state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GizmoMode {

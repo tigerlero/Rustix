@@ -24,6 +24,8 @@ pub struct RigidBody {
     pub drag: f32,
     pub angular_drag: f32,
     pub use_gravity: bool,
+    pub can_sleep: bool,
+    pub sleeping: bool,
 }
 
 impl Default for RigidBody {
@@ -37,6 +39,8 @@ impl Default for RigidBody {
             drag: 0.0,
             angular_drag: 0.05,
             use_gravity: true,
+            can_sleep: true,
+            sleeping: false,
         }
     }
 }
@@ -69,6 +73,100 @@ impl Default for Collider {
     }
 }
 
+impl Collider {
+    /// Apply a `PhysicsMaterialAsset` to this collider, overriding its
+    /// restitution and friction values.
+    pub fn apply_material(&mut self, material: &rustix_asset::physics::PhysicsMaterialAsset) {
+        self.restitution = material.restitution;
+        self.friction = material.dynamic_friction;
+    }
+}
+
+/// Shared physics surface properties that can be referenced by multiple colliders.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PhysicsMaterial {
+    pub static_friction: f32,
+    pub dynamic_friction: f32,
+    pub restitution: f32,
+    pub density: f32,
+}
+
+impl PhysicsMaterial {
+    /// Build a runtime `PhysicsMaterial` from an asset definition.
+    pub fn from_asset(asset: &rustix_asset::physics::PhysicsMaterialAsset) -> Self {
+        Self {
+            static_friction: asset.static_friction,
+            dynamic_friction: asset.dynamic_friction,
+            restitution: asset.restitution,
+            density: asset.density,
+        }
+    }
+}
+
+impl Default for PhysicsMaterial {
+    fn default() -> Self {
+        Self {
+            static_friction: 0.5,
+            dynamic_friction: 0.5,
+            restitution: 0.5,
+            density: 1.0,
+        }
+    }
+}
+
+/// Character controller component for kinematic capsule movement.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CharacterController {
+    pub height: f32,
+    pub radius: f32,
+    pub slope_limit_degrees: f32,
+    pub step_height: f32,
+    pub snap_to_ground: bool,
+}
+
+impl Default for CharacterController {
+    fn default() -> Self {
+        Self {
+            height: 1.75,
+            radius: 0.5,
+            slope_limit_degrees: 45.0,
+            step_height: 0.3,
+            snap_to_ground: true,
+        }
+    }
+}
+
+/// Types of joints that can connect two rigid bodies.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum JointType {
+    Fixed,
+    Revolute { axis: Vec3 },
+    Spherical,
+    Prismatic { axis: Vec3 },
+}
+
+/// Joint component linking this entity to another rigid body.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Joint {
+    pub joint_type: JointType,
+    pub connected_entity: hecs::Entity,
+    pub local_anchor1: Vec3,
+    pub local_anchor2: Vec3,
+    pub contacts_enabled: bool,
+}
+
+impl Default for Joint {
+    fn default() -> Self {
+        Self {
+            joint_type: JointType::Fixed,
+            connected_entity: hecs::Entity::DANGLING,
+            local_anchor1: Vec3::ZERO,
+            local_anchor2: Vec3::ZERO,
+            contacts_enabled: true,
+        }
+    }
+}
+
 /// Simple AABB used for broad-phase collision detection.
 #[derive(Debug, Clone, Copy)]
 pub struct PhysicsAabb {
@@ -97,6 +195,14 @@ impl PhysicsAabb {
     pub fn intersects(&self, other: &PhysicsAabb) -> bool {
         self.min.cmple(other.max).all() && self.max.cmpge(other.min).all()
     }
+}
+
+/// A single debug line for physics visualization.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PhysicsDebugLine {
+    pub start: Vec3,
+    pub end: Vec3,
+    pub color: [f32; 4],
 }
 
 /// Global physics simulation settings.
@@ -284,3 +390,9 @@ fn resolve_collision<F, G>(
         }
     }
 }
+
+#[cfg(test)]
+pub mod lib_tests;
+
+pub mod rapier;
+pub use rapier::RapierPhysicsWorld;

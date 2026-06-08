@@ -50,6 +50,84 @@ pub struct AppState {
     pub tonemap_pipeline: Option<rustix_render::pipeline::ToneMapPipeline>,
     pub tonemap_desc_set: Option<vk::DescriptorSet>,
 
+    pub bloom_resources: Option<crate::render::BloomResources>,
+    pub bloom_fb_size: (u32, u32),
+    pub bloom_extract_pipeline: Option<rustix_render::pipeline::BloomPipeline>,
+    pub bloom_down_pipeline: Option<rustix_render::pipeline::BloomPipeline>,
+    pub bloom_up_pipeline: Option<rustix_render::pipeline::BloomPipeline>,
+    pub bloom_desc_set: Option<vk::DescriptorSet>,
+    pub bloom_threshold: f32,
+    pub bloom_intensity: f32,
+
+    pub oit_resources: Option<crate::render::OitResources>,
+    pub oit_fb_size: (u32, u32),
+    pub oit_accumulate_pipeline: Option<rustix_render::pipeline::OitAccumulatePipeline>,
+    pub oit_composite_pipeline: Option<rustix_render::pipeline::OitCompositePipeline>,
+    pub oit_desc_set: Option<vk::DescriptorSet>,
+    pub oit_enabled: bool,
+
+    pub ssao_resources: Option<crate::render::SsaoResources>,
+    pub ssao_fb_size: (u32, u32),
+    pub ssao_pipeline: Option<rustix_render::pipeline::BloomPipeline>,
+    pub ssao_blur_pipeline: Option<rustix_render::pipeline::BloomPipeline>,
+    pub ssao_desc_set: Option<vk::DescriptorSet>,
+    pub ssao_enabled: bool,
+    pub ssao_radius: f32,
+    pub ssao_bias: f32,
+    pub ssao_power: f32,
+    pub ssao_intensity: f32,
+
+    pub taa_resources: Option<crate::render::TaaResources>,
+    pub taa_fb_size: (u32, u32),
+    pub taa_pipeline: Option<rustix_render::pipeline::TaaPipeline>,
+    pub taa_desc_set: Option<vk::DescriptorSet>,
+    pub taa_enabled: bool,
+    pub taa_blend_factor: f32,
+    pub prev_view_proj: Option<rustix_core::math::Mat4>,
+    pub taa_jitter_idx: u32,
+
+    pub ssr_resources: Option<crate::render::SsrResources>,
+    pub ssr_fb_size: (u32, u32),
+    pub ssr_pipeline: Option<rustix_render::pipeline::SsrPipeline>,
+    pub ssr_desc_set: Option<vk::DescriptorSet>,
+    pub ssr_enabled: bool,
+    pub ssr_max_steps: f32,
+    pub ssr_stride: f32,
+    pub ssr_max_dist: f32,
+
+    pub fog_resources: Option<crate::render::VolumetricFogResources>,
+    pub fog_fb_size: (u32, u32),
+    pub fog_pipeline: Option<rustix_render::pipeline::VolumetricFogPipeline>,
+    pub fog_desc_set: Option<vk::DescriptorSet>,
+    pub fog_enabled: bool,
+    pub fog_density: f32,
+    pub fog_scattering: f32,
+    pub fog_height_falloff: f32,
+    pub fog_max_dist: f32,
+    pub fog_max_steps: f32,
+    pub fog_sun_intensity: f32,
+
+    pub skybox_resources: Option<crate::render::SkyboxResources>,
+    pub skybox_fb_size: (u32, u32),
+    pub skybox_pipeline: Option<rustix_render::pipeline::SkyboxPipeline>,
+    pub skybox_desc_set: Option<vk::DescriptorSet>,
+    pub skybox_enabled: bool,
+    pub skybox_rayleigh: f32,
+    pub skybox_mie: f32,
+    pub skybox_zenith_shift: f32,
+    pub skybox_exposure: f32,
+
+    pub instanced_batcher: Option<crate::render::InstancedMeshBatcher>,
+    pub instanced_pipeline: Option<rustix_render::pipeline::InstancedGraphicsPipeline>,
+    pub instanced_gbuffer_pipeline: Option<rustix_render::pipeline::InstancedGBufferPipeline>,
+    pub instanced_enabled: bool,
+
+    pub gpu_culling_resources: Option<crate::render::GpuCullingResources>,
+    pub gpu_culling_enabled: bool,
+
+    pub mesh_shader_pipeline: Option<rustix_render::pipeline::MeshShaderPipeline>,
+    pub mesh_shader_enabled: bool,
+
     pub viewport_framebuffers: Vec<[Option<rustix_render::Framebuffer>; 3]>,
     pub viewport_fb_sizes: Vec<(u32, u32)>,
 
@@ -59,8 +137,8 @@ pub struct AppState {
     pub quad_buffer_2d: Option<rustix_render::memory::GpuBuffer>,
     pub texture_2d: Option<rustix_render::GpuTexture>,
 
-    pub selected_entity: std::rc::Rc<std::cell::RefCell<Option<hecs::Entity>>>,
-    pub pending_delete: std::rc::Rc<std::cell::RefCell<Option<hecs::Entity>>>,
+    pub selected_entities: std::rc::Rc<std::cell::RefCell<Vec<hecs::Entity>>>,
+    pub pending_delete: std::rc::Rc<std::cell::RefCell<Vec<hecs::Entity>>>,
     pub dirty: std::rc::Rc<std::cell::Cell<bool>>,
     pub show_confirm: std::rc::Rc<std::cell::Cell<bool>>,
     pub confirm_target: std::rc::Rc<std::cell::Cell<ConfirmTarget>>,
@@ -93,7 +171,7 @@ impl AppState {
                 Transform { position: Vec3::new(i as f32 * 2.0, 0.0, 0.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
                 Name(format!("Entity {}", i)),
                 MeshComponent("Cube".into()),
-                Material { base_color: Vec3::new(0.6 + i as f32 * 0.15, 0.4 + i as f32 * 0.1, 0.5), roughness: 0.3 + i as f32 * 0.2, metallic: 0.0, ao: 1.0, emissive: 0.0 },
+                Material { base_color: Vec3::new(0.6 + i as f32 * 0.15, 0.4 + i as f32 * 0.1, 0.5), alpha: 1.0, roughness: 0.3 + i as f32 * 0.2, metallic: 0.0, ao: 1.0, emissive: 0.0 },
             ));
             tracing::info!("created entity {}: {:?}", i, e);
         }
@@ -131,6 +209,84 @@ impl AppState {
             tonemap_pipeline: None,
             tonemap_desc_set: None,
 
+            bloom_resources: None,
+            bloom_fb_size: (0, 0),
+            bloom_extract_pipeline: None,
+            bloom_down_pipeline: None,
+            bloom_up_pipeline: None,
+            bloom_desc_set: None,
+            bloom_threshold: 1.0,
+            bloom_intensity: 0.5,
+
+            oit_resources: None,
+            oit_fb_size: (0, 0),
+            oit_accumulate_pipeline: None,
+            oit_composite_pipeline: None,
+            oit_desc_set: None,
+            oit_enabled: false,
+
+            ssao_resources: None,
+            ssao_fb_size: (0, 0),
+            ssao_pipeline: None,
+            ssao_blur_pipeline: None,
+            ssao_desc_set: None,
+            ssao_enabled: true,
+            ssao_radius: 0.5,
+            ssao_bias: 0.025,
+            ssao_power: 1.5,
+            ssao_intensity: 1.0,
+
+            taa_resources: None,
+            taa_fb_size: (0, 0),
+            taa_pipeline: None,
+            taa_desc_set: None,
+            taa_enabled: true,
+            taa_blend_factor: 0.1,
+            prev_view_proj: None,
+            taa_jitter_idx: 0,
+
+            ssr_resources: None,
+            ssr_fb_size: (0, 0),
+            ssr_pipeline: None,
+            ssr_desc_set: None,
+            ssr_enabled: true,
+            ssr_max_steps: 64.0,
+            ssr_stride: 4.0,
+            ssr_max_dist: 50.0,
+
+            fog_resources: None,
+            fog_fb_size: (0, 0),
+            fog_pipeline: None,
+            fog_desc_set: None,
+            fog_enabled: true,
+            fog_density: 0.02,
+            fog_scattering: 1.0,
+            fog_height_falloff: 0.1,
+            fog_max_dist: 100.0,
+            fog_max_steps: 64.0,
+            fog_sun_intensity: 1.0,
+
+            skybox_resources: None,
+            skybox_fb_size: (0, 0),
+            skybox_pipeline: None,
+            skybox_desc_set: None,
+            skybox_enabled: true,
+            skybox_rayleigh: 1.5,
+            skybox_mie: 0.5,
+            skybox_zenith_shift: 0.1,
+            skybox_exposure: 1.0,
+
+            instanced_batcher: None,
+            instanced_pipeline: None,
+            instanced_gbuffer_pipeline: None,
+            instanced_enabled: false,
+
+            gpu_culling_resources: None,
+            gpu_culling_enabled: false,
+
+            mesh_shader_pipeline: None,
+            mesh_shader_enabled: false,
+
             viewport_framebuffers: (0..crate::ui::viewport::MAX_VIEWPORTS)
                 .map(|_| [None, None, None])
                 .collect(),
@@ -142,8 +298,8 @@ impl AppState {
             quad_buffer_2d: None,
             texture_2d: None,
 
-            selected_entity: std::rc::Rc::new(std::cell::RefCell::new(None)),
-            pending_delete: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            selected_entities: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
+            pending_delete: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             dirty: std::rc::Rc::new(std::cell::Cell::new(false)),
             show_confirm: std::rc::Rc::new(std::cell::Cell::new(false)),
             confirm_target: std::rc::Rc::new(std::cell::Cell::new(ConfirmTarget::None)),
@@ -181,6 +337,18 @@ impl AppState {
             &mut self.point_shadow_resources,
             &mut self.spot_shadow_resources,
             &mut self.tonemap_pipeline, &mut self.tonemap_desc_set,
+            &mut self.bloom_extract_pipeline, &mut self.bloom_down_pipeline,
+            &mut self.bloom_up_pipeline, &mut self.bloom_desc_set,
+            &mut self.ssao_pipeline, &mut self.ssao_blur_pipeline,
+            &mut self.ssao_desc_set,
+            &mut self.taa_pipeline, &mut self.taa_desc_set,
+            &mut self.ssr_pipeline, &mut self.ssr_desc_set,
+            &mut self.fog_pipeline, &mut self.fog_desc_set,
+            &mut self.skybox_pipeline, &mut self.skybox_desc_set,
+            &mut self.instanced_pipeline, &mut self.instanced_gbuffer_pipeline,
+            &mut self.mesh_shader_pipeline,
+            &mut self.oit_accumulate_pipeline, &mut self.oit_composite_pipeline,
+            &mut self.oit_desc_set,
         );
     }
 
@@ -282,6 +450,15 @@ impl AppState {
                                 }
                             }
                         }
+                        "oit_accumulate.vert" | "oit_accumulate.frag" => {
+                            self.oit_accumulate_pipeline = None;
+                            self.init_scene_resources(renderer);
+                        }
+                        "oit_composite.vert" | "oit_composite.frag" => {
+                            self.oit_composite_pipeline = None;
+                            self.oit_desc_set = None;
+                            self.init_scene_resources(renderer);
+                        }
                         _ => {}
                     }
                 }
@@ -303,9 +480,9 @@ impl AppState {
                         Transform { position: Vec3::new(0.0, 1.0, 0.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
                         Name(mesh_name.clone()),
                         MeshComponent(mesh_name),
-                        Material { base_color: Vec3::from(result.base_color), roughness: result.roughness, metallic: result.metallic, ao: 1.0, emissive: 0.0 },
+                        Material { base_color: Vec3::from(result.base_color), alpha: 1.0, roughness: result.roughness, metallic: result.metallic, ao: 1.0, emissive: 0.0 },
                     ));
-                    *self.selected_entity.borrow_mut() = Some(e);
+                    *self.selected_entities.borrow_mut() = vec![e];
                     self.dirty.set(true);
                 } else {
                     tracing::error!("failed to load mesh from {path}");

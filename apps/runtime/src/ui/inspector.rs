@@ -9,6 +9,7 @@ use egui::color_picker::{color_picker_hsva_2d, Alpha};
 use crate::camera::{EditorCamera, CameraMode};
 use crate::scene::{Transform, Name, Material, MeshComponent, Parent};
 use crate::undo::{UndoHistory, EditorAction};
+use crate::project::DockPosition;
 
 /// Custom color picker button + popup that bypasses egui's built-in color_edit_button_srgb.
 ///
@@ -40,11 +41,13 @@ pub fn show_inspector(
     ctx: &egui::Context,
     cam: &mut EditorCamera,
     world: &mut EcsWorld,
-    selected_entity: &std::cell::RefCell<Option<hecs::Entity>>,
+    selected_entities: &std::cell::RefCell<Vec<hecs::Entity>>,
     dirty: &std::cell::Cell<bool>,
     undo_history: &std::cell::RefCell<UndoHistory>,
+    dock: DockPosition,
 ) {
-    let selected_entity_val = *selected_entity.borrow();
+    let selected_entity_val = selected_entities.borrow().first().copied();
+    let selected_count = selected_entities.borrow().len();
     let mut selected_name: Option<String> = selected_entity_val.and_then(|sel_ent| {
         world.query::<(Entity, &Name)>().iter().find(|(e, _)| *e == sel_ent).map(|(_, n)| n.0.clone())
     });
@@ -97,9 +100,17 @@ pub fn show_inspector(
     });
     let old_collider = selected_collider;
 
-    egui::Panel::right("inspector").resizable(true).default_size(260.0).show(ctx, |ui| {
+    let gen = ctx.data(|d| d.get_temp::<u64>(egui::Id::new("layout_generation")).unwrap_or(0));
+    let panel_id = egui::Id::new(("inspector", gen));
+    let width_key = egui::Id::new("inspector_width");
+    let desired_width = ctx.data(|d| d.get_temp::<f32>(width_key)).unwrap_or(260.0);
+    let result = super::dock::show_docked(ctx, "Inspector", panel_id, dock, desired_width, |ui| {
         ui.heading("Inspector");
         ui.separator();
+        if selected_count > 1 {
+            ui.label(egui::RichText::new(format!("{} entities selected", selected_count)).strong());
+            ui.separator();
+        }
         if let (Some(name), Some(transform)) = (selected_name.as_mut(), selected_transform.as_mut()) {
             ui.add(egui::TextEdit::singleline(name).desired_width(f32::INFINITY));
             if let Some(entity) = selected_entity_val {
@@ -348,6 +359,7 @@ pub fn show_inspector(
                 ];
                 color_picker_button(ui, &mut mat_rgb, egui::Id::new(("mat_color", mat_id)));
                 mat.base_color = Vec3::new(mat_rgb[0] as f32 / 255.0, mat_rgb[1] as f32 / 255.0, mat_rgb[2] as f32 / 255.0);
+                ui.add(egui::DragValue::new(&mut mat.alpha).prefix("Alpha: ").speed(0.01).range(0.0..=1.0));
                 ui.add(egui::DragValue::new(&mut mat.roughness).prefix("Roughness: ").speed(0.01).range(0.0..=1.0));
                 ui.add(egui::DragValue::new(&mut mat.metallic).prefix("Metallic: ").speed(0.01).range(0.0..=1.0));
                 ui.add(egui::DragValue::new(&mut mat.ao).prefix("AO: ").speed(0.01).range(0.0..=1.0));
@@ -611,6 +623,7 @@ pub fn show_inspector(
             ui.add_space(10.0);
             ui.label(egui::RichText::new("No object selected").italics());
         }
+        if selected_count == 1 {
         if let Some(target) = selected_entity_val {
             ui.separator();
             ui.menu_button("Add Component", |ui| {
@@ -648,7 +661,7 @@ pub fn show_inspector(
                 }
                 if !has_mat && ui.button("Material").clicked() {
                     let snapshot = crate::scene::entity_to_scene_entity(world, target);
-                    let _ = world.insert(target, (Material { base_color: Vec3::new(0.7, 0.7, 0.7), roughness: 0.5, metallic: 0.0, ao: 1.0, emissive: 0.0 },));
+                    let _ = world.insert(target, (Material { base_color: Vec3::new(0.7, 0.7, 0.7), alpha: 1.0, roughness: 0.5, metallic: 0.0, ao: 1.0, emissive: 0.0 },));
                     undo_history.borrow_mut().push(EditorAction::ComponentAdded { entity: target, component: "Material".into(), old_snapshot: snapshot });
                     dirty.set(true);
                     ui.close();
@@ -704,6 +717,7 @@ pub fn show_inspector(
                 }
             });
         }
+        }
         ui.separator();
         ui.add_space(5.0);
         ui.label(egui::RichText::new("Camera").strong());
@@ -737,4 +751,8 @@ pub fn show_inspector(
         ui.add(egui::DragValue::new(&mut cam.yaw).prefix("Yaw: ").speed(0.01));
         ui.add(egui::DragValue::new(&mut cam.pitch).prefix("Pitch: ").speed(0.01).range(-1.57..=1.57));
     });
+    if let Some(inner) = result {
+        let actual_width = inner.response.rect.width();
+        ctx.data_mut(|d| d.insert_temp(width_key, actual_width));
+    }
 }

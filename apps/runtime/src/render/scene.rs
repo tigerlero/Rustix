@@ -229,8 +229,12 @@ pub fn render_3d_scene(
     }
 
     let frustum = Frustum::from_view_proj(&view_proj);
+    let mut entity_count = 0u32;
+    let mut drawn_count = 0u32;
+    let mut missing_mesh_count = 0u32;
 
     for (entity, _transform, mesh_comp) in ecs_world.query::<(Entity, &Transform, &MeshComponent)>().iter() {
+        entity_count += 1;
         if let Some(mesh) = meshes.get(&mesh_comp.0) {
             let model = world_transform(ecs_world, entity);
             let world_aabb = mesh.aabb.transform(model);
@@ -257,7 +261,15 @@ pub fn render_3d_scene(
                 mesh.index_buffer.as_ref(), mesh.index_count,
                 &pc_data,
             );
+            drawn_count += 1;
+        } else {
+            missing_mesh_count += 1;
+            tracing::warn!("render_3d_scene: no mesh found for '{}'", mesh_comp.0);
         }
+    }
+
+    if renderer.frame_index() % 60 == 0 {
+        tracing::info!("render_3d_scene: {} entities, {} drawn, {} missing mesh", entity_count, drawn_count, missing_mesh_count);
     }
 
     if let Some(ci) = color_image {

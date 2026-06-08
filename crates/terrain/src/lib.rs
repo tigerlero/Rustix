@@ -1,55 +1,25 @@
 use rustix_core::math::Vec3;
 
-/// Simple value noise for terrain height generation.
-pub mod noise {
-    use std::f32;
+pub mod noise;
+pub mod import;
+pub mod chunk;
+pub mod splat;
+pub mod material;
+pub mod foliage;
+pub mod sculpt;
+pub mod erosion;
+pub mod water;
 
-    fn hash(n: u32) -> u32 {
-        let mut x = n;
-        x = ((x >> 16) ^ x).wrapping_mul(0x45d9f3bu32);
-        x = ((x >> 16) ^ x).wrapping_mul(0x45d9f3bu32);
-        (x >> 16) ^ x
-    }
-
-    fn smooth(t: f32) -> f32 { t * t * (3.0 - 2.0 * t) }
-
-    fn val(x: i32, z: i32, seed: u32) -> f32 {
-        let h = hash((x.wrapping_add(0x9e3779b9u32 as i32) as u32).wrapping_mul(0x85ebca6bu32)
-            .wrapping_add(z.wrapping_add(0x9e3779b9u32 as i32) as u32)
-            .wrapping_add(seed));
-        (h as f32 / u32::MAX as f32) * 2.0 - 1.0
-    }
-
-    pub fn value(x: f32, z: f32, seed: u32) -> f32 {
-        let ix = x.floor() as i32;
-        let iz = z.floor() as i32;
-        let fx = smooth(x - ix as f32);
-        let fz = smooth(z - iz as f32);
-
-        let v00 = val(ix, iz, seed);
-        let v10 = val(ix + 1, iz, seed);
-        let v01 = val(ix, iz + 1, seed);
-        let v11 = val(ix + 1, iz + 1, seed);
-
-        let x0 = v00 + (v10 - v00) * fx;
-        let x1 = v01 + (v11 - v01) * fx;
-        x0 + (x1 - x0) * fz
-    }
-
-    pub fn fbm(x: f32, z: f32, seed: u32, octaves: u32, persistence: f32, lacunarity: f32) -> f32 {
-        let mut total = 0.0;
-        let mut amplitude = 1.0;
-        let mut frequency = 1.0;
-        let mut max_value = 0.0;
-        for _ in 0..octaves {
-            total += value(x * frequency, z * frequency, seed) * amplitude;
-            max_value += amplitude;
-            amplitude *= persistence;
-            frequency *= lacunarity;
-        }
-        total / max_value
-    }
-}
+#[cfg(test)]
+pub mod noise_tests;
+#[cfg(test)]
+pub mod lib_tests;
+#[cfg(test)]
+pub mod sculpt_tests;
+#[cfg(test)]
+pub mod water_tests;
+#[cfg(test)]
+pub mod chunk_tests;
 
 /// 2D grid of height values.
 #[derive(Debug, Clone)]
@@ -82,6 +52,24 @@ impl Heightmap {
         if x < self.width && z < self.depth {
             self.heights[z * self.width + x] = h;
         }
+    }
+
+    /// Import from a PNG grayscale image.
+    pub fn from_png(bytes: &[u8]) -> Result<Self, String> {
+        let (heights, width, height) = import::import_png(bytes)?;
+        Ok(Self { width, depth: height, heights })
+    }
+
+    /// Import from an 8-bit raw binary file.
+    pub fn from_raw(bytes: &[u8], width: usize, height: usize) -> Result<Self, String> {
+        let heights = import::import_raw(bytes, width, height)?;
+        Ok(Self { width, depth: height, heights })
+    }
+
+    /// Import from a 16-bit big-endian `.r16` file.
+    pub fn from_r16(bytes: &[u8], width: usize, height: usize) -> Result<Self, String> {
+        let heights = import::import_r16(bytes, width, height)?;
+        Ok(Self { width, depth: height, heights })
     }
 }
 
@@ -139,6 +127,43 @@ pub fn build_terrain_mesh(heightmap: &Heightmap, scale: f32) -> (Vec<TerrainVert
     (verts, indices)
 }
 
+/// Generate a physics-friendly triangle soup from a heightmap.
+/// Returns `(vertices, indices)` where each triangle is a separate
+/// face suitable for trimesh collision.
+pub fn build_collision_mesh(heightmap: &Heightmap, scale: f32) -> (Vec<[f32; 3]>, Vec<[u32; 3]>) {
+    let w = heightmap.width;
+    let d = heightmap.depth;
+    let mut verts = Vec::with_capacity(w * d);
+
+    for z in 0..d {
+        for x in 0..w {
+            let h = heightmap.get(x, z);
+            verts.push([x as f32 * scale, h, z as f32 * scale]);
+        }
+    }
+
+    let mut tris = Vec::with_capacity((w - 1) * (d - 1) * 2);
+    for z in 0..d - 1 {
+        for x in 0..w - 1 {
+            let a = (z * w + x) as u32;
+            let b = a + 1;
+            let c = ((z + 1) * w + x) as u32;
+            let d = c + 1;
+            tris.push([a, c, b]);
+            tris.push([b, c, d]);
+        }
+    }
+
+    (verts, tris)
+}
+
+/// Which noise algorithm to use for terrain generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoiseType {
+    Value,
+    Perlin,
+}
+
 /// Terrain generation parameters.
 #[derive(Debug, Clone, Copy)]
 pub struct TerrainParams {
@@ -150,6 +175,11 @@ pub struct TerrainParams {
     pub octaves: u32,
     pub persistence: f32,
     pub lacunarity: f32,
+    pub noise_type: NoiseType,
+    /// Domain warp amplitude (0 = disabled).
+    pub warp_amplitude: f32,
+    /// Domain warp frequency.
+    pub warp_frequency: f32,
 }
 
 impl Default for TerrainParams {
@@ -163,15 +193,40 @@ impl Default for TerrainParams {
             octaves: 4,
             persistence: 0.5,
             lacunarity: 2.0,
+            noise_type: NoiseType::Value,
+            warp_amplitude: 0.0,
+            warp_frequency: 0.1,
         }
     }
 }
 
 /// Generate a heightmap from terrain parameters.
 pub fn generate_heightmap(params: &TerrainParams) -> Heightmap {
+    let perlin = noise::Perlin::new(params.seed);
     Heightmap::from_fn(params.width, params.depth, |x, z| {
-        let n = noise::fbm(x / params.width as f32 * 4.0, z / params.depth as f32 * 4.0,
-            params.seed, params.octaves, params.persistence, params.lacunarity);
+        let sx = x / params.width as f32 * 4.0;
+        let sz = z / params.depth as f32 * 4.0;
+        let n = if params.warp_amplitude > 0.0 {
+            match params.noise_type {
+                NoiseType::Value => noise::domain_warp(
+                    sx, sz,
+                    params.warp_amplitude, params.warp_frequency,
+                    |x, z| noise::fbm(x, z, params.seed, 2, params.persistence, params.lacunarity),
+                    |x, z| noise::fbm(x, z, params.seed, params.octaves, params.persistence, params.lacunarity),
+                ),
+                NoiseType::Perlin => noise::domain_warp(
+                    sx, sz,
+                    params.warp_amplitude, params.warp_frequency,
+                    |x, z| perlin.fbm(x, z, 2, params.persistence, params.lacunarity),
+                    |x, z| perlin.fbm(x, z, params.octaves, params.persistence, params.lacunarity),
+                ),
+            }
+        } else {
+            match params.noise_type {
+                NoiseType::Value => noise::fbm(sx, sz, params.seed, params.octaves, params.persistence, params.lacunarity),
+                NoiseType::Perlin => perlin.fbm(sx, sz, params.octaves, params.persistence, params.lacunarity),
+            }
+        };
         n * params.height_scale
     })
 }

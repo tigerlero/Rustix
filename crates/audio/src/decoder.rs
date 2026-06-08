@@ -5,6 +5,11 @@ use tracing::debug;
 
 use crate::AudioError;
 
+/// Convert a `rustix_asset::audio::AudioAsset` into the runtime audio tuple.
+pub fn decode_from_asset(asset: &rustix_asset::audio::AudioAsset) -> (Vec<f32>, u32, u16) {
+    (asset.samples.clone(), asset.sample_rate, asset.channels)
+}
+
 pub fn decode_audio(path: &Path) -> Result<(Vec<f32>, u32, u16), AudioError> {
     use symphonia::core::audio::SampleBuffer;
     use symphonia::core::codecs::DecoderOptions;

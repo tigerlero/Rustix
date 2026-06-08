@@ -12,6 +12,9 @@ pub use actions::*;
 pub use recorder::*;
 pub use clipboard::*;
 
+#[cfg(test)]
+pub mod actions_tests;
+
 use thiserror::Error;
 
 #[derive(Debug, Error)]

@@ -133,6 +133,66 @@ impl BehaviorNode for Selector {
     fn children_mut(&mut self) -> &mut [Box<dyn BehaviorNode>] { &mut self.children }
 }
 
+/// Parallel: ticks all children each frame.
+///
+/// Succeeds when at least `success_threshold` children have returned
+/// Success. Fails when at least `failure_threshold` children have
+/// returned Failure. Otherwise returns Running.
+pub struct Parallel {
+    children: Vec<Box<dyn BehaviorNode>>,
+    success_threshold: usize,
+    failure_threshold: usize,
+    child_status: Vec<Status>,
+}
+
+impl Parallel {
+    pub fn new(children: Vec<Box<dyn BehaviorNode>>, success_threshold: usize, failure_threshold: usize) -> Self {
+        let n = children.len();
+        Self {
+            children,
+            success_threshold,
+            failure_threshold,
+            child_status: vec![Status::Running; n],
+        }
+    }
+}
+
+impl BehaviorNode for Parallel {
+    fn tick(&mut self, bb: &mut Blackboard, dt: f32) -> Status {
+        let mut success_count = 0usize;
+        let mut failure_count = 0usize;
+
+        for (i, child) in self.children.iter_mut().enumerate() {
+            if self.child_status[i] == Status::Running {
+                self.child_status[i] = child.tick(bb, dt);
+            }
+            match self.child_status[i] {
+                Status::Success => success_count += 1,
+                Status::Failure => failure_count += 1,
+                Status::Running => {}
+            }
+        }
+
+        if success_count >= self.success_threshold {
+            self.reset();
+            Status::Success
+        } else if failure_count >= self.failure_threshold {
+            self.reset();
+            Status::Failure
+        } else {
+            Status::Running
+        }
+    }
+
+    fn reset(&mut self) {
+        self.child_status.fill(Status::Running);
+        for c in &mut self.children { c.reset(); }
+    }
+
+    fn children(&self) -> &[Box<dyn BehaviorNode>] { &self.children }
+    fn children_mut(&mut self) -> &mut [Box<dyn BehaviorNode>] { &mut self.children }
+}
+
 // --- Decorator nodes ---
 
 /// Invert: returns Success for Failure and vice versa. Running passes through.

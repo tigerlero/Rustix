@@ -8,5 +8,7 @@ description = "Rustix engine animation system"
 tracing = { workspace = true }
 thiserror = { workspace = true }
 hecs = { workspace = true }
+rayon = "1.10"
 
 rustix-core = { path = "../core" }
+rustix-asset = { path = "../asset" }

@@ -22,9 +22,19 @@ pub mod spv_reflect;
 pub mod hot_reload;
 pub mod shader_include;
 pub mod shader_archive;
+pub mod gizmo;
+pub mod secondary_cmd;
+pub mod msaa;
+pub mod renderdoc;
+pub mod debug_label;
+pub mod tracy_gpu;
+pub mod wireframe;
 
 // Re-export commonly used component types
 pub use components::{Sprite, SpriteRenderer, DirectionalLight, PointLight, SpotLight, Camera};
+
+// Re-export gizmo types
+pub use gizmo::{GizmoVertex, GizmoLine, AudioGizmo, wireframe_sphere, wireframe_cone, wireframe_box, generate_audio_gizmo, flatten_gizmo_lines};
 
 // Re-export core types for convenience
 pub use error::RenderError;
@@ -33,3 +43,6 @@ pub use texture::{DepthBuffer, GpuTexture, Framebuffer, RenderTarget, HdrFramebu
 
 pub use rustix_core::config::RenderConfig;
 pub use ash;
+
+#[cfg(test)]
+pub mod components_tests;

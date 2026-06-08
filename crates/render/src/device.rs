@@ -68,6 +68,7 @@ pub struct GpuDevice {
     descriptor_layout_cache: DescriptorSetLayoutCache,
     pipeline_layout_cache: PipelineLayoutCache,
     sampler_cache: SamplerCache,
+    mesh_shader_supported: bool,
 }
 
 impl GpuDevice {
@@ -105,6 +106,18 @@ impl GpuDevice {
             unsafe { instance.inner().get_physical_device_memory_properties(physical) };
 
         let device_name = physical_devices_name(&physical_properties);
+
+        let available_extensions = unsafe {
+            instance.inner().enumerate_device_extension_properties(physical)
+                .unwrap_or_default()
+        };
+        let has_nv_mesh_shader = available_extensions.iter().any(|ext| {
+            let name = unsafe { std::ffi::CStr::from_ptr(ext.extension_name.as_ptr()) };
+            name.to_bytes() == ash::nv::mesh_shader::NAME.to_bytes()
+        });
+        if has_nv_mesh_shader {
+            tracing::info!("VK_NV_mesh_shader extension available");
+        }
 
         tracing::info!(
             gpu = %device_name,
@@ -146,12 +159,15 @@ impl GpuDevice {
 
         let enabled_features = vk::PhysicalDeviceFeatures::default();
 
-        let device_ext_names = vec![
+        let mut device_ext_names: Vec<*const i8> = vec![
             ash::khr::swapchain::NAME.as_ptr(),
             ash::khr::dynamic_rendering::NAME.as_ptr(),
             ash::khr::synchronization2::NAME.as_ptr(),
             ash::ext::descriptor_indexing::NAME.as_ptr(),
         ];
+        if has_nv_mesh_shader {
+            device_ext_names.push(ash::nv::mesh_shader::NAME.as_ptr());
+        }
 
         let mut descriptor_indexing_features =
             vk::PhysicalDeviceDescriptorIndexingFeatures::default()
@@ -161,14 +177,31 @@ impl GpuDevice {
                 .descriptor_binding_sampled_image_update_after_bind(true)
                 .descriptor_binding_variable_descriptor_count(true);
 
-        let create_info = vk::DeviceCreateInfo::default()
-            .queue_create_infos(&queue_create_infos)
-            .enabled_extension_names(&device_ext_names)
-            .enabled_features(&enabled_features)
-            .push_next(&mut dynamic_rendering_features)
-            .push_next(&mut timeline_semaphore_features)
-            .push_next(&mut synchronization2_features)
-            .push_next(&mut descriptor_indexing_features);
+        let mut mesh_shader_features =
+            vk::PhysicalDeviceMeshShaderFeaturesNV::default()
+                .mesh_shader(true)
+                .task_shader(true);
+
+        let create_info = if has_nv_mesh_shader {
+            vk::DeviceCreateInfo::default()
+                .queue_create_infos(&queue_create_infos)
+                .enabled_extension_names(&device_ext_names)
+                .enabled_features(&enabled_features)
+                .push_next(&mut dynamic_rendering_features)
+                .push_next(&mut timeline_semaphore_features)
+                .push_next(&mut synchronization2_features)
+                .push_next(&mut descriptor_indexing_features)
+                .push_next(&mut mesh_shader_features)
+        } else {
+            vk::DeviceCreateInfo::default()
+                .queue_create_infos(&queue_create_infos)
+                .enabled_extension_names(&device_ext_names)
+                .enabled_features(&enabled_features)
+                .push_next(&mut dynamic_rendering_features)
+                .push_next(&mut timeline_semaphore_features)
+                .push_next(&mut synchronization2_features)
+                .push_next(&mut descriptor_indexing_features)
+        };
 
         let logical = Box::new(unsafe {
             instance
@@ -210,6 +243,7 @@ impl GpuDevice {
             descriptor_layout_cache,
             pipeline_layout_cache,
             sampler_cache,
+            mesh_shader_supported: has_nv_mesh_shader,
         })
     }
 
@@ -284,6 +318,7 @@ impl GpuDevice {
     pub fn descriptor_layout_cache(&self) -> &DescriptorSetLayoutCache { &self.descriptor_layout_cache }
     pub fn pipeline_layout_cache(&self) -> &PipelineLayoutCache { &self.pipeline_layout_cache }
     pub fn sampler_cache(&self) -> &SamplerCache { &self.sampler_cache }
+    pub fn mesh_shader_supported(&self) -> bool { self.mesh_shader_supported }
 }
 
 fn physical_devices_name(props: &vk::PhysicalDeviceProperties) -> String {

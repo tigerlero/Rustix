@@ -7,6 +7,7 @@ description = "Rustix engine world streaming: chunk management, LOD, persistence
 [dependencies]
 tracing = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 crossbeam = { workspace = true }
 hecs = { workspace = true }

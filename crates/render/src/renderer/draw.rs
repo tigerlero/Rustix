@@ -187,6 +187,90 @@ impl super::Renderer {
         }
     }
 
+    pub fn draw_instanced_indexed_in_pass(
+        &self, cmd: vk::CommandBuffer,
+        pipeline: &pipeline::InstancedGraphicsPipeline,
+        vertex_buffer: &GpuBuffer, index_buffer: Option<&GpuBuffer>, index_count: u32,
+        instance_buffer: &GpuBuffer, instance_count: u32, instance_offset: u64,
+        push_constants: &[u8],
+    ) {
+        let bindless_set = self.bindless_heap.set();
+        unsafe {
+            self.device.logical().cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
+            self.device.logical().cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.layout, 0, &[bindless_set], &[]);
+            self.device.logical().cmd_push_constants(cmd, pipeline.layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
+            self.device.logical().cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer.buffer], &[0u64]);
+            self.device.logical().cmd_bind_vertex_buffers(cmd, 1, &[instance_buffer.buffer], &[instance_offset]);
+            if let Some(ib) = index_buffer {
+                self.device.logical().cmd_bind_index_buffer(cmd, ib.buffer, 0, vk::IndexType::UINT16);
+                self.device.logical().cmd_draw_indexed(cmd, index_count, instance_count, 0, 0, 0);
+            } else {
+                self.device.logical().cmd_draw(cmd, index_count, instance_count, 0, 0);
+            }
+        }
+    }
+
+    pub fn draw_instanced_indexed_indirect_in_pass(
+        &self, cmd: vk::CommandBuffer,
+        pipeline: &pipeline::InstancedGraphicsPipeline,
+        vertex_buffer: &GpuBuffer, index_buffer: &GpuBuffer,
+        instance_buffer: &GpuBuffer, instance_offset: u64,
+        indirect_buffer: &GpuBuffer, indirect_offset: u64,
+        push_constants: &[u8],
+    ) {
+        let bindless_set = self.bindless_heap.set();
+        unsafe {
+            self.device.logical().cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
+            self.device.logical().cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.layout, 0, &[bindless_set], &[]);
+            self.device.logical().cmd_push_constants(cmd, pipeline.layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
+            self.device.logical().cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer.buffer], &[0u64]);
+            self.device.logical().cmd_bind_vertex_buffers(cmd, 1, &[instance_buffer.buffer], &[instance_offset]);
+            self.device.logical().cmd_bind_index_buffer(cmd, index_buffer.buffer, 0, vk::IndexType::UINT16);
+            self.device.logical().cmd_draw_indexed_indirect(cmd, indirect_buffer.buffer, indirect_offset, 1, 0);
+        }
+    }
+
+    pub fn draw_instanced_gbuffer_in_pass(
+        &self, cmd: vk::CommandBuffer,
+        pipeline: &pipeline::InstancedGBufferPipeline,
+        vertex_buffer: &GpuBuffer, index_buffer: Option<&GpuBuffer>, index_count: u32,
+        instance_buffer: &GpuBuffer, instance_count: u32, instance_offset: u64,
+        push_constants: &[u8],
+    ) {
+        let bindless_set = self.bindless_heap.set();
+        unsafe {
+            self.device.logical().cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
+            self.device.logical().cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.layout, 0, &[bindless_set], &[]);
+            self.device.logical().cmd_push_constants(cmd, pipeline.layout, vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
+            self.device.logical().cmd_bind_vertex_buffers(cmd, 0, &[vertex_buffer.buffer], &[0u64]);
+            self.device.logical().cmd_bind_vertex_buffers(cmd, 1, &[instance_buffer.buffer], &[instance_offset]);
+            if let Some(ib) = index_buffer {
+                self.device.logical().cmd_bind_index_buffer(cmd, ib.buffer, 0, vk::IndexType::UINT16);
+                self.device.logical().cmd_draw_indexed(cmd, index_count, instance_count, 0, 0, 0);
+            } else {
+                self.device.logical().cmd_draw(cmd, index_count, instance_count, 0, 0);
+            }
+        }
+    }
+
+    /// Draw mesh tasks for VK_NV_mesh_shader pipeline.
+    /// `task_count` should be set to the number of mesh workgroups to dispatch.
+    pub fn draw_mesh_tasks_in_pass(
+        &self, cmd: vk::CommandBuffer,
+        pipeline: &pipeline::MeshShaderPipeline,
+        task_count: u32, first_task: u32,
+        push_constants: &[u8],
+    ) {
+        let bindless_set = self.bindless_heap.set();
+        unsafe {
+            self.device.logical().cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.pipeline);
+            self.device.logical().cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline.layout, 0, &[bindless_set], &[]);
+            self.device.logical().cmd_push_constants(cmd, pipeline.layout, vk::ShaderStageFlags::MESH_NV | vk::ShaderStageFlags::FRAGMENT, 0, push_constants);
+            let mesh_device = ash::nv::mesh_shader::Device::new(&self.instance.inner(), &self.device.logical());
+            mesh_device.cmd_draw_mesh_tasks(cmd, task_count, first_task);
+        }
+    }
+
     pub fn end_scene_pass(&self, cmd: vk::CommandBuffer) {
         unsafe {
             let dr = ash::khr::dynamic_rendering::Device::new(&self.instance.inner(), &self.device.logical());
@@ -262,13 +346,17 @@ impl super::Renderer {
     }
 
     pub fn update_tonemap_descriptor_set(
-        &self, set: vk::DescriptorSet, hdr_view: vk::ImageView, sampler: vk::Sampler,
+        &self, set: vk::DescriptorSet, hdr_view: vk::ImageView, bloom_view: vk::ImageView, ssao_view: vk::ImageView, sampler: vk::Sampler,
     ) {
         let tex_ii = [vk::DescriptorImageInfo::default().image_view(hdr_view).image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+        let bloom_ii = [vk::DescriptorImageInfo::default().image_view(bloom_view).image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+        let ssao_ii = [vk::DescriptorImageInfo::default().image_view(ssao_view).image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
         let samp_ii = [vk::DescriptorImageInfo::default().sampler(sampler)];
         let writes = [
             vk::WriteDescriptorSet::default().dst_set(set).dst_binding(1).descriptor_type(vk::DescriptorType::SAMPLED_IMAGE).image_info(&tex_ii),
             vk::WriteDescriptorSet::default().dst_set(set).dst_binding(2).descriptor_type(vk::DescriptorType::SAMPLER).image_info(&samp_ii),
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(3).descriptor_type(vk::DescriptorType::SAMPLED_IMAGE).image_info(&bloom_ii),
+            vk::WriteDescriptorSet::default().dst_set(set).dst_binding(4).descriptor_type(vk::DescriptorType::SAMPLED_IMAGE).image_info(&ssao_ii),
         ];
         unsafe { self.device.logical().update_descriptor_sets(&writes, &[]); }
     }

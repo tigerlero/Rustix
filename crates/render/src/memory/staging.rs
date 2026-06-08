@@ -132,8 +132,8 @@ impl StagingBufferPool {
         unsafe {
             device
                 .logical()
-                .queue_submit(device.graphics_queue(), &submits, vk::Fence::null())?;
-            device.logical().queue_wait_idle(device.graphics_queue())?;
+                .queue_submit(device.transfer_queue(), &submits, vk::Fence::null())?;
+            device.logical().queue_wait_idle(device.transfer_queue())?;
         }
 
         unsafe {

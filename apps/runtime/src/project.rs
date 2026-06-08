@@ -65,6 +65,68 @@ pub struct CameraBookmark {
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct ViewportLayout {
+    pub name: String,
+    pub open: bool,
+    #[serde(default)]
+    pub position: Option<[f32; 2]>,
+    #[serde(default)]
+    pub size: Option<[f32; 2]>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockPosition {
+    Left,
+    Right,
+    Bottom,
+    Floating,
+    Hidden,
+}
+
+impl Default for DockPosition {
+    fn default() -> Self { DockPosition::Left }
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct LayoutState {
+    #[serde(default = "default_hierarchy_width")]
+    pub hierarchy_width: f32,
+    #[serde(default = "default_inspector_width")]
+    pub inspector_width: f32,
+    #[serde(default = "default_console_height")]
+    pub console_height: f32,
+    #[serde(default)]
+    pub viewports: Vec<ViewportLayout>,
+    #[serde(default)]
+    pub hierarchy_dock: DockPosition,
+    #[serde(default = "default_inspector_dock")]
+    pub inspector_dock: DockPosition,
+    #[serde(default = "default_console_dock")]
+    pub console_dock: DockPosition,
+}
+
+fn default_hierarchy_width() -> f32 { 220.0 }
+fn default_inspector_width() -> f32 { 260.0 }
+fn default_console_height() -> f32 { 160.0 }
+fn default_inspector_dock() -> DockPosition { DockPosition::Right }
+fn default_console_dock() -> DockPosition { DockPosition::Bottom }
+
+impl Default for LayoutState {
+    fn default() -> Self {
+        Self {
+            hierarchy_width: default_hierarchy_width(),
+            inspector_width: default_inspector_width(),
+            console_height: default_console_height(),
+            viewports: Vec::new(),
+            hierarchy_dock: DockPosition::Left,
+            inspector_dock: DockPosition::Right,
+            console_dock: DockPosition::Bottom,
+        }
+    }
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProjectInfo {
     pub name: String,
     pub description: String,
@@ -79,6 +141,8 @@ pub struct ProjectInfo {
     pub editor_camera: Option<EditorCameraState>,
     #[serde(default)]
     pub bookmarks: Vec<CameraBookmark>,
+    #[serde(default)]
+    pub layout: Option<LayoutState>,
 }
 
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -121,6 +185,7 @@ pub fn create_project_file(dir: &Path, project_type: ProjectType) -> Option<Proj
         scene: SceneData::default(),
         editor_camera: None,
         bookmarks: Vec::new(),
+        layout: None,
     };
     write_project_file(dir, &info)?;
     tracing::info!("created project: {} at {} (type: {:?})", info.name, dir.display(), project_type);

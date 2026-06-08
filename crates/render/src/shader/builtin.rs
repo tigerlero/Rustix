@@ -91,6 +91,376 @@ void main() {
 }
 "#;
 
+pub const PBR_INSTANCED_VERTEX_GLSL: &str = r#"#version 460
+struct PointLight { vec4 position; vec4 color; };
+layout(binding = 0) uniform SceneUBO { mat4 view_proj; vec4 cam_pos; uint light_count; PointLight lights[8]; vec4 fog; mat4 light_view_proj; } ubo;
+layout(push_constant) uniform PC { vec4 dir_light; vec4 dir_color; } pc;
+layout(location = 0) in vec3 inPosition;
+layout(location = 1) in vec3 inNormal;
+layout(location = 2) in vec4 instanceModelCol0;
+layout(location = 3) in vec4 instanceModelCol1;
+layout(location = 4) in vec4 instanceModelCol2;
+layout(location = 5) in vec4 instanceModelCol3;
+layout(location = 6) in vec4 instanceBaseColor;
+layout(location = 7) in vec4 instanceMaterial;
+layout(location = 0) out vec3 fragNormal;
+layout(location = 1) out vec3 fragWorldPos;
+layout(location = 2) out vec4 fragBaseColor;
+layout(location = 3) out vec4 fragMaterial;
+void main() {
+    mat4 model = mat4(instanceModelCol0, instanceModelCol1, instanceModelCol2, instanceModelCol3);
+    vec4 worldPos = model * vec4(inPosition, 1.0);
+    gl_Position = ubo.view_proj * worldPos;
+    fragWorldPos = worldPos.xyz;
+    fragNormal = mat3(model) * inNormal;
+    fragBaseColor = instanceBaseColor;
+    fragMaterial = instanceMaterial;
+}
+"#;
+
+pub const PBR_INSTANCED_FRAGMENT_GLSL: &str = r#"#version 460
+struct PointLight { vec4 position; vec4 color; };
+layout(binding = 0) uniform SceneUBO { mat4 view_proj; vec4 cam_pos; uint light_count; PointLight lights[8]; vec4 fog; mat4 light_view_proj; } ubo;
+layout(push_constant) uniform PC { vec4 dir_light; vec4 dir_color; } pc;
+layout(binding = 1) uniform texture2D shadowMapTex;
+layout(binding = 2) uniform sampler shadowMapSamp;
+layout(location = 0) in vec3 fragNormal;
+layout(location = 1) in vec3 fragWorldPos;
+layout(location = 2) in vec4 fragBaseColor;
+layout(location = 3) in vec4 fragMaterial;
+layout(location = 0) out vec4 outColor;
+
+const int SHADOW_PCF_RADIUS = 1;
+
+vec3 blinn_phong(vec3 N, vec3 L, vec3 V, vec3 light_color, vec3 base, float roughness, float metallic) {
+    vec3 H = normalize(L + V);
+    float NdotL = max(dot(N, L), 0.0);
+    float NdotH = max(dot(N, H), 0.0);
+    float spec_pow = 32.0 / (roughness * roughness + 0.001);
+    float spec = pow(NdotH, spec_pow);
+    vec3 f0 = mix(vec3(0.04), base, metallic);
+    vec3 specular = spec * light_color * f0 * (1.0 - roughness) * 0.5;
+    vec3 diffuse = NdotL * light_color * base * (1.0 - metallic);
+    return diffuse + specular;
+}
+
+float shadowFactor(vec4 fragLightSpace) {
+    vec3 projCoords = fragLightSpace.xyz / fragLightSpace.w;
+    projCoords = projCoords * 0.5 + 0.5;
+    if (projCoords.z > 1.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) return 1.0;
+    float currentDepth = projCoords.z;
+    float bias = 0.005;
+    vec2 texelSize = vec2(1.0 / 1024.0);
+    float shadow = 0.0;
+    for(int x = -SHADOW_PCF_RADIUS; x <= SHADOW_PCF_RADIUS; ++x) {
+        for(int y = -SHADOW_PCF_RADIUS; y <= SHADOW_PCF_RADIUS; ++y) {
+            float pcfDepth = texture(sampler2D(shadowMapTex, shadowMapSamp), projCoords.xy + vec2(x, y) * texelSize).r;
+            shadow += currentDepth - bias > pcfDepth ? 0.0 : 1.0;
+        }
+    }
+    int samples = (2 * SHADOW_PCF_RADIUS + 1) * (2 * SHADOW_PCF_RADIUS + 1);
+    return shadow / float(samples);
+}
+
+void main() {
+    vec3 N = normalize(fragNormal);
+    vec3 L = normalize(pc.dir_light.xyz);
+    vec3 V = normalize(ubo.cam_pos.xyz - fragWorldPos);
+    vec3 lightCol = pc.dir_color.rgb;
+    vec3 base = fragBaseColor.rgb;
+    float rough = fragMaterial.x;
+    float metal = fragMaterial.y;
+    vec3 lit = blinn_phong(N, L, V, lightCol, base, rough, metal);
+    vec3 ambient = base * 0.1;
+    float shadow = shadowFactor(vec4(fragWorldPos, 1.0));
+    outColor = vec4(ambient + shadow * lit, 1.0);
+}
+"#;
+
+pub const GBUFFER_INSTANCED_VERTEX_GLSL: &str = r#"#version 460
+layout(binding = 0) uniform SceneUBO { mat4 view_proj; vec4 cam_pos; uint light_count; vec4 _pad[9]; vec4 fog; mat4 light_view_proj; } ubo;
+layout(push_constant) uniform PC { vec4 dir_light; vec4 dir_color; } pc;
+layout(location = 0) in vec3 inPosition;
+layout(location = 1) in vec3 inNormal;
+layout(location = 2) in vec4 instanceModelCol0;
+layout(location = 3) in vec4 instanceModelCol1;
+layout(location = 4) in vec4 instanceModelCol2;
+layout(location = 5) in vec4 instanceModelCol3;
+layout(location = 6) in vec4 instanceBaseColor;
+layout(location = 7) in vec4 instanceMaterial;
+layout(location = 0) out vec3 fragWorldPos;
+layout(location = 1) out vec3 fragNormal;
+layout(location = 2) out vec4 fragPosLightSpace;
+layout(location = 3) out vec4 fragBaseColor;
+layout(location = 4) out vec4 fragMaterial;
+void main() {
+    mat4 model = mat4(instanceModelCol0, instanceModelCol1, instanceModelCol2, instanceModelCol3);
+    vec4 worldPos = model * vec4(inPosition, 1.0);
+    gl_Position = ubo.view_proj * worldPos;
+    fragWorldPos = worldPos.xyz;
+    fragNormal = mat3(model) * inNormal;
+    fragPosLightSpace = ubo.light_view_proj * worldPos;
+    fragBaseColor = instanceBaseColor;
+    fragMaterial = instanceMaterial;
+}
+"#;
+
+pub const GBUFFER_INSTANCED_FRAGMENT_GLSL: &str = r#"#version 460
+layout(binding = 0) uniform SceneUBO { mat4 view_proj; vec4 cam_pos; uint light_count; vec4 _pad[9]; vec4 fog; mat4 light_view_proj; } ubo;
+layout(push_constant) uniform PC { vec4 dir_light; vec4 dir_color; } pc;
+layout(location = 0) in vec3 fragWorldPos;
+layout(location = 1) in vec3 fragNormal;
+layout(location = 2) in vec4 fragPosLightSpace;
+layout(location = 3) in vec4 fragBaseColor;
+layout(location = 4) in vec4 fragMaterial;
+layout(location = 0) out vec4 outAlbedo;
+layout(location = 1) out vec4 outNormal;
+layout(location = 2) out vec4 outMaterial;
+void main() {
+    vec3 N = normalize(fragNormal);
+    vec3 base = fragBaseColor.rgb;
+    float rough = fragMaterial.x;
+    float metal = fragMaterial.y;
+    float ao = fragMaterial.z;
+    float emissive = fragMaterial.w;
+    outAlbedo = vec4(base, metal);
+    outNormal = vec4(N, 0.0);
+    outMaterial = vec4(rough, ao, emissive, 0.0);
+}
+"#;
+
+pub const CULL_INSTANCES_COMP_GLSL: &str = r#"#version 460
+struct CullInstance {
+    vec4 model_col0;
+    vec4 model_col1;
+    vec4 model_col2;
+    vec4 model_col3;
+    vec4 base_color;
+    vec4 material;
+    vec4 aabb_min;
+    vec4 aabb_max;
+};
+layout(binding = 0, std430) readonly buffer InstanceBuffer {
+    CullInstance instances[];
+} instance_buffer;
+layout(binding = 1, std430) writeonly buffer VisibilityBuffer {
+    uint flags[];
+} visibility_buffer;
+layout(binding = 2, std430) buffer AtomicCounterBuffer {
+    uint counters[];
+} atomic_counters;
+layout(push_constant) uniform PushConstants {
+    mat4 view_proj;
+    vec4 frustum_planes[6];
+    uint instance_count;
+    uint batch_count;
+    uint _pad[2];
+} pc;
+bool aabb_intersects_frustum(vec3 center, vec3 extent, vec4 planes[6]) {
+    for (int i = 0; i < 6; i++) {
+        vec3 normal = planes[i].xyz;
+        float d = planes[i].w;
+        vec3 positive_vertex = center + vec3(
+            normal.x >= 0.0 ? extent.x : -extent.x,
+            normal.y >= 0.0 ? extent.y : -extent.y,
+            normal.z >= 0.0 ? extent.z : -extent.z
+        );
+        if (dot(normal, positive_vertex) + d < 0.0) return false;
+    }
+    return true;
+}
+void main() {
+    uint instance_id = gl_GlobalInvocationID.x;
+    if (instance_id >= pc.instance_count) return;
+    CullInstance inst = instance_buffer.instances[instance_id];
+    mat4 model = mat4(inst.model_col0, inst.model_col1, inst.model_col2, inst.model_col3);
+    vec3 local_center = (inst.aabb_min.xyz + inst.aabb_max.xyz) * 0.5;
+    vec3 local_extent = (inst.aabb_max.xyz - inst.aabb_min.xyz) * 0.5;
+    vec3 world_center = (model * vec4(local_center, 1.0)).xyz;
+    vec3 world_extent = abs(mat3(model) * local_extent);
+    bool visible = aabb_intersects_frustum(world_center, world_extent, pc.frustum_planes);
+    uint mesh_idx = uint(inst.aabb_min.w);
+    visibility_buffer.flags[instance_id] = visible ? 1u : 0u;
+    if (visible) { atomicAdd(atomic_counters.counters[mesh_idx], 1u); }
+}
+"#;
+
+pub const GEN_DRAW_CMDS_COMP_GLSL: &str = r#"#version 460
+struct DrawCommand {
+    uint index_count;
+    uint instance_count;
+    uint first_index;
+    int  vertex_offset;
+    uint first_instance;
+};
+struct BatchInfo {
+    uint mesh_index;
+    uint instance_offset;
+    uint instance_count;
+    uint index_count;
+};
+layout(binding = 0, std430) readonly buffer CounterBuffer {
+    uint counters[];
+} counter_buffer;
+layout(binding = 1, std430) writeonly buffer DrawCommandBuffer {
+    DrawCommand commands[];
+} draw_command_buffer;
+layout(binding = 2, std430) readonly buffer BatchInfoBuffer {
+    BatchInfo batches[];
+} batch_info_buffer;
+layout(push_constant) uniform PushConstants {
+    uint batch_count;
+    uint _pad[3];
+} pc;
+void main() {
+    uint batch_id = gl_GlobalInvocationID.x;
+    if (batch_id >= pc.batch_count) return;
+    BatchInfo batch = batch_info_buffer.batches[batch_id];
+    uint visible_count = counter_buffer.counters[batch_id];
+    draw_command_buffer.commands[batch_id] = DrawCommand(
+        batch.index_count,
+        visible_count,
+        0,
+        0,
+        batch.instance_offset
+    );
+}
+"#;
+
+pub const PBR_MESH_GLSL: &str = r#"#version 460
+#extension GL_NV_mesh_shader : require
+layout(local_size_x = 32) in;
+layout(triangles, max_vertices = 24, max_primitives = 12) out;
+layout(binding = 0) uniform SceneUBO { mat4 view_proj; vec4 cam_pos; uint light_count; vec4 _pad[9]; vec4 fog; mat4 light_view_proj; } ubo;
+layout(push_constant) uniform PC { vec4 dir_light; vec4 dir_color; mat4 model; vec4 base_color; vec4 material; } pc;
+layout(location = 0) out vec4 outWorldPos[];
+layout(location = 1) out vec3 outNormal[];
+layout(location = 2) out vec4 outPosLightSpace[];
+layout(location = 3) out vec4 outBaseColor[];
+layout(location = 4) out vec4 outMaterial[];
+const vec3 V[24] = vec3[](
+    vec3(-0.5,-0.5, 0.5), vec3( 0.5,-0.5, 0.5), vec3( 0.5, 0.5, 0.5), vec3(-0.5, 0.5, 0.5),
+    vec3( 0.5,-0.5,-0.5), vec3(-0.5,-0.5,-0.5), vec3(-0.5, 0.5,-0.5), vec3( 0.5, 0.5,-0.5),
+    vec3( 0.5,-0.5, 0.5), vec3( 0.5,-0.5,-0.5), vec3( 0.5, 0.5,-0.5), vec3( 0.5, 0.5, 0.5),
+    vec3(-0.5,-0.5,-0.5), vec3(-0.5,-0.5, 0.5), vec3(-0.5, 0.5, 0.5), vec3(-0.5, 0.5,-0.5),
+    vec3(-0.5, 0.5, 0.5), vec3( 0.5, 0.5, 0.5), vec3( 0.5, 0.5,-0.5), vec3(-0.5, 0.5,-0.5),
+    vec3(-0.5,-0.5,-0.5), vec3( 0.5,-0.5,-0.5), vec3( 0.5,-0.5, 0.5), vec3(-0.5,-0.5, 0.5)
+);
+const vec3 N[6] = vec3[](vec3(0,0,1), vec3(0,0,-1), vec3(1,0,0), vec3(-1,0,0), vec3(0,1,0), vec3(0,-1,0));
+const uint I[36] = uint[](0,1,2,0,2,3,4,5,6,4,6,7,8,9,10,8,10,11,12,13,14,12,14,15,16,17,18,16,18,19,20,21,22,20,22,23);
+void main() {
+    uint lid = gl_LocalInvocationID.x;
+    if (lid == 0) { gl_PrimitiveCountNV = 12; for (uint i = 0; i < 36; i++) gl_PrimitiveIndicesNV[i] = I[i]; }
+    if (lid < 24) {
+        vec4 wp = pc.model * vec4(V[lid], 1.0);
+        gl_MeshVerticesNV[lid].gl_Position = ubo.view_proj * wp;
+        outWorldPos[lid] = wp;
+        outNormal[lid] = mat3(transpose(inverse(pc.model))) * N[lid/4];
+        outPosLightSpace[lid] = ubo.light_view_proj * wp;
+        outBaseColor[lid] = pc.base_color;
+        outMaterial[lid] = pc.material;
+    }
+}
+"#;
+
+pub const OIT_ACCUMULATE_VERT_GLSL: &str = r#"#version 460
+struct PointLight { vec4 position; vec4 color; };
+layout(binding = 0) uniform SceneUBO { mat4 view_proj; vec4 cam_pos; uint light_count; PointLight lights[8]; vec4 fog; mat4 light_view_proj; } ubo;
+layout(push_constant) uniform PC { mat4 model; vec4 dir_light; vec4 dir_color; vec4 base_color; vec4 material; } pc;
+layout(location = 0) in vec3 inPosition;
+layout(location = 1) in vec3 inNormal;
+layout(location = 0) out vec3 fragNormal;
+layout(location = 1) out vec3 fragWorldPos;
+void main() {
+    vec4 worldPos = pc.model * vec4(inPosition, 1.0);
+    gl_Position = ubo.view_proj * worldPos;
+    fragWorldPos = worldPos.xyz;
+    fragNormal = mat3(pc.model) * inNormal;
+}
+"#;
+
+pub const OIT_ACCUMULATE_FRAG_GLSL: &str = r#"#version 460
+struct PointLight { vec4 position; vec4 color; };
+layout(binding = 0) uniform SceneUBO { mat4 view_proj; vec4 cam_pos; uint light_count; PointLight lights[8]; vec4 fog; mat4 light_view_proj; } ubo;
+layout(push_constant) uniform PC { mat4 model; vec4 dir_light; vec4 dir_color; vec4 base_color; vec4 material; } pc;
+layout(location = 0) in vec3 fragNormal;
+layout(location = 1) in vec3 fragWorldPos;
+layout(location = 0) out vec4 outAccum;
+layout(location = 1) out vec4 outReveal;
+const float PI = 3.14159265359;
+float D_GGX(float NdotH, float roughness) {
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float denom = NdotH * NdotH * (a2 - 1.0) + 1.0;
+    return a2 / (PI * denom * denom);
+}
+float G_SmithGGX(float NdotV, float roughness) {
+    float a = roughness * roughness;
+    return (2.0 * NdotV) / (NdotV + sqrt(a + (1.0 - a) * NdotV * NdotV));
+}
+float G_Smith(float NdotV, float NdotL, float roughness) {
+    return G_SmithGGX(NdotV, roughness) * G_SmithGGX(NdotL, roughness);
+}
+vec3 F_Schlick(float cosTheta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+}
+vec3 pbrDirect(vec3 N, vec3 L, vec3 V, vec3 light_color, vec3 base, float roughness, float metallic) {
+    float NdotL = max(dot(N, L), 0.0);
+    if (NdotL <= 0.0) return vec3(0.0);
+    float NdotV = max(dot(N, V), 0.0);
+    if (NdotV <= 0.0) return vec3(0.0);
+    vec3 H = normalize(L + V);
+    float NdotH = max(dot(N, H), 0.0);
+    float HdotV = max(dot(H, V), 0.0);
+    vec3 F0 = mix(vec3(0.04), base, metallic);
+    float D = D_GGX(NdotH, roughness);
+    float G = G_Smith(NdotV, NdotL, roughness);
+    vec3 F = F_Schlick(HdotV, F0);
+    vec3 spec = (D * G * F) / (4.0 * NdotV * NdotL + 0.0001);
+    vec3 diff = base * (1.0 - metallic) / PI;
+    return (diff + spec) * light_color * NdotL;
+}
+void main() {
+    vec3 N = normalize(fragNormal);
+    vec3 V = normalize(ubo.cam_pos.xyz - fragWorldPos);
+    vec3 L = normalize(-pc.dir_light.xyz);
+    vec3 base = pc.base_color.rgb;
+    float roughness = pc.material.x;
+    float metallic = pc.material.y;
+    float ao = pc.material.z;
+    float alpha = pc.base_color.a;
+    vec3 color = pbrDirect(N, L, V, pc.dir_color.rgb, base, roughness, metallic) * ao;
+    color += base * 0.03 * ao;
+    float w = clamp(alpha * 10.0, 0.01, 100.0);
+    outAccum = vec4(color * alpha * w, alpha * w);
+    outReveal = vec4(alpha);
+}
+"#;
+
+pub const OIT_COMPOSITE_VERT_GLSL: &str = r#"#version 460
+const vec2 positions[3] = vec2[](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+void main() { gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0); }
+"#;
+
+pub const OIT_COMPOSITE_FRAG_GLSL: &str = r#"#version 460
+layout(binding = 1) uniform texture2D accumTex;
+layout(binding = 2) uniform sampler accumSamp;
+layout(binding = 3) uniform texture2D revealTex;
+layout(binding = 4) uniform sampler revealSamp;
+layout(binding = 5) uniform texture2D opaqueTex;
+layout(binding = 6) uniform sampler opaqueSamp;
+layout(location = 0) out vec4 outColor;
+void main() {
+    ivec2 coord = ivec2(gl_FragCoord.xy);
+    vec4 accum = texelFetch(sampler2D(accumTex, accumSamp), coord, 0);
+    float reveal = texelFetch(sampler2D(revealTex, revealSamp), coord, 0).r;
+    vec3 opaque = texelFetch(sampler2D(opaqueTex, opaqueSamp), coord, 0).rgb;
+    vec3 transColor = accum.rgb / max(accum.a, 0.00001);
+    float transAlpha = clamp(1.0 - reveal, 0.0, 1.0);
+    outColor = vec4(mix(opaque, transColor, transAlpha), 1.0);
+}
+"#;
+
 /// Paths searched for runtime shader overrides (editor / debug).
 pub const SHADER_SEARCH_PATHS: &[&str] = &["shaders", "../shaders", "../../shaders"];
 
@@ -225,6 +595,8 @@ void main() {
 pub const TONEMAP_FRAGMENT_GLSL: &str = r#"#version 460
 layout(binding = 1) uniform texture2D uHdrTex;
 layout(binding = 2) uniform sampler uSamp;
+layout(binding = 3) uniform texture2D uBloomTex;
+layout(binding = 4) uniform texture2D uSsaoTex;
 layout(location = 0) in vec2 fragUv;
 layout(location = 0) out vec4 outColor;
 
@@ -237,6 +609,10 @@ vec3 aces_fitted(vec3 v) {
 }
 void main() {
     vec3 hdr = texture(sampler2D(uHdrTex, uSamp), fragUv).rgb;
+    vec3 bloom = texture(sampler2D(uBloomTex, uSamp), fragUv).rgb;
+    float ssao = texture(sampler2D(uSsaoTex, uSamp), fragUv).r;
+    hdr += bloom;
+    hdr *= ssao;
     vec3 mapped;
     if (TONEMAP_ALGORITHM == 0) {
         mapped = aces_fitted(hdr);
@@ -351,5 +727,659 @@ pub fn deferred_fragment_shader_override(device: &ash::Device) -> Result<ShaderM
         ShaderModule::from_archive_name(device, "deferred.frag", vk::ShaderStageFlags::FRAGMENT)
     } else {
         try_override(device, "deferred.frag", "", vk::ShaderStageFlags::FRAGMENT)
+    }
+}
+
+// --- Bloom shaders (fullscreen triangle) ---
+pub const BLOOM_VERTEX_GLSL: &str = r#"#version 460
+layout(location = 0) out vec2 fragUv;
+const vec2 positions[3] = vec2[](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+const vec2 uvs[3] = vec2[](vec2(0.0, 0.0), vec2(2.0, 0.0), vec2(0.0, 2.0));
+void main() {
+    gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+    fragUv = uvs[gl_VertexIndex];
+}
+"#;
+
+pub const BLOOM_EXTRACT_FRAGMENT_GLSL: &str = r#"#version 460
+layout(binding = 1) uniform texture2D uSrc;
+layout(binding = 2) uniform sampler uSamp;
+layout(location = 0) in vec2 fragUv;
+layout(location = 0) out vec4 outColor;
+layout(push_constant) uniform Params {
+    vec4 thresholdIntensity; // x=threshold, y=intensity, zw=unused
+} pc;
+void main() {
+    vec3 hdr = texture(sampler2D(uSrc, uSamp), fragUv).rgb;
+    float lum = dot(hdr, vec3(0.2126, 0.7152, 0.0722));
+    float thresh = pc.thresholdIntensity.x;
+    vec3 extracted = hdr * max(lum - thresh, 0.0) / max(lum, 0.0001);
+    outColor = vec4(extracted * pc.thresholdIntensity.y, 1.0);
+}
+"#;
+
+pub const BLOOM_DOWN_FRAGMENT_GLSL: &str = r#"#version 460
+layout(binding = 1) uniform texture2D uSrc;
+layout(binding = 2) uniform sampler uSamp;
+layout(location = 0) in vec2 fragUv;
+layout(location = 0) out vec4 outColor;
+layout(push_constant) uniform Params {
+    vec4 texelSize; // xy = 1.0 / source_size, zw = unused
+} pc;
+void main() {
+    vec2 ts = pc.texelSize.xy;
+    vec3 a = texture(sampler2D(uSrc, uSamp), fragUv + vec2(-ts.x, -ts.y)).rgb;
+    vec3 b = texture(sampler2D(uSrc, uSamp), fragUv + vec2( ts.x, -ts.y)).rgb;
+    vec3 c = texture(sampler2D(uSrc, uSamp), fragUv + vec2(-ts.x,  ts.y)).rgb;
+    vec3 d = texture(sampler2D(uSrc, uSamp), fragUv + vec2( ts.x,  ts.y)).rgb;
+    outColor = vec4((a + b + c + d) * 0.25, 1.0);
+}
+"#;
+
+pub const BLOOM_UP_FRAGMENT_GLSL: &str = r#"#version 460
+layout(binding = 1) uniform texture2D uSrc;
+layout(binding = 2) uniform sampler uSamp;
+layout(location = 0) in vec2 fragUv;
+layout(location = 0) out vec4 outColor;
+layout(push_constant) uniform Params {
+    vec4 texelSize; // xy = 1.0 / source_size, zw = unused
+} pc;
+void main() {
+    vec2 ts = pc.texelSize.xy;
+    vec3 color = texture(sampler2D(uSrc, uSamp), fragUv).rgb * 4.0;
+    color += texture(sampler2D(uSrc, uSamp), fragUv + vec2(-ts.x, 0.0)).rgb * 2.0;
+    color += texture(sampler2D(uSrc, uSamp), fragUv + vec2( ts.x, 0.0)).rgb * 2.0;
+    color += texture(sampler2D(uSrc, uSamp), fragUv + vec2(0.0, -ts.y)).rgb * 2.0;
+    color += texture(sampler2D(uSrc, uSamp), fragUv + vec2(0.0,  ts.y)).rgb * 2.0;
+    color += texture(sampler2D(uSrc, uSamp), fragUv + vec2(-ts.x, -ts.y)).rgb;
+    color += texture(sampler2D(uSrc, uSamp), fragUv + vec2( ts.x, -ts.y)).rgb;
+    color += texture(sampler2D(uSrc, uSamp), fragUv + vec2(-ts.x,  ts.y)).rgb;
+    color += texture(sampler2D(uSrc, uSamp), fragUv + vec2( ts.x,  ts.y)).rgb;
+    outColor = vec4(color / 16.0, 1.0);
+}
+"#;
+
+pub fn bloom_vertex_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "bloom.vert", vk::ShaderStageFlags::VERTEX)
+    } else {
+        try_override(device, "bloom.vert", BLOOM_VERTEX_GLSL, vk::ShaderStageFlags::VERTEX)
+    }
+}
+pub fn bloom_extract_fragment_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "bloom_extract.frag", vk::ShaderStageFlags::FRAGMENT)
+    } else {
+        try_override(device, "bloom_extract.frag", BLOOM_EXTRACT_FRAGMENT_GLSL, vk::ShaderStageFlags::FRAGMENT)
+    }
+}
+pub fn bloom_down_fragment_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "bloom_down.frag", vk::ShaderStageFlags::FRAGMENT)
+    } else {
+        try_override(device, "bloom_down.frag", BLOOM_DOWN_FRAGMENT_GLSL, vk::ShaderStageFlags::FRAGMENT)
+    }
+}
+pub fn bloom_up_fragment_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "bloom_up.frag", vk::ShaderStageFlags::FRAGMENT)
+    } else {
+        try_override(device, "bloom_up.frag", BLOOM_UP_FRAGMENT_GLSL, vk::ShaderStageFlags::FRAGMENT)
+    }
+}
+
+// --- SSAO shaders (fullscreen triangle) ---
+pub const SSAO_VERTEX_GLSL: &str = r#"#version 460
+layout(location = 0) out vec2 fragUv;
+const vec2 positions[3] = vec2[](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+const vec2 uvs[3] = vec2[](vec2(0.0, 0.0), vec2(2.0, 0.0), vec2(0.0, 2.0));
+void main() {
+    gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+    fragUv = uvs[gl_VertexIndex];
+}
+"#;
+
+pub const SSAO_FRAGMENT_GLSL: &str = r#"#version 460
+layout(binding = 1) uniform texture2D depthTex;
+layout(binding = 2) uniform sampler samp;
+layout(location = 0) in vec2 fragUv;
+layout(location = 0) out float outOcclusion;
+layout(push_constant) uniform Params {
+    vec4 projParams;
+    vec4 radiusBias;
+    vec4 screenSize;
+} pc;
+float linearize_depth(float d) {
+    float near = pc.projParams.x;
+    float far = pc.projParams.y;
+    return near * far / (far - d * (far - near));
+}
+vec3 view_pos_from_uv_depth(vec2 uv, float depth) {
+    float z = linearize_depth(depth);
+    float tan_half_fov = 1.0 / pc.projParams.z;
+    vec2 ndc = uv * 2.0 - 1.0;
+    float aspect = pc.projParams.w;
+    vec3 view_pos;
+    view_pos.x = ndc.x * tan_half_fov * aspect * z;
+    view_pos.y = ndc.y * tan_half_fov * z;
+    view_pos.z = -z;
+    return view_pos;
+}
+vec3 reconstruct_normal(vec2 uv, float depth) {
+    vec2 texel = pc.screenSize.zw;
+    float d1 = texture(sampler2D(depthTex, samp), uv + vec2(texel.x, 0.0)).r;
+    float d2 = texture(sampler2D(depthTex, samp), uv + vec2(0.0, texel.y)).r;
+    vec3 p0 = view_pos_from_uv_depth(uv, depth);
+    vec3 px = view_pos_from_uv_depth(uv + vec2(texel.x, 0.0), d1);
+    vec3 py = view_pos_from_uv_depth(uv + vec2(0.0, texel.y), d2);
+    vec3 n = normalize(cross(px - p0, py - p0));
+    return n;
+}
+const vec2 poisson[16] = vec2[](
+    vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
+    vec2(-0.09418410, -0.92938870), vec2(0.34495938,  0.29387760),
+    vec2(-0.91588581,  0.45771432), vec2(-0.81544232, -0.87912464),
+    vec2(-0.38277543,  0.27676845), vec2(0.97484398,  0.75648379),
+    vec2(0.44323325, -0.97511554), vec2(0.53742981, -0.47373420),
+    vec2(-0.26496911, -0.41893023), vec2(0.79197514,  0.19090188),
+    vec2(-0.24188840,  0.99706507), vec2(-0.81409955,  0.91437590),
+    vec2(0.19984126,  0.78641367), vec2(0.14383161, -0.14100790)
+);
+float rand(vec2 co) {
+    return fract(sin(dot(co.xy, vec2(12.9898, 78.233))) * 43758.5453);
+}
+void main() {
+    float depth = texture(sampler2D(depthTex, samp), fragUv).r;
+    if (depth >= 1.0) { outOcclusion = 1.0; return; }
+    vec3 origin = view_pos_from_uv_depth(fragUv, depth);
+    vec3 normal = reconstruct_normal(fragUv, depth);
+    float radius = pc.radiusBias.x;
+    float bias = pc.radiusBias.y;
+    float power = pc.radiusBias.z;
+    float intensity = pc.radiusBias.w;
+    float occlusion = 0.0;
+    float sampleScale = radius / -origin.z;
+    float rotAngle = rand(fragUv * pc.screenSize.xy) * 6.28318530718;
+    float sin_r = sin(rotAngle); float cos_r = cos(rotAngle);
+    for (int i = 0; i < 16; ++i) {
+        vec2 offset = poisson[i];
+        vec2 rotated = vec2(offset.x * cos_r - offset.y * sin_r, offset.x * sin_r + offset.y * cos_r);
+        vec2 sample_uv = fragUv + rotated * sampleScale * pc.screenSize.zw;
+        float sample_depth = texture(sampler2D(depthTex, samp), sample_uv).r;
+        vec3 sample_pos = view_pos_from_uv_depth(sample_uv, sample_depth);
+        vec3 diff = sample_pos - origin;
+        float dist = length(diff);
+        vec3 sample_dir = diff / dist;
+        float angle = max(dot(normal, sample_dir), 0.0);
+        float rangeCheck = smoothstep(0.0, 1.0, radius / dist);
+        float do_occlude = (sample_pos.z < (origin.z - bias)) ? 1.0 : 0.0;
+        occlusion += do_occlude * rangeCheck * angle;
+    }
+    occlusion = 1.0 - (occlusion / 16.0) * intensity;
+    occlusion = pow(clamp(occlusion, 0.0, 1.0), power);
+    outOcclusion = occlusion;
+}
+"#;
+
+pub const SSAO_BLUR_FRAGMENT_GLSL: &str = r#"#version 460
+layout(binding = 1) uniform texture2D ssaoTex;
+layout(binding = 2) uniform sampler samp;
+layout(location = 0) in vec2 fragUv;
+layout(location = 0) out float outOcclusion;
+layout(push_constant) uniform Params { vec4 texelSize; } pc;
+void main() {
+    vec2 ts = pc.texelSize.xy;
+    float result = 0.0;
+    result += texture(sampler2D(ssaoTex, samp), fragUv + vec2(-ts.x, -ts.y)).r;
+    result += texture(sampler2D(ssaoTex, samp), fragUv + vec2( ts.x, -ts.y)).r;
+    result += texture(sampler2D(ssaoTex, samp), fragUv + vec2(-ts.x,  ts.y)).r;
+    result += texture(sampler2D(ssaoTex, samp), fragUv + vec2( ts.x,  ts.y)).r;
+    result += texture(sampler2D(ssaoTex, samp), fragUv + vec2( 0.0, -ts.y)).r * 2.0;
+    result += texture(sampler2D(ssaoTex, samp), fragUv + vec2( 0.0,  ts.y)).r * 2.0;
+    result += texture(sampler2D(ssaoTex, samp), fragUv + vec2(-ts.x,  0.0)).r * 2.0;
+    result += texture(sampler2D(ssaoTex, samp), fragUv + vec2( ts.x,  0.0)).r * 2.0;
+    result += texture(sampler2D(ssaoTex, samp), fragUv).r * 4.0;
+    outOcclusion = result / 16.0;
+}
+"#;
+
+pub fn ssao_vertex_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "ssao.vert", vk::ShaderStageFlags::VERTEX)
+    } else {
+        try_override(device, "ssao.vert", SSAO_VERTEX_GLSL, vk::ShaderStageFlags::VERTEX)
+    }
+}
+pub fn ssao_fragment_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "ssao.frag", vk::ShaderStageFlags::FRAGMENT)
+    } else {
+        try_override(device, "ssao.frag", SSAO_FRAGMENT_GLSL, vk::ShaderStageFlags::FRAGMENT)
+    }
+}
+pub fn ssao_blur_fragment_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "ssao_blur.frag", vk::ShaderStageFlags::FRAGMENT)
+    } else {
+        try_override(device, "ssao_blur.frag", SSAO_BLUR_FRAGMENT_GLSL, vk::ShaderStageFlags::FRAGMENT)
+    }
+}
+
+// --- TAA shaders (fullscreen triangle) ---
+pub const TAA_VERTEX_GLSL: &str = r#"#version 460
+layout(location = 0) out vec2 fragUv;
+const vec2 positions[3] = vec2[](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+const vec2 uvs[3] = vec2[](vec2(0.0, 0.0), vec2(2.0, 0.0), vec2(0.0, 2.0));
+void main() {
+    gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+    fragUv = uvs[gl_VertexIndex];
+}
+"#;
+
+pub const TAA_FRAGMENT_GLSL: &str = r#"#version 460
+layout(binding = 1) uniform texture2D currentTex;
+layout(binding = 2) uniform sampler samp;
+layout(binding = 3) uniform texture2D historyTex;
+layout(binding = 4) uniform texture2D depthTex;
+layout(location = 0) in vec2 fragUv;
+layout(location = 0) out vec4 outColor;
+layout(push_constant) uniform TAAParams {
+    mat4 inv_view_proj;
+    mat4 prev_view_proj;
+    vec4 blendAndSize;
+} pc;
+vec3 sample_current(vec2 uv) { return texture(sampler2D(currentTex, samp), uv).rgb; }
+vec3 sample_history(vec2 uv) { return texture(sampler2D(historyTex, samp), uv).rgb; }
+float sample_depth(vec2 uv) { return texture(sampler2D(depthTex, samp), uv).r; }
+vec3 world_pos_from_uv_depth(vec2 uv, float depth) {
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 world = pc.inv_view_proj * clip;
+    return world.xyz / world.w;
+}
+vec2 prev_uv_from_world(vec3 world_pos) {
+    vec4 prev_clip = pc.prev_view_proj * vec4(world_pos, 1.0);
+    vec3 prev_ndc = prev_clip.xyz / prev_clip.w;
+    return prev_ndc.xy * 0.5 + 0.5;
+}
+void main() {
+    vec2 ts = vec2(1.0 / pc.blendAndSize.z, 1.0 / pc.blendAndSize.w);
+    vec3 current = sample_current(fragUv);
+    float depth = sample_depth(fragUv);
+    vec3 world_pos = world_pos_from_uv_depth(fragUv, depth);
+    vec2 prev_uv = prev_uv_from_world(world_pos);
+    float off_screen = float(prev_uv.x < 0.0 || prev_uv.x > 1.0 || prev_uv.y < 0.0 || prev_uv.y > 1.0);
+    vec3 history = sample_history(prev_uv);
+    vec3 min_color = current;
+    vec3 max_color = current;
+    for (int x = -1; x <= 1; ++x) {
+        for (int y = -1; y <= 1; ++y) {
+            vec2 offset = vec2(float(x), float(y)) * ts;
+            vec3 neighbor = sample_current(fragUv + offset);
+            min_color = min(min_color, neighbor);
+            max_color = max(max_color, neighbor);
+        }
+    }
+    vec3 clamped_history = clamp(history, min_color, max_color);
+    float blend = pc.blendAndSize.x;
+    vec2 motion = abs(prev_uv - fragUv);
+    float motion_factor = smoothstep(0.001, 0.01, length(motion));
+    blend = mix(blend, 0.0, motion_factor);
+    blend = mix(blend, 0.0, off_screen);
+    vec3 resolved = mix(current, clamped_history, blend);
+    outColor = vec4(resolved, 1.0);
+}
+"#;
+
+pub fn taa_vertex_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "taa.vert", vk::ShaderStageFlags::VERTEX)
+    } else {
+        try_override(device, "taa.vert", TAA_VERTEX_GLSL, vk::ShaderStageFlags::VERTEX)
+    }
+}
+pub fn taa_fragment_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "taa.frag", vk::ShaderStageFlags::FRAGMENT)
+    } else {
+        try_override(device, "taa.frag", TAA_FRAGMENT_GLSL, vk::ShaderStageFlags::FRAGMENT)
+    }
+}
+
+// --- SSR shaders ---
+pub const SSR_VERTEX_GLSL: &str = r#"#version 460
+layout(location = 0) out vec2 fragUv;
+const vec2 positions[3] = vec2[](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+const vec2 uvs[3] = vec2[](vec2(0.0, 0.0), vec2(2.0, 0.0), vec2(0.0, 2.0));
+void main() {
+    gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+    fragUv = uvs[gl_VertexIndex];
+}
+"#;
+
+pub const SSR_FRAGMENT_GLSL: &str = r#"#version 460
+layout(binding = 1) uniform texture2D uDepthTex;
+layout(binding = 2) uniform sampler uSamp;
+layout(binding = 3) uniform texture2D uColorTex;
+layout(binding = 4) uniform texture2D uNormalTex;
+layout(location = 0) in vec2 fragUv;
+layout(location = 0) out vec4 outColor;
+layout(push_constant) uniform SSRParams {
+    mat4 inv_view_proj;
+    vec4 camPosAndMaxSteps;
+    vec4 screenAndStride;
+} pc;
+float sample_depth(vec2 uv) { return texture(sampler2D(uDepthTex, uSamp), uv).r; }
+vec3 world_from_uv_depth(vec2 uv, float d) {
+    vec4 clip = vec4(uv * 2.0 - 1.0, d, 1.0);
+    vec4 w = pc.inv_view_proj * clip;
+    return w.xyz / w.w;
+}
+vec3 sample_normal(vec2 uv) { return texture(sampler2D(uNormalTex, uSamp), uv).rgb * 2.0 - 1.0; }
+vec3 sample_color(vec2 uv) { return texture(sampler2D(uColorTex, uSamp), uv).rgb; }
+void main() {
+    float depth = sample_depth(fragUv);
+    if (depth >= 0.99999) { outColor = vec4(0.0); return; }
+    vec3 worldPos = world_from_uv_depth(fragUv, depth);
+    vec3 normal = normalize(sample_normal(fragUv));
+    vec3 viewDir = normalize(pc.camPosAndMaxSteps.xyz - worldPos);
+    vec3 reflectDir = reflect(-viewDir, normal);
+    vec3 startPos = worldPos + reflectDir * 0.05;
+    vec3 endPos = startPos + reflectDir * pc.screenAndStride.w;
+    vec4 startClip = vec4(startPos, 1.0) * pc.inv_view_proj; startClip.xyz /= startClip.w;
+    vec4 endClip = vec4(endPos, 1.0) * pc.inv_view_proj; endClip.xyz /= endClip.w;
+    vec2 startUV = startClip.xy * 0.5 + 0.5;
+    vec2 endUV = endClip.xy * 0.5 + 0.5;
+    vec2 delta = endUV - startUV;
+    float len = length(delta * vec2(pc.screenAndStride.x, pc.screenAndStride.y));
+    int steps = clamp(int(len / pc.screenAndStride.z), 4, int(pc.camPosAndMaxSteps.w));
+    vec2 stepUV = delta / float(max(steps, 1));
+    vec2 uv = startUV;
+    float prevDepth = startClip.z;
+    vec3 reflColor = vec3(0.0);
+    float fade = 0.0;
+    for (int i = 0; i < steps; ++i) {
+        uv += stepUV;
+        if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
+        float rayDepth = mix(startClip.z, endClip.z, float(i) / float(steps));
+        float sceneDepth = sample_depth(uv);
+        if (sceneDepth < rayDepth && (prevDepth - sceneDepth) < 0.05) {
+            reflColor = sample_color(uv);
+            fade = 1.0 - float(i) / float(steps);
+            fade *= smoothstep(0.0, 0.1, min(uv.x, uv.y));
+            fade *= smoothstep(1.0, 0.9, max(uv.x, uv.y));
+            break;
+        }
+        prevDepth = rayDepth;
+    }
+    vec3 baseColor = sample_color(fragUv);
+    float reflectivity = fade * 0.5;
+    outColor = vec4(mix(baseColor, reflColor, reflectivity), 1.0);
+}
+"#;
+
+pub fn ssr_vertex_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "ssr.vert", vk::ShaderStageFlags::VERTEX)
+    } else {
+        try_override(device, "ssr.vert", SSR_VERTEX_GLSL, vk::ShaderStageFlags::VERTEX)
+    }
+}
+pub fn ssr_fragment_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "ssr.frag", vk::ShaderStageFlags::FRAGMENT)
+    } else {
+        try_override(device, "ssr.frag", SSR_FRAGMENT_GLSL, vk::ShaderStageFlags::FRAGMENT)
+    }
+}
+
+// --- Volumetric fog shaders ---
+pub const VOLUMETRIC_FOG_VERTEX_GLSL: &str = r#"#version 460
+layout(location = 0) out vec2 fragUv;
+const vec2 positions[3] = vec2[](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+const vec2 uvs[3] = vec2[](vec2(0.0, 0.0), vec2(2.0, 0.0), vec2(0.0, 2.0));
+void main() {
+    gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+    fragUv = uvs[gl_VertexIndex];
+}
+"#;
+
+pub const VOLUMETRIC_FOG_FRAGMENT_GLSL: &str = r#"#version 460
+layout(binding = 1) uniform texture2D uDepthTex;
+layout(binding = 2) uniform sampler uSamp;
+layout(binding = 3) uniform texture2D uColorTex;
+layout(location = 0) in vec2 fragUv;
+layout(location = 0) out vec4 outColor;
+layout(push_constant) uniform FogParams {
+    mat4 inv_view_proj;
+    vec4 camPosAndMaxSteps;
+    vec4 fogAndScattering;
+    vec4 lightDirAndIntensity;
+} pc;
+float hash(vec3 p) {
+    p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+float noise3d(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float n = mix(
+        mix(mix(hash(i), hash(i + vec3(1,0,0)), f.x),
+            mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+        mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
+            mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y),
+        f.z
+    );
+    return n;
+}
+float sample_depth(vec2 uv) { return texture(sampler2D(uDepthTex, uSamp), uv).r; }
+vec3 world_from_uv_depth(vec2 uv, float d) {
+    vec4 clip = vec4(uv * 2.0 - 1.0, d, 1.0);
+    vec4 w = pc.inv_view_proj * clip;
+    return w.xyz / w.w;
+}
+vec3 sample_color(vec2 uv) { return texture(sampler2D(uColorTex, uSamp), uv).rgb; }
+void main() {
+    float depth = sample_depth(fragUv);
+    vec3 worldPos = world_from_uv_depth(fragUv, depth);
+    vec3 camPos = pc.camPosAndMaxSteps.xyz;
+    vec3 rayDir = worldPos - camPos;
+    float rayLen = length(rayDir);
+    rayDir = rayDir / max(rayLen, 0.001);
+    float maxDist = min(rayLen, pc.fogAndScattering.w);
+    int steps = clamp(int(pc.camPosAndMaxSteps.w), 8, 128);
+    float stepSize = maxDist / float(steps);
+    float density = pc.fogAndScattering.x;
+    float scattering = pc.fogAndScattering.y;
+    float heightFalloff = pc.fogAndScattering.z;
+    vec3 lightDir = normalize(pc.lightDirAndIntensity.xyz);
+    float sunIntensity = pc.lightDirAndIntensity.w;
+    vec3 fogColor = vec3(0.6, 0.7, 0.8);
+    vec3 sunColor = vec3(1.0, 0.95, 0.8) * sunIntensity;
+    float transmittance = 1.0;
+    vec3 inScattered = vec3(0.0);
+    for (int i = 0; i < steps; ++i) {
+        float t = (float(i) + 0.5) * stepSize;
+        vec3 pos = camPos + rayDir * t;
+        float heightFactor = exp(-max(pos.y, 0.0) * heightFalloff);
+        float noise = noise3d(pos * 0.5) * 0.5 + 0.5;
+        float localDensity = density * heightFactor * (0.7 + 0.3 * noise);
+        float stepTransmittance = exp(-localDensity * stepSize * scattering);
+        float cosTheta = max(dot(rayDir, lightDir), 0.0);
+        float phase = 0.25 + 0.75 * cosTheta * cosTheta;
+        vec3 stepLight = sunColor * phase * localDensity * stepSize;
+        inScattered += transmittance * stepLight;
+        transmittance *= stepTransmittance;
+    }
+    vec3 sceneColor = sample_color(fragUv);
+    vec3 fogged = sceneColor * transmittance + inScattered * fogColor;
+    outColor = vec4(fogged, 1.0);
+}
+"#;
+
+pub fn volumetric_fog_vertex_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "volumetric_fog.vert", vk::ShaderStageFlags::VERTEX)
+    } else {
+        try_override(device, "volumetric_fog.vert", VOLUMETRIC_FOG_VERTEX_GLSL, vk::ShaderStageFlags::VERTEX)
+    }
+}
+pub fn volumetric_fog_fragment_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "volumetric_fog.frag", vk::ShaderStageFlags::FRAGMENT)
+    } else {
+        try_override(device, "volumetric_fog.frag", VOLUMETRIC_FOG_FRAGMENT_GLSL, vk::ShaderStageFlags::FRAGMENT)
+    }
+}
+
+// --- Skybox shaders ---
+pub const SKYBOX_VERTEX_GLSL: &str = r#"#version 460
+layout(location = 0) out vec2 fragUv;
+const vec2 positions[3] = vec2[](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+const vec2 uvs[3] = vec2[](vec2(0.0, 0.0), vec2(2.0, 0.0), vec2(0.0, 2.0));
+void main() {
+    gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+    fragUv = uvs[gl_VertexIndex];
+}
+"#;
+
+pub const SKYBOX_FRAGMENT_GLSL: &str = r#"#version 460
+layout(binding = 1) uniform texture2D uDepthTex;
+layout(binding = 2) uniform sampler uSamp;
+layout(binding = 3) uniform texture2D uColorTex;
+layout(location = 0) in vec2 fragUv;
+layout(location = 0) out vec4 outColor;
+layout(push_constant) uniform SkyboxParams {
+    mat4 inv_view_proj;
+    vec4 sunDirAndIntensity;
+    vec4 skyParams;
+} pc;
+float sample_depth(vec2 uv) { return texture(sampler2D(uDepthTex, uSamp), uv).r; }
+vec3 world_dir_from_uv(vec2 uv) {
+    vec4 clip = vec4(uv * 2.0 - 1.0, 1.0, 1.0);
+    vec4 w = pc.inv_view_proj * clip;
+    vec3 p = w.xyz / w.w;
+    vec4 camW = pc.inv_view_proj * vec4(0.0, 0.0, -1.0, 1.0);
+    vec3 camPos = camW.xyz / camW.w;
+    return normalize(p - camPos);
+}
+vec3 sample_color(vec2 uv) { return texture(sampler2D(uColorTex, uSamp), uv).rgb; }
+void main() {
+    float depth = sample_depth(fragUv);
+    if (depth < 0.99999) { outColor = vec4(sample_color(fragUv), 1.0); return; }
+    vec3 viewDir = world_dir_from_uv(fragUv);
+    vec3 sunDir = normalize(pc.sunDirAndIntensity.xyz);
+    float sunIntensity = pc.sunDirAndIntensity.w;
+    float rayleigh = pc.skyParams.x;
+    float mie = pc.skyParams.y;
+    float zenithShift = pc.skyParams.z;
+    float exposure = pc.skyParams.w;
+    float cosTheta = viewDir.y + zenithShift;
+    float rayleighPhase = 0.0596831 * (1.0 + cosTheta * cosTheta);
+    float zenithAngle = max(0.0, cosTheta);
+    float zenithDensity = exp(-zenithAngle * 3.0);
+    vec3 skyColor = vec3(0.2, 0.5, 1.0) * rayleighPhase * rayleigh * zenithDensity;
+    vec3 sunColor = vec3(1.0, 0.95, 0.8) * sunIntensity;
+    float cosSunAngle = dot(viewDir, sunDir);
+    float sunDisc = smoothstep(0.999, 0.9999, cosSunAngle);
+    float sunGlow = pow(max(cosSunAngle, 0.0), 256.0) * mie;
+    skyColor += sunColor * (sunDisc * 2.0 + sunGlow * 0.5);
+    float horizonGlow = exp(-abs(viewDir.y) * 8.0) * 0.3;
+    skyColor += vec3(0.8, 0.5, 0.3) * horizonGlow;
+    outColor = vec4(skyColor * exposure, 1.0);
+}
+"#;
+
+pub fn skybox_vertex_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "skybox.vert", vk::ShaderStageFlags::VERTEX)
+    } else {
+        try_override(device, "skybox.vert", SKYBOX_VERTEX_GLSL, vk::ShaderStageFlags::VERTEX)
+    }
+}
+pub fn skybox_fragment_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "skybox.frag", vk::ShaderStageFlags::FRAGMENT)
+    } else {
+        try_override(device, "skybox.frag", SKYBOX_FRAGMENT_GLSL, vk::ShaderStageFlags::FRAGMENT)
+    }
+}
+
+pub fn pbr_instanced_vertex_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "pbr_instanced.vert", vk::ShaderStageFlags::VERTEX)
+    } else {
+        try_override(device, "pbr_instanced.vert", PBR_INSTANCED_VERTEX_GLSL, vk::ShaderStageFlags::VERTEX)
+    }
+}
+pub fn pbr_instanced_fragment_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "pbr_instanced.frag", vk::ShaderStageFlags::FRAGMENT)
+    } else {
+        try_override(device, "pbr_instanced.frag", PBR_INSTANCED_FRAGMENT_GLSL, vk::ShaderStageFlags::FRAGMENT)
+    }
+}
+pub fn gbuffer_instanced_vertex_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "gbuffer_instanced.vert", vk::ShaderStageFlags::VERTEX)
+    } else {
+        try_override(device, "gbuffer_instanced.vert", GBUFFER_INSTANCED_VERTEX_GLSL, vk::ShaderStageFlags::VERTEX)
+    }
+}
+pub fn gbuffer_instanced_fragment_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "gbuffer_instanced.frag", vk::ShaderStageFlags::FRAGMENT)
+    } else {
+        try_override(device, "gbuffer_instanced.frag", GBUFFER_INSTANCED_FRAGMENT_GLSL, vk::ShaderStageFlags::FRAGMENT)
+    }
+}
+pub fn cull_instances_compute_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "cull_instances.comp", vk::ShaderStageFlags::COMPUTE)
+    } else {
+        try_override(device, "cull_instances.comp", CULL_INSTANCES_COMP_GLSL, vk::ShaderStageFlags::COMPUTE)
+    }
+}
+pub fn gen_draw_cmds_compute_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "gen_draw_cmds.comp", vk::ShaderStageFlags::COMPUTE)
+    } else {
+        try_override(device, "gen_draw_cmds.comp", GEN_DRAW_CMDS_COMP_GLSL, vk::ShaderStageFlags::COMPUTE)
+    }
+}
+pub fn pbr_mesh_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "pbr_mesh.mesh", vk::ShaderStageFlags::MESH_NV)
+    } else {
+        try_override(device, "pbr_mesh.mesh", PBR_MESH_GLSL, vk::ShaderStageFlags::MESH_NV)
+    }
+}
+pub fn oit_accumulate_vertex_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "oit_accumulate.vert", vk::ShaderStageFlags::VERTEX)
+    } else {
+        try_override(device, "oit_accumulate.vert", OIT_ACCUMULATE_VERT_GLSL, vk::ShaderStageFlags::VERTEX)
+    }
+}
+pub fn oit_accumulate_fragment_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "oit_accumulate.frag", vk::ShaderStageFlags::FRAGMENT)
+    } else {
+        try_override(device, "oit_accumulate.frag", OIT_ACCUMULATE_FRAG_GLSL, vk::ShaderStageFlags::FRAGMENT)
+    }
+}
+pub fn oit_composite_vertex_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "oit_composite.vert", vk::ShaderStageFlags::VERTEX)
+    } else {
+        try_override(device, "oit_composite.vert", OIT_COMPOSITE_VERT_GLSL, vk::ShaderStageFlags::VERTEX)
+    }
+}
+pub fn oit_composite_fragment_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "oit_composite.frag", vk::ShaderStageFlags::FRAGMENT)
+    } else {
+        try_override(device, "oit_composite.frag", OIT_COMPOSITE_FRAG_GLSL, vk::ShaderStageFlags::FRAGMENT)
     }
 }

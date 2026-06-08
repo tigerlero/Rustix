@@ -1,4 +1,6 @@
+use rustix_core::ecs::EcsWorld;
 use rustix_core::math::Vec3;
+use rustix_physics::{BodyType, Collider, ColliderShape, RigidBody};
 
 /// A navigation mesh triangle.
 #[derive(Debug, Clone)]
@@ -108,6 +110,181 @@ impl NavMesh {
 
         super::path::PathFinder::new(nodes, edges)
     }
+
+    /// Find a path from `start_pos` to `goal_pos` using A* over the
+    /// navmesh triangle graph.
+    ///
+    /// Returns the sequence of triangle indices to traverse, or `None`
+    /// if either point is outside the mesh or no path exists.
+    pub fn find_path_triangles(&self, start_pos: Vec3, goal_pos: Vec3) -> Option<Vec<usize>> {
+        let start_tri = self.find_triangle(start_pos)?;
+        let goal_tri = self.find_triangle(goal_pos)?;
+        let pf = self.to_pathfinder();
+        pf.find_path(start_tri, goal_tri)
+    }
+
+    /// Find a path from `start_pos` to `goal_pos` and return the
+    /// sequence of waypoints (triangle centers) in world space.
+    ///
+    /// This is a higher-level wrapper around `find_path_triangles`
+    /// that returns `Vec<Vec3>` waypoints instead of raw triangle
+    /// indices.
+    pub fn find_path_waypoints(&self, start_pos: Vec3, goal_pos: Vec3) -> Option<Vec<Vec3>> {
+        let indices = self.find_path_triangles(start_pos, goal_pos)?;
+        Some(indices.iter().map(|&i| self.triangles[i].center()).collect())
+    }
+}
+
+/// Explicit source geometry for navmesh generation.
+///
+/// Attach this to an entity alongside a `Transform` to include its
+/// triangle mesh in the navmesh build.
+#[derive(Debug, Clone)]
+pub struct NavMeshSource {
+    pub vertices: Vec<Vec3>,
+    pub indices: Vec<[u32; 3]>,
+}
+
+impl NavMeshSource {
+    pub fn new(vertices: Vec<Vec3>, indices: Vec<[u32; 3]>) -> Self {
+        Self { vertices, indices }
+    }
+
+    pub fn from_box(half_extents: Vec3) -> Self {
+        let hx = half_extents.x;
+        let hy = half_extents.y;
+        let hz = half_extents.z;
+        let verts = vec![
+            Vec3::new(-hx, -hy, -hz),
+            Vec3::new(hx, -hy, -hz),
+            Vec3::new(hx, -hy, hz),
+            Vec3::new(-hx, -hy, hz),
+            Vec3::new(-hx, hy, -hz),
+            Vec3::new(hx, hy, -hz),
+            Vec3::new(hx, hy, hz),
+            Vec3::new(-hx, hy, hz),
+        ];
+        let idxs = vec![
+            // Top face (+Y)
+            [4, 5, 6], [4, 6, 7],
+            // Bottom face (-Y)
+            [0, 2, 1], [0, 3, 2],
+            // Front face (+Z)
+            [2, 3, 7], [2, 7, 6],
+            // Back face (-Z)
+            [0, 1, 5], [0, 5, 4],
+            // Right face (+X)
+            [1, 2, 6], [1, 6, 5],
+            // Left face (-X)
+            [0, 7, 3], [0, 4, 7],
+        ];
+        Self::new(verts, idxs)
+    }
+}
+
+/// Generates a `NavMesh` from static colliders and explicit
+/// `NavMeshSource` geometry.
+#[derive(Debug, Clone)]
+pub struct NavMeshGenerator {
+    max_slope_cos: f32,
+    triangles: Vec<(Vec3, Vec3, Vec3)>,
+}
+
+impl Default for NavMeshGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl NavMeshGenerator {
+    pub fn new() -> Self {
+        Self {
+            max_slope_cos: 0.7071, // 45 degrees
+            triangles: Vec::new(),
+        }
+    }
+
+    /// Set the maximum walkable slope angle in radians.
+    /// Default is 45° (π/4).
+    pub fn max_slope_angle(mut self, radians: f32) -> Self {
+        self.max_slope_cos = radians.cos();
+        self
+    }
+
+    /// Collect walkable triangles from static `Box` colliders.
+    ///
+    /// For each static entity with a `Collider` (Box), `RigidBody`
+    /// (Static), and `Transform`, this generates the top-face triangles
+    /// and adds them if they are within the slope limit.
+    pub fn from_colliders(&mut self, world: &EcsWorld) {
+        use rustix_core::components::Transform;
+
+        for (body, collider, transform) in world.query::<(&RigidBody, &Collider, &Transform)>().iter() {
+            if body.body_type != BodyType::Static {
+                continue;
+            }
+            if let ColliderShape::Box { half_extents } = collider.shape {
+                let matrix = transform.matrix();
+                // Top face of a box: corners at y = +half_extents.y
+                let hy = half_extents.y;
+                let hx = half_extents.x;
+                let hz = half_extents.z;
+                let corners = [
+                    Vec3::new(-hx, hy, -hz),
+                    Vec3::new(hx, hy, -hz),
+                    Vec3::new(hx, hy, hz),
+                    Vec3::new(-hx, hy, hz),
+                ];
+                let world_corners: Vec<Vec3> = corners
+                    .iter()
+                    .map(|&v| {
+                        let p = matrix.transform_point3(v);
+                        p
+                    })
+                    .collect();
+
+                // Two triangles for the top face
+                self.add_triangle_if_walkable(world_corners[0], world_corners[1], world_corners[2]);
+                self.add_triangle_if_walkable(world_corners[0], world_corners[2], world_corners[3]);
+            }
+        }
+    }
+
+    /// Collect triangles from entities with an explicit `NavMeshSource`.
+    pub fn from_sources(&mut self, world: &EcsWorld) {
+        use rustix_core::components::Transform;
+
+        for (source, transform) in world.query::<(&NavMeshSource, &Transform)>().iter() {
+            let matrix = transform.matrix();
+            for idx in &source.indices {
+                let a = matrix.transform_point3(source.vertices[idx[0] as usize]);
+                let b = matrix.transform_point3(source.vertices[idx[1] as usize]);
+                let c = matrix.transform_point3(source.vertices[idx[2] as usize]);
+                self.add_triangle_if_walkable(a, b, c);
+            }
+        }
+    }
+
+    /// Build the final `NavMesh` from all collected walkable triangles.
+    pub fn build(self) -> NavMesh {
+        let mut nav = NavMesh::new();
+        for (a, b, c) in self.triangles {
+            nav.add_triangle(a, b, c);
+        }
+        nav
+    }
+
+    fn add_triangle_if_walkable(&mut self, a: Vec3, b: Vec3, c: Vec3) {
+        let normal = (b - a).cross(c - a);
+        let len = normal.length();
+        if len < 1e-6 {
+            return; // degenerate
+        }
+        let ny = normal.y / len;
+        if ny.abs() >= self.max_slope_cos {
+            self.triangles.push((a, b, c));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -135,5 +312,109 @@ mod tests {
         let pf = nav.to_pathfinder();
         let path = pf.find_path(0, 1);
         assert!(path.is_some());
+    }
+
+    #[test]
+    fn test_query_counts_entities() {
+        use rustix_core::components::Transform;
+        use rustix_physics::{Collider, RigidBody, BodyType, ColliderShape};
+
+        let mut world = EcsWorld::new();
+        world.spawn((
+            RigidBody {
+                body_type: BodyType::Static,
+                ..Default::default()
+            },
+            Collider {
+                shape: ColliderShape::Box { half_extents: Vec3::new(5.0, 0.5, 5.0) },
+                ..Default::default()
+            },
+            Transform {
+                translation: Vec3::new(0.0, 0.0, 0.0),
+                ..Default::default()
+            },
+        ));
+
+        let count = world.query::<(&RigidBody, &Collider, &Transform)>().iter().count();
+        assert_eq!(count, 1, "query should find exactly 1 entity with all 3 components");
+    }
+
+    #[test]
+    fn test_navmesh_generator_from_box_colliders() {
+        use rustix_core::components::Transform;
+        use rustix_physics::{Collider, RigidBody, BodyType, ColliderShape};
+
+        let mut world = EcsWorld::new();
+
+        // Static floor box at y=0
+        let _floor = world.spawn((
+            RigidBody {
+                body_type: BodyType::Static,
+                ..Default::default()
+            },
+            Collider {
+                shape: ColliderShape::Box { half_extents: Vec3::new(5.0, 0.5, 5.0) },
+                ..Default::default()
+            },
+            Transform {
+                translation: Vec3::new(0.0, 0.0, 0.0),
+                ..Default::default()
+            },
+        ));
+
+        // Dynamic box (should be ignored)
+        let _dynamic = world.spawn((
+            RigidBody {
+                body_type: BodyType::Dynamic,
+                ..Default::default()
+            },
+            Collider {
+                shape: ColliderShape::Box { half_extents: Vec3::new(1.0, 1.0, 1.0) },
+                ..Default::default()
+            },
+            Transform {
+                translation: Vec3::new(10.0, 0.0, 0.0),
+                ..Default::default()
+            },
+        ));
+
+        let mut gen = NavMeshGenerator::new();
+        gen.from_colliders(&world);
+        let nav = gen.build();
+
+        // Should have 2 triangles from the static box top face
+        assert_eq!(nav.triangles.len(), 2, "expected 2 triangles from static box top face, got {}", nav.triangles.len());
+    }
+
+    #[test]
+    fn test_navmesh_generator_from_sources() {
+        use rustix_core::components::Transform;
+
+        let mut world = EcsWorld::new();
+
+        let source = NavMeshSource::new(
+            vec![
+                Vec3::new(0.0, 0.0, 0.0),
+                Vec3::new(1.0, 0.0, 0.0),
+                Vec3::new(0.0, 0.0, 1.0),
+            ],
+            vec![[0, 1, 2]],
+        );
+
+        world.spawn((
+            source,
+            Transform {
+                translation: Vec3::new(5.0, 0.0, 0.0),
+                ..Default::default()
+            },
+        ));
+
+        let mut gen = NavMeshGenerator::new();
+        gen.from_sources(&world);
+        let nav = gen.build();
+
+        assert_eq!(nav.triangles.len(), 1);
+        // Should be translated by (5, 0, 0)
+        assert!((nav.triangles[0].vertices[0].x - 5.0).abs() < 0.001);
     }
 }

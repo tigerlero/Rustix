@@ -1,6 +1,8 @@
 #version 460
 layout(binding = 1) uniform texture2D uHdrTex;
 layout(binding = 2) uniform sampler uSamp;
+layout(binding = 3) uniform texture2D uBloomTex;
+layout(binding = 4) uniform texture2D uSsaoTex;
 layout(location = 0) in vec2 fragUv;
 layout(location = 0) out vec4 outColor;
 
@@ -13,6 +15,10 @@ vec3 aces_fitted(vec3 v) {
 }
 void main() {
     vec3 hdr = texture(sampler2D(uHdrTex, uSamp), fragUv).rgb;
+    vec3 bloom = texture(sampler2D(uBloomTex, uSamp), fragUv).rgb;
+    float ssao = texture(sampler2D(uSsaoTex, uSamp), fragUv).r;
+    hdr += bloom;
+    hdr *= ssao;
     vec3 mapped;
     if (TONEMAP_ALGORITHM == 0) {
         mapped = aces_fitted(hdr);

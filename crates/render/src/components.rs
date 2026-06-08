@@ -17,6 +17,19 @@ pub struct Material {
     pub occlusion_strength: f32,
 }
 
+impl Material {
+    /// Build a renderer `Material` from an asset definition.
+    pub fn from_asset(asset: &rustix_asset::material::MaterialAsset) -> Self {
+        Self {
+            base_color: asset.base_color,
+            metallic: asset.metallic,
+            roughness: asset.roughness,
+            normal_scale: asset.normal_scale,
+            occlusion_strength: asset.occlusion_strength,
+        }
+    }
+}
+
 impl Default for Material {
     fn default() -> Self {
         Self {
@@ -39,6 +52,23 @@ pub struct MaterialComponent {
     pub normal: Option<TextureIndex>,
     pub metallic_roughness: Option<TextureIndex>,
     pub material: Material,
+}
+
+impl MaterialComponent {
+    /// Build a `MaterialComponent` from an asset, resolving texture indices externally.
+    pub fn from_asset(
+        asset: &rustix_asset::material::MaterialAsset,
+        albedo: Option<TextureIndex>,
+        normal: Option<TextureIndex>,
+        metallic_roughness: Option<TextureIndex>,
+    ) -> Self {
+        Self {
+            albedo,
+            normal,
+            metallic_roughness,
+            material: Material::from_asset(asset),
+        }
+    }
 }
 
 /// Marks the entity as the active camera.

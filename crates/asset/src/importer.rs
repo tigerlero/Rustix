@@ -42,6 +42,46 @@ impl ImporterRegistry {
     }
 }
 
+/// Type-erased reload function: given bytes and an optional path hint, returns a boxed asset.
+pub type ReloadFn = Box<dyn Fn(&[u8], Option<&str>) -> Result<Box<dyn std::any::Any>, String> + Send + Sync>;
+
+/// Registry of type-erased reload functions keyed by file extension.
+/// Used by the hot-reload system to reimport changed files without knowing their concrete type.
+#[derive(Default)]
+pub struct ReloadRegistry {
+    entries: std::collections::HashMap<String, ReloadFn>,
+}
+
+impl ReloadRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register an importer as a reloadable function for the given extension.
+    pub fn register<I: Importer + 'static>(&mut self, ext: &'static str, importer: I) {
+        let boxed = Box::new(
+            move |bytes: &[u8], hint: Option<&str>| -> Result<Box<dyn std::any::Any>, String> {
+                let import_fut = importer.import(bytes, hint);
+                // Synchronous block_on for hot-reload (acceptable for development)
+                match futures::executor::block_on(import_fut) {
+                    Ok(asset) => Ok(Box::new(asset) as Box<dyn std::any::Any>),
+                    Err(e) => Err(e),
+                }
+            },
+        );
+        self.entries.insert(ext.to_string(), boxed);
+    }
+
+    pub fn find_for_extension(&self, ext: &str) -> Option<&ReloadFn> {
+        self.entries.get(ext)
+    }
+
+    /// Attempt to reload a file given its bytes and extension.
+    pub fn reload(&self, ext: &str, bytes: &[u8], hint: Option<&str>) -> Option<Result<Box<dyn std::any::Any>, String>> {
+        self.find_for_extension(ext).map(|f| f(bytes, hint))
+    }
+}
+
 /// Trait for assets that can be serialized to/from RON or JSON.
 pub trait SerializableAsset: Asset + for<'de> serde::Deserialize<'de> + serde::Serialize {}
 

@@ -8,6 +8,9 @@ pub mod spatial;
 pub use spatial::{AudioListener, AudioSource, calculate_attenuation, hrtf_panning, calculate_horiz_azimuth, process_spatial};
 pub use spatial::{REFERENCE_DISTANCE, SPEED_OF_SOUND, HEAD_RADIUS, MAX_ITD};
 
+pub mod waveform;
+pub use waveform::{Waveform, WaveformBar, generate_waveform, generate_waveform_from_instance, generate_waveform_from_path};
+
 pub mod types;
 pub use types::{SoundId, SoundInstance, SoundPlayer, AudioError};
 

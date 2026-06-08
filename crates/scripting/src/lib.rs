@@ -13,6 +13,33 @@ use rustix_asset::{Asset, Handle};
 use rustix_core::components::Transform;
 use rustix_core::math::{Mat4, Quat, Vec3};
 
+pub mod events;
+pub mod time_api;
+pub mod math_api;
+
+#[cfg(test)]
+pub mod time_api_tests;
+#[cfg(test)]
+pub mod sandbox_tests;
+#[cfg(test)]
+pub mod coroutine_tests;
+#[cfg(test)]
+pub mod lib_tests;
+pub mod hot_reload;
+pub mod component_def;
+pub mod logging;
+pub mod sandbox;
+pub mod coroutine;
+
+pub use events::{ScriptEventBus, EventCallback};
+pub use time_api::ScriptTime;
+pub use math_api::{vec3, lerp, dot, cross, normalize, distance, quat_from_euler};
+pub use hot_reload::HotReloadWatcher;
+pub use component_def::{ComponentRegistry, ScriptComponentDef, ScriptFieldType};
+pub use logging::{script_log_info, script_log_warn, script_log_error, script_log_debug};
+pub use sandbox::{Sandbox, SandboxPolicy};
+pub use coroutine::{CoroutineScheduler, ScriptCoroutine, CutsceneCoroutine, YieldReason, CoroutineState};
+
 /// Unique identifier for a script asset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ScriptId(pub u64);

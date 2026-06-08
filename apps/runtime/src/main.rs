@@ -56,7 +56,7 @@ fn main() {
         Ok(el) => el,
         Err(e) => { eprintln!("Failed to create event loop: {e}"); std::process::exit(1); }
     };
-    let wc = WindowConfig { title: "Rustix Editor".into(), width: 1600, height: 900, fullscreen: false, fullscreen_mode: rustix_platform::FullscreenMode::Windowed, resizable: true, decorations: true, cursor_mode: rustix_platform::window::CursorMode::Normal };
+    let wc = WindowConfig { title: "Rustix Editor".into(), width: 1280, height: 720, fullscreen: false, fullscreen_mode: rustix_platform::FullscreenMode::Windowed, resizable: true, decorations: true, cursor_mode: rustix_platform::window::CursorMode::Normal };
     let mut window = match WindowHandle::new(&el, &wc) {
         Ok(w) => w,
         Err(e) => { eprintln!("Failed to create window: {e}"); std::process::exit(1); }
@@ -215,8 +215,8 @@ fn main() {
                             }
                         }
 
-                        let follow_pos = app.selected_entity.borrow().and_then(|sel| {
-                            let matrix = world_transform(&app.ecs_world, sel);
+                        let follow_pos = app.selected_entities.borrow().first().and_then(|sel| {
+                            let matrix = world_transform(&app.ecs_world, *sel);
                             let (_scale, _rot, pos) = matrix.to_scale_rotation_translation();
                             Some(pos)
                         });
@@ -232,7 +232,10 @@ fn main() {
                             for (entity, pos, rot, scale) in results {
                                 if let Ok(mut t) = app.ecs_world.get::<&mut Transform>(entity) {
                                     if let Some(p) = pos { t.position = p; }
-                                    if let Some(r) = rot { t.rotation = r; }
+                                    if let Some(r) = rot {
+                                        let (x, y, z) = r.to_euler(rustix_core::math::EulerRot::XYZ);
+                                        t.rotation = Vec3::new(x, y, z);
+                                    }
                                     if let Some(s) = scale { t.scale = s; }
                                 }
                             }
@@ -291,6 +294,18 @@ fn main() {
                             &mut app.point_shadow_resources,
                             &mut app.spot_shadow_resources,
                             &mut app.tonemap_pipeline, &mut app.tonemap_desc_set,
+                            &mut app.bloom_extract_pipeline, &mut app.bloom_down_pipeline,
+                            &mut app.bloom_up_pipeline, &mut app.bloom_desc_set,
+                            &mut app.ssao_pipeline, &mut app.ssao_blur_pipeline,
+                            &mut app.ssao_desc_set,
+                            &mut app.taa_pipeline, &mut app.taa_desc_set,
+                            &mut app.ssr_pipeline, &mut app.ssr_desc_set,
+                            &mut app.fog_pipeline, &mut app.fog_desc_set,
+                            &mut app.skybox_pipeline, &mut app.skybox_desc_set,
+                            &mut app.instanced_pipeline, &mut app.instanced_gbuffer_pipeline,
+                            &mut app.mesh_shader_pipeline,
+                            &mut app.oit_accumulate_pipeline, &mut app.oit_composite_pipeline,
+                            &mut app.oit_desc_set,
                         );
 
                         if app.fwd_plus_resources.is_none() {
@@ -332,8 +347,47 @@ fn main() {
                                         "tonemap.vert" | "tonemap.frag" => {
                                             init::reload_tonemap_pipeline(&renderer, &mut app.tonemap_pipeline, &mut app.tonemap_desc_set);
                                         }
+                                        "bloom.vert" | "bloom_extract.frag" => {
+                                            init::reload_bloom_extract_pipeline(&renderer, &mut app.bloom_extract_pipeline, &mut app.bloom_desc_set);
+                                        }
+                                        "bloom_down.frag" => {
+                                            init::reload_bloom_down_pipeline(&renderer, &mut app.bloom_down_pipeline);
+                                        }
+                                        "bloom_up.frag" => {
+                                            init::reload_bloom_up_pipeline(&renderer, &mut app.bloom_up_pipeline);
+                                        }
+                                        "ssao.vert" | "ssao.frag" => {
+                                            init::reload_ssao_pipeline(&renderer, &mut app.ssao_pipeline, &mut app.ssao_desc_set);
+                                        }
+                                        "ssao_blur.frag" => {
+                                            init::reload_ssao_blur_pipeline(&renderer, &mut app.ssao_blur_pipeline);
+                                        }
+                                        "taa.vert" | "taa.frag" => {
+                                            init::reload_taa_pipeline(&renderer, &mut app.taa_pipeline, &mut app.taa_desc_set);
+                                        }
                                         "sprite.vert" | "sprite.frag" => {
                                             init::reload_2d_pipeline(&renderer, &mut app.pipeline_2d, &mut app.desc_set_2d);
+                                        }
+                                        "ssr.vert" | "ssr.frag" => {
+                                            init::reload_ssr_pipeline(&renderer, &mut app.ssr_pipeline, &mut app.ssr_desc_set);
+                                        }
+                                        "volumetric_fog.vert" | "volumetric_fog.frag" => {
+                                            init::reload_fog_pipeline(&renderer, &mut app.fog_pipeline, &mut app.fog_desc_set);
+                                        }
+                                        "skybox.vert" | "skybox.frag" => {
+                                            init::reload_skybox_pipeline(&renderer, &mut app.skybox_pipeline, &mut app.skybox_desc_set);
+                                        }
+                                        "pbr_instanced.vert" | "pbr_instanced.frag" => {
+                                            init::reload_instanced_pipeline(&renderer, &mut app.instanced_pipeline);
+                                        }
+                                        "gbuffer_instanced.vert" | "gbuffer_instanced.frag" => {
+                                            init::reload_instanced_gbuffer_pipeline(&renderer, &mut app.instanced_gbuffer_pipeline);
+                                        }
+                                        "cull_instances.comp" | "gen_draw_cmds.comp" => {
+                                            renderer.compute_pipeline_cache().clear();
+                                        }
+                                        "pbr_mesh.mesh" => {
+                                            init::reload_mesh_shader_pipeline(&renderer, &mut app.mesh_shader_pipeline);
                                         }
                                         "light_cull.comp" => {
                                             // Clear compute pipeline cache so the Forward+ compute pipeline is recreated next frame.
@@ -392,9 +446,9 @@ fn main() {
                                         Transform { position: Vec3::new(0.0, 1.0, 0.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
                                         Name(mesh_name.clone()),
                                         MeshComponent(mesh_name),
-                                        Material { base_color: Vec3::from(result.base_color), roughness: result.roughness, metallic: result.metallic, ao: 1.0, emissive: 0.0 },
+                                        Material { base_color: Vec3::from(result.base_color), alpha: 1.0, roughness: result.roughness, metallic: result.metallic, ao: 1.0, emissive: 0.0 },
                                     ));
-                                    *app.selected_entity.borrow_mut() = Some(e);
+                                    *app.selected_entities.borrow_mut() = vec![e];
                                     app.dirty.set(true);
                                 } else {
                                     tracing::error!("failed to load mesh from {path}");
@@ -441,6 +495,24 @@ fn main() {
                         // Ensure HDR framebuffer and GBuffer match swapchain size.
                         let sw_extent = renderer.swapchain.lock().extent();
                         if app.hdr_fb_size != (sw_extent.width, sw_extent.height) {
+                            if let Some(mut br) = app.bloom_resources.take() {
+                                br.destroy(renderer.device().logical());
+                            }
+                            if let Some(mut sr) = app.ssao_resources.take() {
+                                sr.destroy(renderer.device().logical());
+                            }
+                            if let Some(mut tr) = app.taa_resources.take() {
+                                tr.destroy(renderer.device().logical());
+                            }
+                            if let Some(mut sr) = app.ssr_resources.take() {
+                                sr.destroy(renderer.device().logical());
+                            }
+                            if let Some(mut fr) = app.fog_resources.take() {
+                                fr.destroy(renderer.device().logical());
+                            }
+                            if let Some(mut sb) = app.skybox_resources.take() {
+                                sb.destroy(renderer.device().logical());
+                            }
                             app.hdr_framebuffer = None;
                             app.hdr_fb_size = (sw_extent.width, sw_extent.height);
                             app.gbuffer_resources = None; // Will be recreated below
@@ -451,12 +523,91 @@ fn main() {
                                 Err(e) => tracing::error!("HDR framebuffer creation failed: {e}"),
                             }
                         }
+                        if app.bloom_resources.is_none() {
+                            match crate::render::BloomResources::new(&renderer, sw_extent.width, sw_extent.height) {
+                                Ok(br) => {
+                                    app.bloom_resources = Some(br);
+                                    app.bloom_fb_size = (sw_extent.width, sw_extent.height);
+                                }
+                                Err(e) => tracing::error!("Bloom resources creation failed: {e}"),
+                            }
+                        }
+                        if app.oit_resources.is_none() {
+                            match crate::render::OitResources::new(&renderer, sw_extent.width, sw_extent.height) {
+                                Ok(or) => {
+                                    app.oit_resources = Some(or);
+                                    app.oit_fb_size = (sw_extent.width, sw_extent.height);
+                                }
+                                Err(e) => tracing::error!("OIT resources creation failed: {e}"),
+                            }
+                        }
+                        if app.ssao_resources.is_none() {
+                            match crate::render::SsaoResources::new(&renderer, sw_extent.width, sw_extent.height) {
+                                Ok(sr) => {
+                                    app.ssao_resources = Some(sr);
+                                    app.ssao_fb_size = (sw_extent.width, sw_extent.height);
+                                }
+                                Err(e) => tracing::error!("SSAO resources creation failed: {e}"),
+                            }
+                        }
+                        if app.taa_resources.is_none() {
+                            match crate::render::TaaResources::new(&renderer, sw_extent.width, sw_extent.height) {
+                                Ok(tr) => {
+                                    app.taa_resources = Some(tr);
+                                    app.taa_fb_size = (sw_extent.width, sw_extent.height);
+                                }
+                                Err(e) => tracing::error!("TAA resources creation failed: {e}"),
+                            }
+                        }
+                        if app.ssr_resources.is_none() {
+                            match crate::render::SsrResources::new(&renderer, sw_extent.width, sw_extent.height) {
+                                Ok(sr) => {
+                                    app.ssr_resources = Some(sr);
+                                    app.ssr_fb_size = (sw_extent.width, sw_extent.height);
+                                }
+                                Err(e) => tracing::error!("SSR resources creation failed: {e}"),
+                            }
+                        }
+                        if app.fog_resources.is_none() {
+                            match crate::render::VolumetricFogResources::new(&renderer, sw_extent.width, sw_extent.height) {
+                                Ok(fr) => {
+                                    app.fog_resources = Some(fr);
+                                    app.fog_fb_size = (sw_extent.width, sw_extent.height);
+                                }
+                                Err(e) => tracing::error!("Fog resources creation failed: {e}"),
+                            }
+                        }
+                        if app.skybox_resources.is_none() {
+                            match crate::render::SkyboxResources::new(&renderer, sw_extent.width, sw_extent.height) {
+                                Ok(sb) => {
+                                    app.skybox_resources = Some(sb);
+                                    app.skybox_fb_size = (sw_extent.width, sw_extent.height);
+                                }
+                                Err(e) => tracing::error!("Skybox resources creation failed: {e}"),
+                            }
+                        }
                         if app.gbuffer_resources.is_none() {
                             if let Some(ref depth) = app.scene_depth_buffer {
                                 match crate::render::GBufferResources::new(&renderer, sw_extent, depth) {
                                     Ok(res) => app.gbuffer_resources = Some(res),
                                     Err(e) => tracing::error!("failed to create GBuffer resources: {e}"),
                                 }
+                            }
+                        }
+                        if app.instanced_batcher.is_none() {
+                            match crate::render::InstancedMeshBatcher::new(
+                                renderer.device(), &mut renderer.allocator.lock(), 4096, 256,
+                            ) {
+                                Ok(b) => app.instanced_batcher = Some(b),
+                                Err(e) => tracing::error!("Instanced batcher creation failed: {e}"),
+                            }
+                        }
+                        if app.gpu_culling_resources.is_none() {
+                            match crate::render::GpuCullingResources::new(
+                                &renderer, renderer.device(), 4096, 256,
+                            ) {
+                                Ok(r) => app.gpu_culling_resources = Some(r),
+                                Err(e) => tracing::error!("GPU culling resources creation failed: {e}"),
                             }
                         }
 
@@ -539,7 +690,39 @@ fn main() {
                                     let cam = &viewport_manager.viewports[vp_idx].camera;
                                     let hfb = app.hdr_framebuffer.as_ref().unwrap();
                                     let use_deferred = false; // Toggle: set true for deferred shading
-                                    let (new_layout, snapshot) = if use_deferred && app.gbuffer_resources.is_some() {
+                                    if app.instanced_enabled {
+                                        if let Some(ref mut batcher) = app.instanced_batcher {
+                                            let aspect = hfb.extent.width as f32 / hfb.extent.height as f32;
+                                            let frustum = rustix_core::math::Frustum::from_view_proj(&cam.view_proj(aspect));
+                                            batcher.build(&app.ecs_world, &app.meshes, &frustum);
+                                            if let Some(ref mut cull_res) = app.gpu_culling_resources {
+                                                let mut cull_instances: Vec<crate::render::CullInstance> = Vec::with_capacity(batcher.instance_buffer.capacity);
+                                                let mut batch_infos: Vec<crate::render::BatchInfo> = Vec::with_capacity(batcher.batches.len());
+                                                for (batch_idx, batch) in batcher.batches.iter().enumerate() {
+                                                    if let Some(mesh) = app.meshes.get(&batch.mesh_name) {
+                                                        let start = batch.instance_offset as usize;
+                                                        let end = (batch.instance_offset + batch.instance_count) as usize;
+                                                        for inst in &batcher.cpu_instances[start..end] {
+                                                            let cull = crate::render::CullInstance::from_instance_data(
+                                                                inst, mesh.aabb.min, mesh.aabb.max, batch_idx as u32,
+                                                            );
+                                                            cull_instances.push(cull);
+                                                        }
+                                                        batch_infos.push(crate::render::BatchInfo {
+                                                            mesh_index: batch_idx as u32,
+                                                            instance_offset: batch.instance_offset,
+                                                            instance_count: batch.instance_count,
+                                                            index_count: mesh.index_count,
+                                                        });
+                                                    }
+                                                }
+                                                cull_res.reset_counters(batch_infos.len());
+                                                cull_res.write_input(&cull_instances);
+                                                cull_res.write_batch_info(&batch_infos);
+                                            }
+                                        }
+                                    }
+                                    let (new_layout, snapshot, _view_proj) = if use_deferred && app.gbuffer_resources.is_some() {
                                         render::render_deferred_with_graph(
                                             &renderer, cmd,
                                             app.scene_pipeline.as_ref().unwrap(),
@@ -575,10 +758,156 @@ fn main() {
                                             app.tonemap_desc_set.unwrap(),
                                             egui_r.sampler(),
                                             app.fwd_plus_resources.as_ref(),
+                                            app.bloom_resources.as_ref(),
+                                            app.bloom_extract_pipeline.as_ref(),
+                                            app.bloom_down_pipeline.as_ref(),
+                                            app.bloom_up_pipeline.as_ref(),
+                                            app.bloom_desc_set,
+                                            app.bloom_threshold,
+                                            app.bloom_intensity,
+                                            app.ssao_resources.as_ref(),
+                                            app.ssao_pipeline.as_ref(),
+                                            app.ssao_blur_pipeline.as_ref(),
+                                            app.ssao_desc_set,
+                                            app.ssao_enabled,
+                                            app.ssao_radius,
+                                            app.ssao_bias,
+                                            app.ssao_power,
+                                            app.ssao_intensity,
+                                            app.taa_resources.as_ref(),
+                                            app.taa_pipeline.as_ref(),
+                                            app.taa_desc_set,
+                                            app.taa_enabled,
+                                            app.taa_blend_factor,
+                                            &mut app.prev_view_proj,
+                                            app.ssr_resources.as_ref(),
+                                            app.ssr_pipeline.as_ref(),
+                                            app.ssr_desc_set,
+                                            app.ssr_enabled,
+                                            app.ssr_max_steps,
+                                            app.ssr_stride,
+                                            app.ssr_max_dist,
+                                            app.gbuffer_resources.as_ref(),
+                                            app.fog_resources.as_ref(),
+                                            app.fog_pipeline.as_ref(),
+                                            app.fog_desc_set,
+                                            app.fog_enabled,
+                                            app.fog_density,
+                                            app.fog_scattering,
+                                            app.fog_height_falloff,
+                                            app.fog_max_dist,
+                                            app.fog_max_steps,
+                                            app.fog_sun_intensity,
+                                            app.skybox_resources.as_ref(),
+                                            app.skybox_pipeline.as_ref(),
+                                            app.skybox_desc_set,
+                                            app.skybox_enabled,
+                                            app.skybox_rayleigh,
+                                            app.skybox_mie,
+                                            app.skybox_zenith_shift,
+                                            app.skybox_exposure,
+                                            app.instanced_pipeline.as_ref(),
+                                            app.instanced_batcher.as_ref(),
+                                            app.instanced_enabled,
+                                            app.gpu_culling_resources.as_ref(),
+                                            app.gpu_culling_enabled,
+                                            app.mesh_shader_pipeline.as_ref(),
+                                            app.mesh_shader_enabled,
+                                            app.oit_resources.as_ref(),
+                                            app.oit_enabled,
+                                            app.oit_accumulate_pipeline.as_ref(),
+                                            app.oit_composite_pipeline.as_ref(),
+                                            app.oit_desc_set,
                                         )
                                     };
                                     shadow_layout_opt = new_layout;
                                     app.frame_graph_snapshot = snapshot;
+
+                                    // After TAA, copy resolved output to history for next frame
+                                    if app.taa_enabled && app.taa_resources.is_some() {
+                                        let taa = app.taa_resources.as_ref().unwrap();
+                                        let resolved = taa.resolved_image;
+                                        let history = taa.history_image;
+                                        let extent = taa.extent;
+                                        unsafe {
+                                            let device = renderer.device().logical();
+                                            let resolved_barrier = vk::ImageMemoryBarrier2::default()
+                                                .image(resolved)
+                                                .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                                                .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                                                .src_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                                                .dst_stage_mask(vk::PipelineStageFlags2::COPY)
+                                                .src_access_mask(vk::AccessFlags2::SHADER_READ)
+                                                .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
+                                                .subresource_range(vk::ImageSubresourceRange {
+                                                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                                                    base_mip_level: 0, level_count: 1,
+                                                    base_array_layer: 0, layer_count: 1,
+                                                });
+                                            let history_barrier = vk::ImageMemoryBarrier2::default()
+                                                .image(history)
+                                                .old_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                                                .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                                                .src_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                                                .dst_stage_mask(vk::PipelineStageFlags2::COPY)
+                                                .src_access_mask(vk::AccessFlags2::SHADER_READ)
+                                                .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                                                .subresource_range(vk::ImageSubresourceRange {
+                                                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                                                    base_mip_level: 0, level_count: 1,
+                                                    base_array_layer: 0, layer_count: 1,
+                                                });
+                                            let barriers = [resolved_barrier, history_barrier];
+                                            let dep = vk::DependencyInfo::default().image_memory_barriers(&barriers);
+                                            device.cmd_pipeline_barrier2(cmd, &dep);
+
+                                            let copy = vk::ImageCopy::default()
+                                                .src_subresource(vk::ImageSubresourceLayers {
+                                                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                                                    mip_level: 0,
+                                                    base_array_layer: 0,
+                                                    layer_count: 1,
+                                                })
+                                                .dst_subresource(vk::ImageSubresourceLayers {
+                                                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                                                    mip_level: 0,
+                                                    base_array_layer: 0,
+                                                    layer_count: 1,
+                                                })
+                                                .extent(vk::Extent3D { width: extent.width, height: extent.height, depth: 1 });
+                                            device.cmd_copy_image(cmd, resolved, vk::ImageLayout::TRANSFER_SRC_OPTIMAL, history, vk::ImageLayout::TRANSFER_DST_OPTIMAL, &[copy]);
+
+                                            let resolved_restore = vk::ImageMemoryBarrier2::default()
+                                                .image(resolved)
+                                                .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                                                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                                                .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                                                .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                                                .src_access_mask(vk::AccessFlags2::TRANSFER_READ)
+                                                .dst_access_mask(vk::AccessFlags2::SHADER_READ)
+                                                .subresource_range(vk::ImageSubresourceRange {
+                                                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                                                    base_mip_level: 0, level_count: 1,
+                                                    base_array_layer: 0, layer_count: 1,
+                                                });
+                                            let history_restore = vk::ImageMemoryBarrier2::default()
+                                                .image(history)
+                                                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                                                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                                                .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                                                .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                                                .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                                                .dst_access_mask(vk::AccessFlags2::SHADER_READ)
+                                                .subresource_range(vk::ImageSubresourceRange {
+                                                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                                                    base_mip_level: 0, level_count: 1,
+                                                    base_array_layer: 0, layer_count: 1,
+                                                });
+                                            let restore_barriers = [resolved_restore, history_restore];
+                                            let dep2 = vk::DependencyInfo::default().image_memory_barriers(&restore_barriers);
+                                            device.cmd_pipeline_barrier2(cmd, &dep2);
+                                        }
+                                    }
                                     used_hdr = true;
 
                                     let valid_key = egui::Id::new(format!("viewport_offscreen_valid_{}", vp_idx));
@@ -628,13 +957,12 @@ fn main() {
                                 AppScreen::Editor => {
                                     let proj_name = app.current_project.as_ref().map(|p| p.name.as_str()).unwrap_or("Untitled");
                                     let proj_name_owned = proj_name.to_string();
-                                    ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut app.screen, &input, target, &ww, &wh, &mut fps, &app.open_project, &app.new_project, &proj_name_owned, &mut app.current_project, &mut app.project_dir, &mut app.ecs_world, &*app.selected_entity, &*app.pending_delete, &*app.dirty, &*app.show_confirm, &*app.confirm_target, &*app.show_settings, &*app.renaming, &*app.rename_buffer, &*app.undo_history, &mut app.sprite_editor, &app.pending_mesh_load, &mut app.audio_engine, &mut app.audio_instance, &mut app.waveform_viewer);
+                                    ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut app.screen, &input, target, &ww, &wh, &mut fps, &app.open_project, &app.new_project, &proj_name_owned, &mut app.current_project, &mut app.project_dir, &mut app.ecs_world, &*app.selected_entities, &*app.pending_delete, &*app.dirty, &*app.show_confirm, &*app.confirm_target, &*app.show_settings, &*app.renaming, &*app.rename_buffer, &*app.undo_history, &mut app.sprite_editor, &app.pending_mesh_load, &mut app.audio_engine, &mut app.audio_instance, &mut app.waveform_viewer);
                                 }
                                 AppScreen::PlayTest => {
-                                    // TODO: replace with dedicated play-test UI once mode is fully wired.
                                     let proj_name = app.current_project.as_ref().map(|p| p.name.as_str()).unwrap_or("Untitled");
                                     let proj_name_owned = proj_name.to_string();
-                                    ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut app.screen, &input, target, &ww, &wh, &mut fps, &app.open_project, &app.new_project, &proj_name_owned, &mut app.current_project, &mut app.project_dir, &mut app.ecs_world, &*app.selected_entity, &*app.pending_delete, &*app.dirty, &*app.show_confirm, &*app.confirm_target, &*app.show_settings, &*app.renaming, &*app.rename_buffer, &*app.undo_history, &mut app.sprite_editor, &app.pending_mesh_load, &mut app.audio_engine, &mut app.audio_instance, &mut app.waveform_viewer);
+                                    ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut app.screen, &input, target, &ww, &wh, &mut fps, &app.open_project, &app.new_project, &proj_name_owned, &mut app.current_project, &mut app.project_dir, &mut app.ecs_world, &*app.selected_entities, &*app.pending_delete, &*app.dirty, &*app.show_confirm, &*app.confirm_target, &*app.show_settings, &*app.renaming, &*app.rename_buffer, &*app.undo_history, &mut app.sprite_editor, &app.pending_mesh_load, &mut app.audio_engine, &mut app.audio_instance, &mut app.waveform_viewer);
                                 }
                             }
                             if app.show_frame_graph_overlay {
@@ -642,6 +970,63 @@ fn main() {
                                     ui::show_frame_graph_overlay(ctx, &mut app.show_frame_graph_overlay, snap);
                                 }
                             }
+                            egui::Window::new("Post-Process")
+                                .default_pos([10.0, 100.0])
+                                .default_size([180.0, 120.0])
+                                .show(ctx, |ui| {
+                                    ui.label("Bloom");
+                                    ui.add(egui::Slider::new(&mut app.bloom_threshold, 0.0..=5.0).text("Threshold"));
+                                    ui.add(egui::Slider::new(&mut app.bloom_intensity, 0.0..=2.0).text("Intensity"));
+                                    ui.separator();
+                                    ui.label("SSAO");
+                                    ui.checkbox(&mut app.ssao_enabled, "Enabled");
+                                    ui.add(egui::Slider::new(&mut app.ssao_radius, 0.1..=2.0).text("Radius"));
+                                    ui.add(egui::Slider::new(&mut app.ssao_bias, 0.0..=0.1).text("Bias"));
+                                    ui.add(egui::Slider::new(&mut app.ssao_power, 0.5..=3.0).text("Power"));
+                                    ui.add(egui::Slider::new(&mut app.ssao_intensity, 0.0..=3.0).text("Intensity"));
+                                    ui.separator();
+                                    ui.label("TAA");
+                                    ui.checkbox(&mut app.taa_enabled, "Enabled");
+                                    ui.add(egui::Slider::new(&mut app.taa_blend_factor, 0.0..=0.5).text("Blend"));
+                                    ui.separator();
+                                    ui.label("SSR");
+                                    ui.checkbox(&mut app.ssr_enabled, "Enabled");
+                                    ui.add(egui::Slider::new(&mut app.ssr_max_steps, 8.0..=128.0).text("Steps"));
+                                    ui.add(egui::Slider::new(&mut app.ssr_stride, 1.0..=8.0).text("Stride"));
+                                    ui.add(egui::Slider::new(&mut app.ssr_max_dist, 10.0..=100.0).text("Dist"));
+                                    ui.separator();
+                                    ui.label("Volumetric Fog");
+                                    ui.checkbox(&mut app.fog_enabled, "Enabled");
+                                    ui.add(egui::Slider::new(&mut app.fog_density, 0.0..=0.1).text("Density"));
+                                    ui.add(egui::Slider::new(&mut app.fog_scattering, 0.0..=2.0).text("Scattering"));
+                                    ui.add(egui::Slider::new(&mut app.fog_height_falloff, 0.0..=0.5).text("Height Falloff"));
+                                    ui.add(egui::Slider::new(&mut app.fog_max_dist, 10.0..=200.0).text("Max Dist"));
+                                    ui.add(egui::Slider::new(&mut app.fog_max_steps, 8.0..=128.0).text("Steps"));
+                                    ui.add(egui::Slider::new(&mut app.fog_sun_intensity, 0.0..=2.0).text("Sun Intensity"));
+                                    ui.separator();
+                                    ui.label("Skybox / Atmosphere");
+                                    ui.checkbox(&mut app.skybox_enabled, "Enabled");
+                                    ui.add(egui::Slider::new(&mut app.skybox_rayleigh, 0.0..=5.0).text("Rayleigh"));
+                                    ui.add(egui::Slider::new(&mut app.skybox_mie, 0.0..=2.0).text("Mie"));
+                                    ui.add(egui::Slider::new(&mut app.skybox_zenith_shift, -0.5..=0.5).text("Zenith Shift"));
+                                    ui.add(egui::Slider::new(&mut app.skybox_exposure, 0.1..=3.0).text("Exposure"));
+                                    ui.separator();
+                                    ui.label("Instanced Rendering");
+                                    ui.checkbox(&mut app.instanced_enabled, "Enabled");
+                                    ui.separator();
+                                    ui.label("GPU Culling");
+                                    ui.checkbox(&mut app.gpu_culling_enabled, "Enabled");
+                                    ui.separator();
+                                    ui.label("Mesh Shaders (NV)");
+                                    let mut mesh_supported = renderer.device().mesh_shader_supported();
+                                    ui.add_enabled(mesh_supported, egui::Checkbox::new(&mut app.mesh_shader_enabled, "Enabled"));
+                                    if !mesh_supported {
+                                        ui.label("Extension not available on this GPU");
+                                    }
+                                    ui.separator();
+                                    ui.label("Ordered Independent Transparency (OIT)");
+                                    ui.checkbox(&mut app.oit_enabled, "Enabled");
+                                });
                         });
 
                         if let Some(path) = app.open_project.borrow_mut().take() {
@@ -649,6 +1034,8 @@ fn main() {
                             let info = load_project_file(dir).or_else(|| create_project_file(dir, ProjectType::Dim3));
                             if let Some(ref proj_info) = info {
                                 scene_to_world(&mut app.ecs_world, &proj_info.scene);
+                                app.selected_entities.borrow_mut().clear();
+                                tracing::info!("loaded project with {} entities", app.ecs_world.query::<(&Name,)>().iter().count());
                                 if let Some(ref cam_state) = proj_info.editor_camera {
                                     let cam = viewport_manager.primary_camera_mut();
                                     cam.position = cam_state.position.into();
@@ -659,10 +1046,40 @@ fn main() {
                                     cam.mode = cam_state.mode;
                                     cam.follow_target = cam_state.follow_target;
                                 }
+
+                                // Restore layout
+                                let gen = egui_ctx.data(|d| d.get_temp::<u64>(egui::Id::new("layout_generation")).unwrap_or(0)).wrapping_add(1);
+                                egui_ctx.data_mut(|d| d.insert_temp(egui::Id::new("layout_generation"), gen));
+                                if let Some(ref layout) = proj_info.layout {
+                                    egui_ctx.data_mut(|d| d.insert_temp(egui::Id::new("hierarchy_width"), layout.hierarchy_width));
+                                    egui_ctx.data_mut(|d| d.insert_temp(egui::Id::new("inspector_width"), layout.inspector_width));
+                                    egui_ctx.data_mut(|d| d.insert_temp(egui::Id::new("console_height"), layout.console_height));
+                                    if !layout.viewports.is_empty() {
+                                        let primary = viewport_manager.viewports.remove(0);
+                                        viewport_manager.viewports.clear();
+                                        viewport_manager.viewports.push(primary);
+                                        for (i, vp_layout) in layout.viewports.iter().enumerate().skip(1) {
+                                            if let Some(idx) = viewport_manager.add_viewport() {
+                                                if let Some(vp) = viewport_manager.viewports.get_mut(idx) {
+                                                    vp.name = vp_layout.name.clone();
+                                                    vp.open = vp_layout.open;
+                                                }
+                                                if let Some(pos) = vp_layout.position {
+                                                    egui_ctx.data_mut(|d| d.insert_temp(egui::Id::new(format!("viewport_pos_{}", idx)), egui::pos2(pos[0], pos[1])));
+                                                }
+                                                if let Some(size) = vp_layout.size {
+                                                    egui_ctx.data_mut(|d| d.insert_temp(egui::Id::new(format!("viewport_size_{}", idx)), egui::vec2(size[0], size[1])));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
                                 app.current_project = info;
                                 app.project_dir = Some(path.clone());
                                 add_recent_project(&mut app.recent_projects, path, &app.current_project);
                                 app.screen = AppScreen::Editor;
+                                next_frame_time = Instant::now();
                                 window.request_redraw();
                             }
                         }
@@ -672,11 +1089,12 @@ fn main() {
                             let mut info = create_project_file(dir, ptype);
                             if let Some(ref mut proj) = info {
                                 app.ecs_world.clear();
+                                app.selected_entities.borrow_mut().clear();
                                 app.ecs_world.spawn((
                                     Transform { position: Vec3::ZERO, rotation: Vec3::ZERO, scale: Vec3::ONE },
                                     Name("Cube".into()),
                                     MeshComponent("Cube".into()),
-                                    Material { base_color: Vec3::new(0.7, 0.7, 0.7), roughness: 0.5, metallic: 0.0, ao: 1.0, emissive: 0.0 },
+                                    Material { base_color: Vec3::new(0.7, 0.7, 0.7), alpha: 1.0, roughness: 0.5, metallic: 0.0, ao: 1.0, emissive: 0.0 },
                                 ));
                                 app.ecs_world.spawn((
                                     Transform { position: Vec3::new(5.0, 10.0, 5.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
@@ -688,7 +1106,10 @@ fn main() {
                                 app.current_project = info;
                                 app.project_dir = Some(path.clone());
                                 add_recent_project(&mut app.recent_projects, path, &app.current_project);
+                                let gen = egui_ctx.data(|d| d.get_temp::<u64>(egui::Id::new("layout_generation")).unwrap_or(0)).wrapping_add(1);
+                                egui_ctx.data_mut(|d| d.insert_temp(egui::Id::new("layout_generation"), gen));
                                 app.screen = AppScreen::Editor;
+                                next_frame_time = Instant::now();
                                 window.request_redraw();
                             }
                         }
@@ -730,7 +1151,7 @@ fn main() {
                     window.request_redraw();
                 } else {
                     let now = Instant::now();
-                    let editor_interval = std::time::Duration::from_secs_f32(1.0 / 15.0);
+                    let editor_interval = std::time::Duration::from_secs_f32(1.0 / 60.0);
                     if now >= next_frame_time {
                         next_frame_time = now + editor_interval;
                         window.request_redraw();

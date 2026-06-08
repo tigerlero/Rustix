@@ -9,7 +9,7 @@ use crate::scene::{Transform, Name, MeshComponent, Material};
 use crate::undo::{UndoHistory, EditorAction};
 
 fn default_material() -> Material {
-    Material { base_color: Vec3::new(0.7, 0.7, 0.7), roughness: 0.5, metallic: 0.0, ao: 1.0, emissive: 0.0 }
+    Material { base_color: Vec3::new(0.7, 0.7, 0.7), alpha: 1.0, roughness: 0.5, metallic: 0.0, ao: 1.0, emissive: 0.0 }
 }
 fn default_audio_source() -> AudioSource {
     AudioSource { position: Vec3::ZERO, min_distance: 1.0, max_distance: 100.0, rolloff: 1.0 }
@@ -18,7 +18,7 @@ fn default_audio_source() -> AudioSource {
 pub fn handle_undo_redo(
     ctx: &egui::Context,
     world: &mut EcsWorld,
-    selected_entity: &std::cell::RefCell<Option<hecs::Entity>>,
+    selected_entities: &std::cell::RefCell<Vec<hecs::Entity>>,
     dirty: &std::cell::Cell<bool>,
     undo_history: &std::cell::RefCell<UndoHistory>,
 ) {
@@ -32,13 +32,14 @@ pub fn handle_undo_redo(
             match action {
                 EditorAction::AddEntity { entity, .. } => {
                     let _ = world.despawn(entity);
-                    if *selected_entity.borrow() == Some(entity) {
-                        *selected_entity.borrow_mut() = None;
+                    let mut sel = selected_entities.borrow_mut();
+                    if let Some(pos) = sel.iter().position(|x| *x == entity) {
+                        sel.remove(pos);
                     }
                 }
                 EditorAction::DeleteEntity { snapshot, .. } => {
                     let e = crate::scene::spawn_entity(world, &snapshot);
-                    *selected_entity.borrow_mut() = Some(e);
+                    *selected_entities.borrow_mut() = vec![e];
                     undo_history.borrow_mut().actions[idx] = EditorAction::DeleteEntity { entity: e, snapshot };
                 }
                 EditorAction::RenameEntity { entity, old_name } => {
@@ -119,15 +120,17 @@ pub fn handle_undo_redo(
                 EditorAction::ComponentAdded { entity, old_snapshot, .. } => {
                     let _ = world.despawn(entity);
                     let e = crate::scene::spawn_entity(world, &old_snapshot);
-                    if *selected_entity.borrow() == Some(entity) {
-                        *selected_entity.borrow_mut() = Some(e);
+                    let mut sel = selected_entities.borrow_mut();
+                    if let Some(pos) = sel.iter().position(|x| *x == entity) {
+                        sel[pos] = e;
                     }
                 }
                 EditorAction::ComponentRemoved { entity, old_snapshot, .. } => {
                     let _ = world.despawn(entity);
                     let e = crate::scene::spawn_entity(world, &old_snapshot);
-                    if *selected_entity.borrow() == Some(entity) {
-                        *selected_entity.borrow_mut() = Some(e);
+                    let mut sel = selected_entities.borrow_mut();
+                    if let Some(pos) = sel.iter().position(|x| *x == entity) {
+                        sel[pos] = e;
                     }
                 }
             }
@@ -150,13 +153,14 @@ pub fn handle_undo_redo(
             match action {
                 EditorAction::AddEntity { snapshot, .. } => {
                     let e = crate::scene::spawn_entity(world, &snapshot);
-                    *selected_entity.borrow_mut() = Some(e);
+                    *selected_entities.borrow_mut() = vec![e];
                     undo_history.borrow_mut().actions[idx] = EditorAction::AddEntity { entity: e, snapshot };
                 }
                 EditorAction::DeleteEntity { entity, .. } => {
                     let _ = world.despawn(entity);
-                    if *selected_entity.borrow() == Some(entity) {
-                        *selected_entity.borrow_mut() = None;
+                    let mut sel = selected_entities.borrow_mut();
+                    if let Some(pos) = sel.iter().position(|x| *x == entity) {
+                        sel.remove(pos);
                     }
                 }
                 EditorAction::RenameEntity { entity, old_name } => {

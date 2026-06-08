@@ -16,6 +16,16 @@ thiserror = { workspace = true }
 image = { workspace = true }
 ron = { workspace = true }
 memmap2 = "0.9"
+futures = "0.3"
+
+gltf = { workspace = true }
+bytemuck = { workspace = true }
+ktx2 = { workspace = true }
+ctt = { workspace = true }
+half = { workspace = true }
+meshopt = { workspace = true }
+naga = { version = "23", features = ["spv-out", "glsl-in", "wgsl-in"] }
+symphonia = { workspace = true, features = ["wav", "flac", "vorbis"] }
 
 rustix-core = { path = "../core" }
 

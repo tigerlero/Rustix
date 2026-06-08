@@ -8,81 +8,96 @@ use crate::scene::{Transform, Name, MeshComponent, Material, Parent};
 use crate::undo::{UndoHistory, EditorAction};
 use rustix_physics::{RigidBody, Collider};
 
+use crate::project::DockPosition;
+
 #[allow(clippy::too_many_arguments)]
 pub fn show_hierarchy(
     ctx: &egui::Context,
     world: &mut EcsWorld,
-    selected_entity: &std::cell::RefCell<Option<hecs::Entity>>,
-    pending_delete: &std::cell::RefCell<Option<hecs::Entity>>,
+    selected_entities: &std::cell::RefCell<Vec<hecs::Entity>>,
+    pending_delete: &std::cell::RefCell<Vec<hecs::Entity>>,
     dirty: &std::cell::Cell<bool>,
     renaming: &std::cell::RefCell<Option<hecs::Entity>>,
     rename_buffer: &std::cell::RefCell<String>,
     undo_history: &std::cell::RefCell<UndoHistory>,
+    dock: DockPosition,
 ) {
-    egui::Panel::left("hierarchy").resizable(true).default_size(220.0).show(ctx, |ui| {
+    let gen = ctx.data(|d| d.get_temp::<u64>(egui::Id::new("layout_generation")).unwrap_or(0));
+    let panel_id = egui::Id::new(("hierarchy", gen));
+    let width_key = egui::Id::new("hierarchy_width");
+    let desired_width = ctx.data(|d| d.get_temp::<f32>(width_key)).unwrap_or(220.0);
+    let result = super::dock::show_docked(ctx, "Hierarchy", panel_id, dock, desired_width, |ui| {
         ui.horizontal(|ui| {
             ui.heading("Hierarchy");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("Delete").clicked() {
-                    if let Some(sel) = *selected_entity.borrow() {
-                        *pending_delete.borrow_mut() = Some(sel);
+                    let to_delete: Vec<hecs::Entity> = selected_entities.borrow().iter().filter(|e| world.get::<&Name>(**e).is_ok()).copied().collect();
+                    if !to_delete.is_empty() {
+                        *pending_delete.borrow_mut() = to_delete;
                     }
                 }
                 if ui.button("Copy").clicked() {
-                    if let Some(sel) = *selected_entity.borrow() {
-                        let snapshot = crate::scene::entity_to_scene_entity(world, sel);
-                        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("copied_entity"), snapshot));
+                    let copies: Vec<crate::scene::SceneEntity> = selected_entities.borrow().iter().map(|sel| crate::scene::entity_to_scene_entity(world, *sel)).collect();
+                    if !copies.is_empty() {
+                        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("copied_entities"), copies));
                     }
                 }
                 if ui.button("Paste").clicked() {
-                    if let Some(copied) = ui.ctx().data(|d| d.get_temp::<crate::scene::SceneEntity>(egui::Id::new("copied_entity"))) {
-                        let mut pasted = copied.clone();
-                        pasted.name = format!("{} (Pasted)", pasted.name);
-                        pasted.position[0] += 1.0;
-                        let new_entity = crate::scene::spawn_entity(world, &pasted);
-                        let snapshot = crate::scene::entity_to_scene_entity(world, new_entity);
-                        undo_history.borrow_mut().push(EditorAction::AddEntity { entity: new_entity, snapshot });
-                        *selected_entity.borrow_mut() = Some(new_entity);
+                    if let Some(copied) = ui.ctx().data(|d| d.get_temp::<Vec<crate::scene::SceneEntity>>(egui::Id::new("copied_entities"))) {
+                        let mut new_selection = Vec::new();
+                        for (idx, mut pasted) in copied.iter().cloned().enumerate() {
+                            pasted.name = format!("{} (Pasted)", pasted.name);
+                            pasted.position[0] += 1.0 + idx as f32 * 0.5;
+                            let new_entity = crate::scene::spawn_entity(world, &pasted);
+                            let snapshot = crate::scene::entity_to_scene_entity(world, new_entity);
+                            undo_history.borrow_mut().push(EditorAction::AddEntity { entity: new_entity, snapshot });
+                            new_selection.push(new_entity);
+                        }
+                        *selected_entities.borrow_mut() = new_selection;
                         dirty.set(true);
                     }
                 }
                 if ui.button("Duplicate").clicked() {
-                    let sel = *selected_entity.borrow();
-                    if let Some(sel) = sel {
-                        let name = world.get::<&Name>(sel).ok().map(|n| n.0.clone()).unwrap_or_default();
-                        let transform = world.get::<&Transform>(sel).ok().map(|r| (*r).clone()).unwrap_or_default();
-                        let mesh = world.get::<&MeshComponent>(sel).ok().map(|r| (*r).clone());
-                        let material = world.get::<&Material>(sel).ok().map(|r| (*r).clone());
-                        let dirlight = world.get::<&DirectionalLight>(sel).ok().map(|r| (*r).clone());
-                        let pointlight = world.get::<&PointLight>(sel).ok().map(|r| (*r).clone());
-                        let spotlight = world.get::<&SpotLight>(sel).ok().map(|r| (*r).clone());
-                        let audio = world.get::<&rustix_audio::AudioSource>(sel).ok().map(|r| (*r).clone());
-                        let rigidbody = world.get::<&RigidBody>(sel).ok().map(|r| *r);
-                        let collider = world.get::<&Collider>(sel).ok().map(|r| *r);
-                        let audiolistener = world.get::<&rustix_audio::AudioListener>(sel).ok().map(|r| *r);
-                        let camera = world.get::<&rustix_render::Camera>(sel).ok().map(|r| *r);
+                    let to_dup: Vec<hecs::Entity> = selected_entities.borrow().iter().copied().collect();
+                    if !to_dup.is_empty() {
+                        let mut new_selection = Vec::new();
+                        for (idx, sel) in to_dup.iter().enumerate() {
+                            let name = world.get::<&Name>(*sel).ok().map(|n| n.0.clone()).unwrap_or_default();
+                            let transform = world.get::<&Transform>(*sel).ok().map(|r| (*r).clone()).unwrap_or_default();
+                            let mesh = world.get::<&MeshComponent>(*sel).ok().map(|r| (*r).clone());
+                            let material = world.get::<&Material>(*sel).ok().map(|r| (*r).clone());
+                            let dirlight = world.get::<&DirectionalLight>(*sel).ok().map(|r| (*r).clone());
+                            let pointlight = world.get::<&PointLight>(*sel).ok().map(|r| (*r).clone());
+                            let spotlight = world.get::<&SpotLight>(*sel).ok().map(|r| (*r).clone());
+                            let audio = world.get::<&rustix_audio::AudioSource>(*sel).ok().map(|r| (*r).clone());
+                            let rigidbody = world.get::<&RigidBody>(*sel).ok().map(|r| *r);
+                            let collider = world.get::<&Collider>(*sel).ok().map(|r| *r);
+                            let audiolistener = world.get::<&rustix_audio::AudioListener>(*sel).ok().map(|r| *r);
+                            let camera = world.get::<&rustix_render::Camera>(*sel).ok().map(|r| *r);
 
-                        let mut new_transform = transform;
-                        new_transform.position.x += 1.0;
+                            let mut new_transform = transform;
+                            new_transform.position.x += 1.0 + idx as f32 * 0.5;
 
-                        let mut builder = hecs::EntityBuilder::new();
-                        builder.add(Name(format!("{} Copy", name)));
-                        builder.add(new_transform);
-                        if let Some(m) = mesh { builder.add(m); }
-                        if let Some(m) = material { builder.add(m); }
-                        if let Some(l) = dirlight { builder.add(l); }
-                        if let Some(l) = pointlight { builder.add(l); }
-                        if let Some(l) = spotlight { builder.add(l); }
-                        if let Some(a) = audio { builder.add(a); }
-                        if let Some(rb) = rigidbody { builder.add(rb); }
-                        if let Some(c) = collider { builder.add(c); }
-                        if let Some(al) = audiolistener { builder.add(al); }
-                        if let Some(cam) = camera { builder.add(cam); }
-                        let new_entity = world.spawn(builder.build());
+                            let mut builder = hecs::EntityBuilder::new();
+                            builder.add(Name(format!("{} Copy", name)));
+                            builder.add(new_transform);
+                            if let Some(m) = mesh { builder.add(m); }
+                            if let Some(m) = material { builder.add(m); }
+                            if let Some(l) = dirlight { builder.add(l); }
+                            if let Some(l) = pointlight { builder.add(l); }
+                            if let Some(l) = spotlight { builder.add(l); }
+                            if let Some(a) = audio { builder.add(a); }
+                            if let Some(rb) = rigidbody { builder.add(rb); }
+                            if let Some(c) = collider { builder.add(c); }
+                            if let Some(al) = audiolistener { builder.add(al); }
+                            if let Some(cam) = camera { builder.add(cam); }
+                            let new_entity = world.spawn(builder.build());
 
-                        let snapshot = crate::scene::entity_to_scene_entity(world, new_entity);
-                        undo_history.borrow_mut().push(EditorAction::AddEntity { entity: new_entity, snapshot });
-                        *selected_entity.borrow_mut() = Some(new_entity);
+                            let snapshot = crate::scene::entity_to_scene_entity(world, new_entity);
+                            undo_history.borrow_mut().push(EditorAction::AddEntity { entity: new_entity, snapshot });
+                            new_selection.push(new_entity);
+                        }
+                        *selected_entities.borrow_mut() = new_selection;
                         dirty.set(true);
                     }
                 }
@@ -102,7 +117,7 @@ pub fn show_hierarchy(
         egui::ScrollArea::vertical().show(ui, |ui| {
             let is_renaming = *renaming.borrow();
             let mut finish_rename = None;
-            let sel = *selected_entity.borrow();
+            let sel = selected_entities.borrow().clone();
 
             let mut children: HashMap<hecs::Entity, Vec<hecs::Entity>> = HashMap::new();
             let mut roots: Vec<hecs::Entity> = Vec::new();
@@ -145,18 +160,18 @@ pub fn show_hierarchy(
                 world: &mut EcsWorld,
                 depth: u32,
                 is_renaming: Option<hecs::Entity>,
-                sel: Option<hecs::Entity>,
-                selected_entity: &std::cell::RefCell<Option<hecs::Entity>>,
+                sel: &[hecs::Entity],
+                selected_entities: &std::cell::RefCell<Vec<hecs::Entity>>,
                 renaming: &std::cell::RefCell<Option<hecs::Entity>>,
                 rename_buffer: &std::cell::RefCell<String>,
-                pending_delete: &std::cell::RefCell<Option<hecs::Entity>>,
+                pending_delete: &std::cell::RefCell<Vec<hecs::Entity>>,
                 children: &HashMap<hecs::Entity, Vec<hecs::Entity>>,
                 finish_rename: &mut Option<hecs::Entity>,
                 undo_history: &std::cell::RefCell<UndoHistory>,
                 dirty: &std::cell::Cell<bool>,
             ) {
                 let name = world.get::<&Name>(entity).map(|n| n.0.clone()).unwrap_or_else(|_| "Unnamed".into());
-                let is_selected = sel == Some(entity);
+                let is_selected = sel.contains(&entity);
                 let indent = depth as f32 * 16.0;
 
                 if Some(entity) == is_renaming {
@@ -192,30 +207,39 @@ pub fn show_hierarchy(
                                         .fill(if is_selected { egui::Color32::from_rgb(50, 90, 150) } else { egui::Color32::TRANSPARENT }),
                                 );
                                 if resp.clicked() {
-                                    *selected_entity.borrow_mut() = Some(entity);
+                                    if ui.ctx().input(|i| i.modifiers.ctrl) {
+                                        let mut s = selected_entities.borrow_mut();
+                                        if let Some(pos) = s.iter().position(|x| *x == entity) {
+                                            s.remove(pos);
+                                        } else {
+                                            s.push(entity);
+                                        }
+                                    } else {
+                                        *selected_entities.borrow_mut() = vec![entity];
+                                    }
                                 }
                                 if resp.double_clicked() {
                                     *renaming.borrow_mut() = Some(entity);
                                     *rename_buffer.borrow_mut() = name;
                                 }
                                 if resp.secondary_clicked() {
-                                    *selected_entity.borrow_mut() = Some(entity);
+                                    *selected_entities.borrow_mut() = vec![entity];
                                 }
                                 resp.context_menu(|ui| {
                                     if ui.button("Copy").clicked() {
                                         let snapshot = crate::scene::entity_to_scene_entity(world, entity);
-                                        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("copied_entity"), snapshot));
+                                        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("copied_entity_single"), snapshot));
                                         ui.close();
                                     }
                                     if ui.button("Paste").clicked() {
-                                        if let Some(copied) = ui.ctx().data(|d| d.get_temp::<crate::scene::SceneEntity>(egui::Id::new("copied_entity"))) {
+                                        if let Some(copied) = ui.ctx().data(|d| d.get_temp::<crate::scene::SceneEntity>(egui::Id::new("copied_entity_single"))) {
                                             let mut pasted = copied.clone();
                                             pasted.name = format!("{} (Pasted)", pasted.name);
                                             pasted.position[0] += 1.0;
                                             let new_entity = crate::scene::spawn_entity(world, &pasted);
                                             let snapshot = crate::scene::entity_to_scene_entity(world, new_entity);
                                             undo_history.borrow_mut().push(EditorAction::AddEntity { entity: new_entity, snapshot });
-                                            *selected_entity.borrow_mut() = Some(new_entity);
+                                            *selected_entities.borrow_mut() = vec![new_entity];
                                             dirty.set(true);
                                         }
                                         ui.close();
@@ -254,7 +278,7 @@ pub fn show_hierarchy(
 
                                         let snapshot = crate::scene::entity_to_scene_entity(world, new_entity);
                                         undo_history.borrow_mut().push(EditorAction::AddEntity { entity: new_entity, snapshot });
-                                        *selected_entity.borrow_mut() = Some(new_entity);
+                                        *selected_entities.borrow_mut() = vec![new_entity];
                                         dirty.set(true);
                                         ui.close();
                                     }
@@ -265,14 +289,14 @@ pub fn show_hierarchy(
                                         ui.close();
                                     }
                                     if ui.button("Delete").clicked() {
-                                        *pending_delete.borrow_mut() = Some(entity);
+                                        *pending_delete.borrow_mut() = vec![entity];
                                         ui.close();
                                     }
                                     ui.separator();
-                                    if let Some(target) = sel {
-                                        if target != entity {
+                                    if let Some(target) = sel.first() {
+                                        if *target != entity {
                                             if ui.button("Parent to Selected").clicked() {
-                                                let _ = world.insert(entity, (Parent(Some(target)),));
+                                                let _ = world.insert(entity, (Parent(Some(*target)),));
                                                 ui.close();
                                             }
                                         }
@@ -304,20 +328,20 @@ pub fn show_hierarchy(
 
                 if let Some(kids) = children.get(&entity) {
                     for &child in kids {
-                        render_entity(ui, child, world, depth + 1, is_renaming, sel, selected_entity, renaming, rename_buffer, pending_delete, children, finish_rename, undo_history, dirty);
+                        render_entity(ui, child, world, depth + 1, is_renaming, sel, selected_entities, renaming, rename_buffer, pending_delete, children, finish_rename, undo_history, dirty);
                     }
                 }
             }
 
             if filter_lower.is_empty() {
                 for &root in &roots {
-                    render_entity(ui, root, world, 0, is_renaming, sel, selected_entity, renaming, rename_buffer, pending_delete, &children, &mut finish_rename, undo_history, dirty);
+                    render_entity(ui, root, world, 0, is_renaming, &sel, selected_entities, renaming, rename_buffer, pending_delete, &children, &mut finish_rename, undo_history, dirty);
                 }
             } else {
                 for &entity in &all_entities {
                     let name = world.get::<&Name>(entity).map(|n| n.0.clone()).unwrap_or_else(|_| "Unnamed".into());
                     if name.to_lowercase().contains(&filter_lower) {
-                        render_entity(ui, entity, world, 0, is_renaming, sel, selected_entity, renaming, rename_buffer, pending_delete, &children, &mut finish_rename, undo_history, dirty);
+                        render_entity(ui, entity, world, 0, is_renaming, &sel, selected_entities, renaming, rename_buffer, pending_delete, &children, &mut finish_rename, undo_history, dirty);
                     }
                 }
             }
@@ -338,13 +362,15 @@ pub fn show_hierarchy(
             }
         });
         ctx.data_mut(|d| d.insert_temp(search_id, search_filter));
-        if let Some(entity) = pending_delete.borrow_mut().take() {
+        let to_delete = pending_delete.borrow_mut().drain(..).collect::<Vec<_>>();
+        for entity in to_delete {
             let snapshot = crate::scene::entity_to_scene_entity(world, entity);
             undo_history.borrow_mut().push(EditorAction::DeleteEntity { entity, snapshot });
             let _ = world.despawn(entity);
             dirty.set(true);
-            if *selected_entity.borrow() == Some(entity) {
-                *selected_entity.borrow_mut() = None;
+            let mut sel = selected_entities.borrow_mut();
+            if let Some(pos) = sel.iter().position(|x| *x == entity) {
+                sel.remove(pos);
             }
         }
         ui.add_space(4.0);
@@ -356,7 +382,7 @@ pub fn show_hierarchy(
             ));
             let snapshot = crate::scene::entity_to_scene_entity(world, e);
             undo_history.borrow_mut().push(EditorAction::AddEntity { entity: e, snapshot });
-            *selected_entity.borrow_mut() = Some(e);
+            *selected_entities.borrow_mut() = vec![e];
             dirty.set(true);
         }
         ui.menu_button("Create 3D Object", |ui| {
@@ -366,12 +392,12 @@ pub fn show_hierarchy(
                     Name(format!("{} {}", name, count + 1)),
                     Transform { position: Vec3::new(0.0, 0.5 + count as f32 * 0.5, 0.0), ..Default::default() },
                     MeshComponent(mesh.into()),
-                    Material { base_color: color, roughness: 0.5, metallic: 0.0, ao: 1.0, emissive: 0.0 },
+                    Material { base_color: color, alpha: 1.0, roughness: 0.5, metallic: 0.0, ao: 1.0, emissive: 0.0 },
                 ));
                 tracing::info!("spawned {} entity {:?}", name, e);
                 let snapshot = crate::scene::entity_to_scene_entity(world, e);
                 undo_history.borrow_mut().push(EditorAction::AddEntity { entity: e, snapshot });
-                *selected_entity.borrow_mut() = Some(e);
+                *selected_entities.borrow_mut() = vec![e];
                 dirty.set(true);
             };
             if ui.button("Cube").clicked() {
@@ -405,29 +431,33 @@ pub fn show_hierarchy(
         });
         ui.menu_button("Create Light", |ui| {
             if ui.button("Directional").clicked() {
-                let e = world.spawn((Name("Directional Light".to_string()), Transform::default(), DirectionalLight::default(), MeshComponent("Cube".into()), Material { base_color: Vec3::new(1.0, 0.95, 0.8), roughness: 0.3, metallic: 0.0, ao: 1.0, emissive: 0.0 }));
+                let e = world.spawn((Name("Directional Light".to_string()), Transform::default(), DirectionalLight::default(), MeshComponent("Cube".into()), Material { base_color: Vec3::new(1.0, 0.95, 0.8), alpha: 1.0, roughness: 0.3, metallic: 0.0, ao: 1.0, emissive: 0.0 }));
                 let snapshot = crate::scene::entity_to_scene_entity(world, e);
                 undo_history.borrow_mut().push(EditorAction::AddEntity { entity: e, snapshot });
-                *selected_entity.borrow_mut() = Some(e);
+                *selected_entities.borrow_mut() = vec![e];
                 dirty.set(true);
                 ui.close();
             }
             if ui.button("Point").clicked() {
-                let e = world.spawn((Name("Point Light".to_string()), Transform { position: Vec3::new(0.0, 3.0, 0.0), ..Default::default() }, PointLight::default(), MeshComponent("Cube".into()), Material { base_color: Vec3::new(1.0, 0.9, 0.6), roughness: 0.3, metallic: 0.0, ao: 1.0, emissive: 0.0 }));
+                let e = world.spawn((Name("Point Light".to_string()), Transform { position: Vec3::new(0.0, 3.0, 0.0), ..Default::default() }, PointLight::default(), MeshComponent("Cube".into()), Material { base_color: Vec3::new(1.0, 0.9, 0.6), alpha: 1.0, roughness: 0.3, metallic: 0.0, ao: 1.0, emissive: 0.0 }));
                 let snapshot = crate::scene::entity_to_scene_entity(world, e);
                 undo_history.borrow_mut().push(EditorAction::AddEntity { entity: e, snapshot });
-                *selected_entity.borrow_mut() = Some(e);
+                *selected_entities.borrow_mut() = vec![e];
                 dirty.set(true);
                 ui.close();
             }
             if ui.button("Spot").clicked() {
-                let e = world.spawn((Name("Spot Light".to_string()), Transform { position: Vec3::new(0.0, 3.0, 0.0), ..Default::default() }, SpotLight::default(), MeshComponent("Cube".into()), Material { base_color: Vec3::new(1.0, 0.95, 0.7), roughness: 0.3, metallic: 0.0, ao: 1.0, emissive: 0.0 }));
+                let e = world.spawn((Name("Spot Light".to_string()), Transform { position: Vec3::new(0.0, 3.0, 0.0), ..Default::default() }, SpotLight::default(), MeshComponent("Cube".into()), Material { base_color: Vec3::new(1.0, 0.95, 0.7), alpha: 1.0, roughness: 0.3, metallic: 0.0, ao: 1.0, emissive: 0.0 }));
                 let snapshot = crate::scene::entity_to_scene_entity(world, e);
                 undo_history.borrow_mut().push(EditorAction::AddEntity { entity: e, snapshot });
-                *selected_entity.borrow_mut() = Some(e);
+                *selected_entities.borrow_mut() = vec![e];
                 dirty.set(true);
                 ui.close();
             }
         });
     });
+    if let Some(inner) = result {
+        let actual_width = inner.response.rect.width();
+        ctx.data_mut(|d| d.insert_temp(width_key, actual_width));
+    }
 }

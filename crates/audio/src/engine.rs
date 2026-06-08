@@ -21,6 +21,8 @@ pub struct AudioEngine {
     master_volume: f32,
     playback_available: bool,
     listener: AudioListener,
+    /// Currently playing preview instance (for Asset Browser etc).
+    preview: Option<SoundInstance>,
 }
 
 impl AudioEngine {
@@ -30,18 +32,18 @@ impl AudioEngine {
             match rodio::OutputStream::try_default() {
                 Ok((stream, handle)) => {
                     debug!("audio playback initialized");
-                    return Ok(Self { stream: Some(stream), stream_handle: Some(handle), master_volume: 1.0, playback_available: true, listener: AudioListener::default() });
+                    return Ok(Self { stream: Some(stream), stream_handle: Some(handle), master_volume: 1.0, playback_available: true, listener: AudioListener::default(), preview: None });
                 }
                 Err(e) => {
                     warn!("audio playback unavailable: {e}");
-                    return Ok(Self { stream: None, stream_handle: None, master_volume: 1.0, playback_available: false, listener: AudioListener::default() });
+                    return Ok(Self { stream: None, stream_handle: None, master_volume: 1.0, playback_available: false, listener: AudioListener::default(), preview: None });
                 }
             }
         }
         #[cfg(not(feature = "audio-playback"))]
         {
             debug!("audio engine initialized (playback not enabled)");
-            Ok(Self { master_volume: 1.0, playback_available: false, listener: AudioListener::default() })
+            Ok(Self { master_volume: 1.0, playback_available: false, listener: AudioListener::default(), preview: None })
         }
     }
 
@@ -88,6 +90,58 @@ impl AudioEngine {
 
     pub fn play_sound_file(&self, path: &Path) -> Result<SoundInstance, AudioError> {
         self.play_sound(path, 1.0, false)
+    }
+
+    // ── Asset Browser preview ──
+
+    /// Play a one-shot preview of an audio file, stopping any previous preview.
+    ///
+    /// Used by the Asset Browser (or any editor UI) to audition sounds
+    /// without creating a persistent `SoundInstance` that the caller must track.
+    pub fn preview(&mut self, path: &Path) -> Result<(), AudioError> {
+        self.stop_preview();
+        let instance = self.play_sound(path, 1.0, false)?;
+        self.preview = Some(instance);
+        Ok(())
+    }
+
+    /// Stop the currently playing preview, if any.
+    pub fn stop_preview(&mut self) {
+        if let Some(ref instance) = self.preview {
+            instance.stop();
+        }
+        self.preview = None;
+    }
+
+    /// Whether a preview is currently audible.
+    pub fn is_previewing(&self) -> bool {
+        self.preview.as_ref().map(|p| p.is_playing()).unwrap_or(false)
+    }
+
+    pub fn play_asset(&self, asset: &rustix_asset::audio::AudioAsset, volume: f32, looping: bool) -> Result<SoundInstance, AudioError> {
+        let decoded = asset.samples.clone();
+        let sample_rate = asset.sample_rate;
+        let channels = asset.channels;
+
+        #[cfg(feature = "audio-playback")]
+        if self.playback_available {
+            if let Some(ref handle) = self.stream_handle {
+                let source = rodio::buffer::SamplesBuffer::new(
+                    channels,
+                    sample_rate,
+                    decoded.clone(),
+                );
+                let sink = rodio::Sink::try_new(handle)
+                    .map_err(|e| AudioError::Decode(e.to_string()))?;
+                sink.set_volume(volume * self.master_volume);
+                sink.set_repeat(looping);
+                sink.append(source);
+                sink.play();
+                return Ok(SoundInstance { sink, decoded, sample_rate, channels, effects: parking_lot::Mutex::new(EffectChain::new()) });
+            }
+        }
+
+        Ok(SoundInstance { decoded, sample_rate, channels, effects: parking_lot::Mutex::new(EffectChain::new()) })
     }
 
     pub fn open_stream(&self, path: &Path) -> Result<StreamDecoder, AudioError> {

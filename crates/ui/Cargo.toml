@@ -10,5 +10,8 @@ gpu-allocator = { workspace = true }
 bytemuck = { workspace = true }
 tracing = { workspace = true }
 glam = { workspace = true }
+fontdue = "0.9"
 
 rustix-render = { path = "../render" }
+rustix-asset = { path = "../asset" }
+rustix-core = { path = "../core" }

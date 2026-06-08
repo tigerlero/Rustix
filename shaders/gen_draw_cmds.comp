@@ -1,0 +1,49 @@
+#version 460
+
+struct DrawCommand {
+    uint index_count;
+    uint instance_count;
+    uint first_index;
+    int  vertex_offset;
+    uint first_instance;
+};
+
+struct BatchInfo {
+    uint mesh_index;
+    uint instance_offset;
+    uint instance_count;
+    uint index_count;
+};
+
+layout(binding = 0, std430) readonly buffer CounterBuffer {
+    uint counters[];
+} counter_buffer;
+
+layout(binding = 1, std430) writeonly buffer DrawCommandBuffer {
+    DrawCommand commands[];
+} draw_command_buffer;
+
+layout(binding = 2, std430) readonly buffer BatchInfoBuffer {
+    BatchInfo batches[];
+} batch_info_buffer;
+
+layout(push_constant) uniform PushConstants {
+    uint batch_count;
+    uint _pad[3];
+} pc;
+
+void main() {
+    uint batch_id = gl_GlobalInvocationID.x;
+    if (batch_id >= pc.batch_count) return;
+
+    BatchInfo batch = batch_info_buffer.batches[batch_id];
+    uint visible_count = counter_buffer.counters[batch_id];
+
+    draw_command_buffer.commands[batch_id] = DrawCommand(
+        batch.index_count,
+        visible_count,
+        0,
+        0,
+        batch.instance_offset
+    );
+}

@@ -7,7 +7,9 @@ description = "Rustix engine editor support crate"
 [dependencies]
 tracing = { workspace = true }
 thiserror = { workspace = true }
+glam = { workspace = true }
 
 rustix-core = { path = "../core" }
 rustix-render = { path = "../render" }
 rustix-ui = { path = "../ui" }
+rustix-terrain = { path = "../terrain" }

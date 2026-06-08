@@ -34,7 +34,7 @@ pub fn render_deferred_with_graph(
     sampler: vk::Sampler,
     gbuf: &GBufferResources,
     fwd_plus: Option<&ForwardPlusResources>,
-) -> (Option<vk::ImageLayout>, Option<rustix_render::graph::FrameGraphSnapshot>) {
+) -> (Option<vk::ImageLayout>, Option<rustix_render::graph::FrameGraphSnapshot>, Mat4) {
     use rustix_render::graph::{FrameGraph, ResourceId, PassDesc, PassQueue, TextureDesc, Access};
 
     let sw = renderer.swapchain.lock();
@@ -441,7 +441,7 @@ pub fn render_deferred_with_graph(
         clear_depth: false,
         clear_value: [0.0; 4],
     }, move |_ctx| {
-        renderer.update_tonemap_descriptor_set(tonemap_desc_set, hdr_fb.color_view, sampler);
+        renderer.update_tonemap_descriptor_set(tonemap_desc_set, hdr_fb.color_view, hdr_fb.color_view, hdr_fb.color_view, sampler);
         unsafe {
             let device = renderer.device().logical();
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, tonemap_pipeline.pipeline);
@@ -457,5 +457,5 @@ pub fn render_deferred_with_graph(
     }
     graph.execute(renderer, cmd);
 
-    (shadow_layout_cell2.get(), Some(snapshot))
+    (shadow_layout_cell2.get(), Some(snapshot), view_proj)
 }

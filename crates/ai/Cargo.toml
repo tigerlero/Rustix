@@ -9,3 +9,4 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 
 rustix-core = { path = "../core" }
+rustix-physics = { path = "../physics" }

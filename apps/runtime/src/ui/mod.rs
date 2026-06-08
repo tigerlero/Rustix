@@ -1,5 +1,6 @@
 pub mod startup;
 pub mod editor;
+pub mod dock;
 mod menu_bar;
 mod hierarchy;
 mod inspector;

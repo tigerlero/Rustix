@@ -2,6 +2,7 @@ use std::path::Path;
 
 use rustix_audio::{AudioEngine, SoundInstance};
 use crate::waveform;
+use crate::project::DockPosition;
 
 pub fn show_console(
     ctx: &egui::Context,
@@ -9,8 +10,13 @@ pub fn show_console(
     audio_engine: &mut Option<AudioEngine>,
     audio_instance: &mut Option<SoundInstance>,
     waveform_viewer: &mut waveform::WaveformViewer,
+    dock: DockPosition,
 ) {
-    egui::Panel::bottom("console_tabs").resizable(true).default_size(160.0).show(ctx, |ui| {
+    let gen = ctx.data(|d| d.get_temp::<u64>(egui::Id::new("layout_generation")).unwrap_or(0));
+    let panel_id = egui::Id::new(("console_tabs", gen));
+    let height_key = egui::Id::new("console_height");
+    let desired_height = ctx.data(|d| d.get_temp::<f32>(height_key)).unwrap_or(160.0);
+    let result = super::dock::show_docked(ctx, "Console", panel_id, dock, desired_height, |ui| {
         let tab_id = egui::Id::new("bottom_tab");
         let mut active_tab = ctx.data(|d| d.get_temp::<usize>(tab_id).unwrap_or(0));
 
@@ -158,4 +164,8 @@ pub fn show_console(
             }
         }
     });
+    if let Some(inner) = result {
+        let actual_height = inner.response.rect.height();
+        ctx.data_mut(|d| d.insert_temp(height_key, actual_height));
+    }
 }

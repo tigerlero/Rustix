@@ -73,9 +73,9 @@ impl EditorCamera {
 
     pub fn update(&mut self, input: &InputManager, dt: f32) {
         let k = input.keyboard();
-        let rot_speed = 2.0 * dt;
-        let zoom_speed = 3.0 * dt;
-        let move_speed = 5.0 * dt;
+        let rot_speed = 0.5 * dt;
+        let zoom_speed = 1.0 * dt;
+        let move_speed = 2.0 * dt;
 
         let (dx, dy) = {
             let rd = input.mouse().raw_delta();
@@ -94,13 +94,12 @@ impl EditorCamera {
                     if k.down(KeyCode::Q) { self.pitch = (self.pitch - rot_speed).clamp(-1.4, 1.4); }
                     if k.down(KeyCode::E) { self.pitch = (self.pitch + rot_speed).clamp(-1.4, 1.4); }
                 }
-                self.distance = self.distance.max(0.5);
+                self.distance = self.distance.max(2.0);
 
-                let orbit_active = input.mouse().down(rustix_platform::input::MouseButton::Right)
-                    || (alt_held && input.mouse().down(rustix_platform::input::MouseButton::Left));
+                let orbit_active = input.mouse().down(rustix_platform::input::MouseButton::Right);
                 if orbit_active {
-                    self.yaw += dx * 0.005;
-                    self.pitch = (self.pitch - dy * 0.005).clamp(-1.4, 1.4);
+                    self.yaw += dx * 0.001;
+                    self.pitch = (self.pitch - dy * 0.001).clamp(-1.4, 1.4);
                 }
                 if input.mouse().down(rustix_platform::input::MouseButton::Middle) {
                     self.center += Vec3::new(-dx * 0.01 * self.distance * 0.05, dy * 0.01 * self.distance * 0.05, 0.0);
@@ -124,8 +123,8 @@ impl EditorCamera {
                 }
 
                 if input.mouse().down(rustix_platform::input::MouseButton::Right) {
-                    self.yaw += dx * 0.005;
-                    self.pitch = (self.pitch - dy * 0.005).clamp(-1.4, 1.4);
+                    self.yaw += dx * 0.001;
+                    self.pitch = (self.pitch - dy * 0.001).clamp(-1.4, 1.4);
                 }
             }
         }
