@@ -918,3 +918,27 @@ Legend: `[x]` = implemented, `[ ]` = planned, `[~]` = partial
 | Physics tick | <4ms | Tracy |
 | Network RTT | <50ms local | ping |
 | Network throughput | <1 Mbps per client | Bandwidth tracker |
+
+---
+
+## Large Source Files (>500 lines)
+
+Tracked to identify candidates for refactoring and modularization.
+
+| Lines | Path | Crate / Area |
+|------:|------|--------------|
+| 1853 | `crates/render/src/pipeline.rs` | render — Graphics pipelines |
+| 1383 | `crates/render/src/shader/builtin.rs` | render — Built-in shaders |
+| 1116 | `apps/runtime/src/main.rs` | runtime — Main loop, rendering, UI dispatch |
+| 1072 | `docs/SUBSYSTEMS_REFERENCE.md` | docs — Subsystem reference |
+| 533 | `apps/runtime/src/init/scene.rs` | runtime — Scene/resource initialization |
+| 406 | `apps/runtime/src/init/reload.rs` | runtime — Shader hot-reload helpers |
+| 998 | `docs/ARCHITECTURE.md` | docs — Architecture overview |
+| 920 | `docs/FEATURES.md` | docs — This file |
+| 920 | `crates/render/src/graph.rs` | render — Frame graph |
+| 894 | `apps/runtime/src/render/hdr_graph.rs` | runtime — HDR frame graph |
+| 757 | `apps/runtime/src/ui/inspector.rs` | runtime — Entity inspector UI |
+| 713 | `apps/runtime/src/ui/viewport/primary.rs` | runtime — Primary viewport + gizmo |
+| 682 | `crates/ui/src/lib.rs` | ui — UI renderer / egui integration |
+| 630 | `crates/physics/src/rapier.rs` | physics — Rapier physics world |
+| 546 | `crates/animation/src/lib.rs` | animation — Animation system |

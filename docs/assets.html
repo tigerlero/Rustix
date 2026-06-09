@@ -204,6 +204,69 @@
         footer a { color: var(--text-dim); }
         footer a:hover { color: var(--text-heading); }
 
+        .category {
+            margin-bottom: 64px;
+        }
+        .category-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 24px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        .category-header h2 {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--text-heading);
+        }
+        .category-icon {
+            width: 32px; height: 32px;
+            border-radius: var(--radius-sm);
+            background: var(--bg-elev);
+            border: 1px solid var(--border);
+            display: grid;
+            place-items: center;
+            font-size: 1.1rem;
+        }
+        .asset-card code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            background: var(--bg-elev);
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: var(--accent);
+        }
+        .asset-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .asset-list li {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.9rem;
+        }
+        .asset-list li:last-child { border-bottom: none; }
+        .asset-list .file-name { color: var(--text-heading); font-weight: 500; }
+        .asset-list .file-meta { color: var(--text-dim); font-size: 0.8rem; }
+        .shader-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+        }
+        .shader-chip {
+            background: var(--bg-elev);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 12px 16px;
+            font-size: 0.85rem;
+            color: var(--text);
+        }
+        .shader-chip span { color: var(--text-dim); font-size: 0.75rem; display: block; margin-top: 4px; }
         @media (max-width: 600px) {
             .nav-links { display: none; }
             .hero { padding: 120px 20px 40px; }
@@ -229,52 +292,222 @@
     </nav>
 
     <section class="hero">
-        <h1>Assets</h1>
-        <p>Official logos, icons, and brand assets for Rustix Engine. Free to use under the MIT License.</p>
+        <h1>Engine Assets</h1>
+        <p>Built-in assets, procedural geometry, shaders, audio, and fonts bundled with Rustix Engine.</p>
     </section>
 
     <section class="section">
-        <div class="section-header">
-            <h2>Brand Kit</h2>
+
+        <div class="category">
+            <div class="category-header">
+                <div class="category-icon">&#127918;</div>
+                <h2>3D Models &amp; Meshes</h2>
+            </div>
+            <div class="assets-grid">
+                <div class="asset-card">
+                    <div class="asset-preview" style="display: flex; align-items: center; justify-content: center; font-size: 3rem;">&#129513;</div>
+                    <h3>Procedural Geometry</h3>
+                    <p>Built-in primitives generated at runtime via <code>mesh::procedural</code>. No external files required.</p>
+                    <ul class="asset-list">
+                        <li><span class="file-name">Cube</span><span class="file-meta">12 triangles</span></li>
+                        <li><span class="file-name">UV Sphere</span><span class="file-meta">configurable slices/stacks</span></li>
+                        <li><span class="file-name">Icosphere</span><span class="file-meta">subdivision-based</span></li>
+                        <li><span class="file-name">Torus</span><span class="file-meta">major/minor rings</span></li>
+                        <li><span class="file-name">Plane</span><span class="file-meta">configurable subdivisions</span></li>
+                    </ul>
+                </div>
+                <div class="asset-card">
+                    <div class="asset-preview" style="display: flex; align-items: center; justify-content: center; font-size: 3rem;">&#128230;</div>
+                    <h3>GLTF Import</h3>
+                    <p>Runtime mesh and material import from <code>.glb</code> / <code>.gltf</code> files with texture support.</p>
+                    <ul class="asset-list">
+                        <li><span class="file-name">Meshes</span><span class="file-meta">indexed geometry</span></li>
+                        <li><span class="file-name">Materials</span><span class="file-meta">PBR base color, metallic, roughness</span></li>
+                        <li><span class="file-name">Normals</span><span class="file-meta">per-vertex or per-face</span></li>
+                    </ul>
+                </div>
+                <div class="asset-card">
+                    <div class="asset-preview" style="display: flex; align-items: center; justify-content: center; font-size: 3rem;">&#9968;&#65039;</div>
+                    <h3>Terrain System</h3>
+                    <p>Procedural heightmap terrain with configurable parameters and mesh baking.</p>
+                    <ul class="asset-list">
+                        <li><span class="file-name">Heightmap</span><span class="file-meta">noise-based generation</span></li>
+                        <li><span class="file-name">Terrain mesh</span><span class="file-meta">chunked LOD</span></li>
+                    </ul>
+                </div>
+            </div>
         </div>
-        <div class="assets-grid">
-            <div class="asset-card">
-                <div class="asset-preview">
-                    <img src="rustix-logo.png" alt="Rustix Logo">
+
+        <div class="category">
+            <div class="category-header">
+                <div class="category-icon">&#127912;</div>
+                <h2>2D Sprites &amp; Textures</h2>
+            </div>
+            <div class="assets-grid">
+                <div class="asset-card">
+                    <div class="asset-preview" style="display: flex; align-items: center; justify-content: center; font-size: 3rem;">&#127757;</div>
+                    <h3>Bindless Textures</h3>
+                    <p>GPU-driven texture array with bindless descriptor sets. Albedo, normal, metallic, roughness, AO maps.</p>
+                    <ul class="asset-list">
+                        <li><span class="file-name">Albedo</span><span class="file-meta">RGBA base color</span></li>
+                        <li><span class="file-name">Normal</span><span class="file-meta">tangent-space normals</span></li>
+                        <li><span class="file-name">ORM</span><span class="file-meta">Occlusion / Roughness / Metallic</span></li>
+                    </ul>
                 </div>
-                <h3>Rustix Logo</h3>
-                <p>Primary logo for use in applications, presentations, and documentation.</p>
-                <div class="asset-meta">
-                    <span class="tag">PNG</span>
-                    <a href="rustix-logo.png" download class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.8rem;">Download</a>
+                <div class="asset-card">
+                    <div class="asset-preview" style="display: flex; align-items: center; justify-content: center; font-size: 3rem;">&#128444;&#65039;</div>
+                    <h3>2D Sprite Pipeline</h3>
+                    <p>Orthographic sprite rendering with texture atlases, UV animation, and per-sprite transform.</p>
+                    <ul class="asset-list">
+                        <li><span class="file-name">Sprite batching</span><span class="file-meta">vertex buffer-based</span></li>
+                        <li><span class="file-name">Atlas support</span><span class="file-meta">texture array binding</span></li>
+                    </ul>
+                </div>
+                <div class="asset-card">
+                    <div class="asset-preview" style="display: flex; align-items: center; justify-content: center; font-size: 3rem;">&#127775;</div>
+                    <h3>Shadow Maps</h3>
+                    <p>Dynamic shadow textures generated each frame for directional, point, and spot lights.</p>
+                    <ul class="asset-list">
+                        <li><span class="file-name">CSM</span><span class="file-meta">cascaded shadow maps</span></li>
+                        <li><span class="file-name">Point shadow</span><span class="file-meta">cube depth maps</span></li>
+                        <li><span class="file-name">Spot shadow</span><span class="file-meta">perspective depth</span></li>
+                    </ul>
                 </div>
             </div>
-            <div class="asset-card">
-                <div class="asset-preview">
-                    <img src="rustix-logo.png" alt="Rustix Icon" style="border-radius: 50%;">
-                </div>
-                <h3>App Icon</h3>
-                <p>Square/circular crop suitable for application launchers and taskbar icons.</p>
-                <div class="asset-meta">
-                    <span class="tag">PNG</span>
-                    <a href="rustix-logo.png" download class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.8rem;">Download</a>
-                </div>
+        </div>
+
+        <div class="category">
+            <div class="category-header">
+                <div class="category-icon">&#127926;</div>
+                <h2>Audio</h2>
             </div>
-            <div class="asset-card">
-                <div class="asset-preview" style="place-items: start; padding: 16px;">
-                    <div style="display: flex; flex-direction: column; gap: 12px; align-items: center; width: 100%;">
-                        <div style="width: 64px; height: 64px; background: var(--accent); border-radius: 12px; display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 1.4rem;">R</div>
-                        <div style="width: 64px; height: 64px; background: var(--bg); border: 2px solid var(--accent); border-radius: 12px; display: grid; place-items: center; color: var(--accent); font-weight: 800; font-size: 1.4rem;">R</div>
+            <div class="assets-grid">
+                <div class="asset-card">
+                    <div class="asset-preview" style="display: flex; align-items: center; justify-content: center; font-size: 3rem;">&#128266;</div>
+                    <h3>Sound Effects</h3>
+                    <p>WAV sound effects bundled in <code>assets/sounds/</code>. Loaded at runtime for UI and gameplay feedback.</p>
+                    <ul class="asset-list">
+                        <li><span class="file-name">beep.wav</span><span class="file-meta">13 KB</span></li>
+                        <li><span class="file-name">click.wav</span><span class="file-meta">4 KB</span></li>
+                        <li><span class="file-name">thump.wav</span><span class="file-meta">17 KB</span></li>
+                        <li><span class="file-name">whoosh.wav</span><span class="file-meta">26 KB</span></li>
+                    </ul>
+                    <div class="asset-meta" style="margin-top: 12px;">
+                        <span class="tag">WAV</span>
+                        <a href="https://github.com/tigerlero/Rustix/tree/main/assets/sounds" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.8rem;">Browse</a>
                     </div>
                 </div>
-                <h3>Color Reference</h3>
-                <p>Primary accent color and palette used across the engine and website.</p>
-                <div class="asset-meta">
-                    <span class="tag">HEX #E67E22</span>
-                    <span class="tag">RGB 230,126,34</span>
+            </div>
+        </div>
+
+        <div class="category">
+            <div class="category-header">
+                <div class="category-icon">&#128421;&#65039;</div>
+                <h2>Shaders</h2>
+            </div>
+            <div class="shader-grid">
+                <div class="shader-chip">
+                    <strong>PBR Forward</strong>
+                    <span>pbr.vert / pbr.frag</span>
+                </div>
+                <div class="shader-chip">
+                    <strong>Shadow Depth</strong>
+                    <span>shadow.vert</span>
+                </div>
+                <div class="shader-chip">
+                    <strong>Instanced PBR</strong>
+                    <span>pbr_instanced.vert / .frag</span>
+                </div>
+                <div class="shader-chip">
+                    <strong>G-Buffer</strong>
+                    <span>gbuffer_instanced.vert / .frag</span>
+                </div>
+                <div class="shader-chip">
+                    <strong>Deferred Lighting</strong>
+                    <span>deferred.vert / .frag</span>
+                </div>
+                <div class="shader-chip">
+                    <strong>Mesh Shader</strong>
+                    <span>pbr_mesh.mesh</span>
+                </div>
+                <div class="shader-chip">
+                    <strong>Tone Mapping</strong>
+                    <span>tonemap.vert / .frag</span>
+                </div>
+                <div class="shader-chip">
+                    <strong>Bloom</strong>
+                    <span>bloom_*.frag (extract/down/up)</span>
+                </div>
+                <div class="shader-chip">
+                    <strong>SSAO</strong>
+                    <span>ssao.vert / ssao.frag / ssao_blur.frag</span>
+                </div>
+                <div class="shader-chip">
+                    <strong>TAA</strong>
+                    <span>taa.vert / taa.frag</span>
+                </div>
+                <div class="shader-chip">
+                    <strong>SSR</strong>
+                    <span>ssr.vert / ssr.frag</span>
+                </div>
+                <div class="shader-chip">
+                    <strong>Volumetric Fog</strong>
+                    <span>volumetric_fog.vert / .frag</span>
+                </div>
+                <div class="shader-chip">
+                    <strong>Skybox</strong>
+                    <span>skybox.vert / skybox.frag</span>
+                </div>
+                <div class="shader-chip">
+                    <strong>OIT Accumulate</strong>
+                    <span>oit_accumulate.vert / .frag</span>
+                </div>
+                <div class="shader-chip">
+                    <strong>OIT Composite</strong>
+                    <span>oit_composite.vert / .frag</span>
+                </div>
+                <div class="shader-chip">
+                    <strong>2D Sprite</strong>
+                    <span>sprite.vert / sprite.frag</span>
+                </div>
+                <div class="shader-chip">
+                    <strong>GPU Cull</strong>
+                    <span>cull_instances.comp</span>
+                </div>
+                <div class="shader-chip">
+                    <strong>Draw Cmd Gen</strong>
+                    <span>gen_draw_cmds.comp</span>
+                </div>
+            </div>
+            <p style="color: var(--text-dim); font-size: 0.85rem; margin-top: 16px;">
+                All shaders are written in GLSL 460, compiled to SPIR-V at runtime via <strong>naga</strong>.
+                Debug builds support hot-reload from disk overrides.
+            </p>
+        </div>
+
+        <div class="category">
+            <div class="category-header">
+                <div class="category-icon">&#9997;&#65039;</div>
+                <h2>Fonts</h2>
+            </div>
+            <div class="assets-grid">
+                <div class="asset-card">
+                    <div class="asset-preview" style="display: flex; align-items: center; justify-content: center; font-size: 3rem;">&#128172;</div>
+                    <h3>Noto Sans</h3>
+                    <p>UI and editor text rendering. Covers Latin, Greek, Cyrillic, and extended Latin scripts.</p>
+                    <ul class="asset-list">
+                        <li><span class="file-name">NotoSans-Regular.ttf</span><span class="file-meta">513 KB</span></li>
+                        <li><span class="file-name">NotoSansMono-Regular.ttf</span><span class="file-meta">511 KB</span></li>
+                        <li><span class="file-name">NotoEmoji-Regular.ttf</span><span class="file-meta">657 KB</span></li>
+                    </ul>
+                    <div class="asset-meta" style="margin-top: 12px;">
+                        <span class="tag">TTF</span>
+                        <a href="https://github.com/tigerlero/Rustix/tree/main/assets/fonts" target="_blank" class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.8rem;">Browse</a>
+                    </div>
                 </div>
             </div>
         </div>
+
     </section>
 
     <footer>
