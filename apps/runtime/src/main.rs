@@ -3,9 +3,12 @@ use std::time::Instant;
 
 mod app_state;
 mod camera;
+mod combat;
+mod enemy;
 mod fonts;
 mod gltf_loader;
 mod init;
+mod player;
 mod project;
 mod render;
 mod scene;
@@ -166,6 +169,37 @@ fn main() {
                             input.push_event(ev);
                         }
                         input.poll();
+
+                        // Update player controllers (Tab cycles, WASD moves active player)
+                        {
+                            let cam = viewport_manager.primary_camera_mut();
+                            let mut damage_events: Vec<combat::DamageEvent> = Vec::new();
+                            player::update_players(
+                                &mut app.ecs_world,
+                                &mut app.player_manager,
+                                cam,
+                                &input,
+                                dt,
+                                &mut damage_events,
+                            );
+
+                            // Enemy AI
+                            enemy::update_enemies(&mut app.ecs_world, dt, &mut damage_events);
+
+                            // Tick cooldowns, resolve queued damage, cleanup dead
+                            combat::tick_cooldowns(&mut app.ecs_world, dt);
+                            combat::resolve_damage(&mut app.ecs_world, &damage_events);
+                            let dead = combat::cleanup_dead(&mut app.ecs_world);
+                            if !dead.is_empty() {
+                                // Also remove from player manager if a player died
+                                app.player_manager.players.retain(|p| !dead.contains(p));
+                            }
+                            // When a player is active, camera follows it and relinquishes WASD
+                            let has_active = app.player_manager.active_entity().is_some();
+                            cam.controlling_player = has_active;
+                            cam.follow_target = has_active || !app.selected_entities.borrow().is_empty();
+                        }
+
                         viewport_manager.primary_camera_mut().update(&input, dt);
 
                         // Input recorder controls
@@ -209,11 +243,15 @@ fn main() {
                             }
                         }
 
-                        let follow_pos = app.selected_entities.borrow().first().and_then(|sel| {
-                            let matrix = world_transform(&app.ecs_world, *sel);
-                            let (_scale, _rot, pos) = matrix.to_scale_rotation_translation();
+                        let follow_pos = if let Some(pos) = player::active_player_position(&app.ecs_world, &app.player_manager) {
                             Some(pos)
-                        });
+                        } else {
+                            app.selected_entities.borrow().first().and_then(|sel| {
+                                let matrix = world_transform(&app.ecs_world, *sel);
+                                let (_scale, _rot, pos) = matrix.to_scale_rotation_translation();
+                                Some(pos)
+                            })
+                        };
                         viewport_manager.primary_camera_mut().follow(follow_pos);
 
                         // Update animations

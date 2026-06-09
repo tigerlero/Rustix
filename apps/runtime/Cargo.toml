@@ -30,6 +30,7 @@ rfd = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 dirs = "6"
+image = { workspace = true }
 open = "5"
 
 [package.metadata.deb]

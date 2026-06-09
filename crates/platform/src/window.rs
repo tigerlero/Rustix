@@ -88,7 +88,7 @@ impl WindowHandle {
             "creating window"
         );
 
-        let attrs = WindowAttributes::default()
+        let mut attrs = WindowAttributes::default()
             .with_title(config.title.clone())
             .with_inner_size(Size::Logical(LogicalSize::new(
                 f64::from(config.width),
@@ -101,6 +101,15 @@ impl WindowHandle {
             } else {
                 WindowButtons::empty()
             });
+
+        // Set window icon from embedded logo.
+        if let Ok(logo_img) = image::load_from_memory(include_bytes!("../../../docs/rustix-logo.png")) {
+            let rgba = logo_img.to_rgba8();
+            let (w, h) = rgba.dimensions();
+            if let Ok(icon) = winit::window::Icon::from_rgba(rgba.into_raw(), w, h) {
+                attrs = attrs.with_window_icon(Some(icon));
+            }
+        }
 
         #[allow(deprecated)]
         let inner = event_loop

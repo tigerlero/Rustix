@@ -14,6 +14,9 @@ use rustix_asset::mmap::MappedFile;
 use crate::project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo};
 use crate::scene::{Transform, Name, MeshComponent, Material};
 use crate::undo::UndoHistory;
+use crate::player::{PlayerManager, spawn_player};
+use crate::enemy::{spawn_enemy, spawn_enemy_with_skill, EnemyAI};
+use crate::combat::{CombatStats, Skill};
 
 #[allow(dead_code)]
 pub struct AppState {
@@ -25,6 +28,7 @@ pub struct AppState {
     pub meshes: HashMap<String, Mesh>,
     pub animation_clips: HashMap<String, AnimationClip>,
     pub physics_world: PhysicsWorld,
+    pub player_manager: PlayerManager,
 
     pub scene_pipeline: Option<rustix_render::pipeline::GraphicsPipeline>,
     pub scene_descriptor_pool: Option<vk::DescriptorPool>,
@@ -176,6 +180,59 @@ impl AppState {
         }
         tracing::info!("startup world has {} named entities", ecs_world.query::<&Name>().iter().count());
 
+        let mut player_manager = PlayerManager::new();
+        // Spawn 3 default player capsules spaced apart.
+        for i in 0..3 {
+            let pos = Vec3::new((i as f32 - 1.0) * 3.0, 2.0, 0.0);
+            let entity = spawn_player(&mut ecs_world, pos, i, "Capsule");
+            player_manager.players.push(entity);
+            tracing::info!("spawned player {} at {:?}", i + 1, pos);
+        }
+
+        // Spawn default enemies
+        spawn_enemy(
+            &mut ecs_world,
+            Vec3::new(8.0, 2.0, 5.0),
+            "Grunt",
+            "Capsule",
+            Vec3::new(0.9, 0.2, 0.2),
+            EnemyAI { can_follow: true, can_attack: true, follow_range: 20.0, move_speed: 2.5, stop_distance: 1.2 },
+            40.0,  // HP
+            8.0,   // damage
+            1.8,   // attack range
+            1.2,   // cooldown
+        );
+        spawn_enemy(
+            &mut ecs_world,
+            Vec3::new(-8.0, 2.0, 5.0),
+            "Ranger",
+            "Capsule",
+            Vec3::new(0.2, 0.7, 0.2),
+            EnemyAI { can_follow: true, can_attack: true, follow_range: 25.0, move_speed: 3.0, stop_distance: 4.0 },
+            30.0,  // HP
+            5.0,   // damage
+            6.0,   // attack range
+            1.5,   // cooldown
+        );
+        spawn_enemy_with_skill(
+            &mut ecs_world,
+            Vec3::new(0.0, 2.0, -10.0),
+            "Boss",
+            "Capsule",
+            Vec3::new(0.8, 0.1, 0.8),
+            EnemyAI { can_follow: true, can_attack: true, follow_range: 30.0, move_speed: 2.0, stop_distance: 2.0 },
+            120.0, // HP
+            CombatStats { attack_damage: 12.0, attack_range: 2.5, attack_cooldown: 1.0, current_cooldown: 0.0 },
+            Skill {
+                name: "Fireball".into(),
+                damage: 25.0,
+                range: 12.0,
+                cooldown: 5.0,
+                current_cooldown: 0.0,
+            },
+        );
+        tracing::info!("spawned 3 default enemies");
+
         Self {
             screen: AppScreen::Startup,
             recent_projects: crate::project::load_recent_projects(),
@@ -185,6 +242,7 @@ impl AppState {
             meshes: HashMap::new(),
             animation_clips: HashMap::new(),
             physics_world: PhysicsWorld::default(),
+            player_manager,
 
             scene_pipeline: None,
             scene_descriptor_pool: None,

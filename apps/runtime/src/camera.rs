@@ -16,6 +16,8 @@ pub struct EditorCamera {
     pub distance: f32,
     pub mode: CameraMode,
     pub follow_target: bool,
+    /// When true, WASD input drives the active player instead of the camera.
+    pub controlling_player: bool,
 }
 
 impl EditorCamera {
@@ -28,6 +30,7 @@ impl EditorCamera {
             distance: 8.0,
             mode: CameraMode::Orbit,
             follow_target: false,
+            controlling_player: false,
         }
     }
 
@@ -64,9 +67,19 @@ impl EditorCamera {
     pub fn follow(&mut self, target: Option<Vec3>) {
         if !self.follow_target { return; }
         if let Some(pos) = target {
-            self.center = pos;
-            if self.mode == CameraMode::FirstPerson {
+            if self.controlling_player {
+                // When controlling a player, camera sits at eye level and looks around it.
                 self.position = pos + Vec3::new(0.0, 1.6, 0.0);
+                self.center = self.position + Vec3::new(
+                    self.pitch.cos() * self.yaw.sin(),
+                    self.pitch.sin(),
+                    self.pitch.cos() * self.yaw.cos(),
+                );
+            } else {
+                self.center = pos;
+                if self.mode == CameraMode::FirstPerson {
+                    self.position = pos + Vec3::new(0.0, 1.6, 0.0);
+                }
             }
         }
     }
@@ -116,7 +129,7 @@ impl EditorCamera {
                 ).normalize();
                 let right = Vec3::new(forward.z, 0.0, -forward.x).normalize();
 
-                if shift_held {
+                if !self.controlling_player && shift_held {
                     if k.down(KeyCode::W) { self.position += forward * move_speed; }
                     if k.down(KeyCode::S) { self.position -= forward * move_speed; }
                     if k.down(KeyCode::A) { self.position -= right * move_speed; }
@@ -130,9 +143,11 @@ impl EditorCamera {
                     self.pitch = (self.pitch - dy * 0.005).clamp(-1.4, 1.4);
                 }
 
-                let scroll = input.mouse().scroll();
-                if scroll.1 != 0.0 {
-                    self.position += forward * scroll.1 * move_speed * 2.0;
+                if !self.controlling_player {
+                    let scroll = input.mouse().scroll();
+                    if scroll.1 != 0.0 {
+                        self.position += forward * scroll.1 * move_speed * 2.0;
+                    }
                 }
             }
         }
