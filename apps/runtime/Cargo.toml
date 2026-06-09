@@ -30,6 +30,7 @@ rfd = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 dirs = "6"
+open = "5"
 
 [package.metadata.deb]
 name = "rustix-engine"

@@ -66,13 +66,9 @@
             gap: 10px;
         }
         .logo-icon {
-            width: 32px; height: 32px;
-            background: var(--accent);
+            width: 36px; height: 36px;
             border-radius: var(--radius-sm);
-            display: grid;
-            place-items: center;
-            color: #fff;
-            font-size: 0.9rem;
+            object-fit: contain;
         }
         .nav-links {
             display: flex;
@@ -387,11 +383,12 @@
     <nav>
         <div class="nav-inner">
             <div class="logo">
-                <div class="logo-icon">R</div>
+                <img src="rustix-logo.png" alt="Rustix" class="logo-icon">
                 Rustix
             </div>
             <div class="nav-links">
                 <a href="#features">Features</a>
+                <a href="assets.html">Assets</a>
                 <a href="#try">Try It</a>
                 <a href="#contribute">Contribute</a>
                 <a href="https://github.com/tigerlero/Rustix" target="_blank" class="btn btn-primary">

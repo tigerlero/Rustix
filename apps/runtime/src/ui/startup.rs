@@ -162,6 +162,19 @@ let open_btn = egui::Button::new(
                             show_settings.set(!show_settings.get());
                         }
 
+                        ui.add_space(8.0);
+
+                        let website_btn = egui::Button::new(
+                            egui::RichText::new("Website").size(14.0).color(text_primary)
+                        )
+                        .min_size(btn_size)
+                        .fill(surface)
+                        .stroke(egui::Stroke::new(1.0, border))
+                        .corner_radius(egui::CornerRadius::same(6));
+                        if ui.add(website_btn).clicked() {
+                            let _ = open::that("https://tigerlero.github.io/Rustix/");
+                        }
+
                         ui.add_space(24.0);
                         ui.label(egui::RichText::new("Create a new project or open an")
                             .size(11.0).color(text_secondary));

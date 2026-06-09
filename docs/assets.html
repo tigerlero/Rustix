@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Assets — Rustix Engine</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0b0c10;
+            --bg-elev: #121418;
+            --bg-card: #1a1d23;
+            --border: #2a2f38;
+            --text: #c9d1d9;
+            --text-dim: #8b949e;
+            --text-heading: #f0f6fc;
+            --accent: #e67e22;
+            --accent-hover: #d35400;
+            --accent-glow: rgba(230, 126, 34, 0.25);
+            --radius: 12px;
+            --radius-sm: 8px;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+        a { color: var(--accent); text-decoration: none; transition: opacity 0.2s; }
+        a:hover { opacity: 0.85; }
+        nav {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            z-index: 100;
+            background: rgba(11, 12, 16, 0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+        }
+        .nav-inner {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+            height: 64px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .logo {
+            font-weight: 800;
+            font-size: 1.4rem;
+            color: var(--text-heading);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .logo-icon {
+            width: 36px; height: 36px;
+            border-radius: var(--radius-sm);
+            object-fit: contain;
+        }
+        .nav-links {
+            display: flex;
+            gap: 32px;
+            align-items: center;
+        }
+        .nav-links a {
+            color: var(--text-dim);
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+        .nav-links a:hover { color: var(--text-heading); }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 22px;
+            border-radius: var(--radius-sm);
+            font-weight: 600;
+            font-size: 0.9rem;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: var(--accent);
+            color: #fff;
+        }
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            opacity: 1;
+        }
+        .btn-secondary {
+            background: transparent;
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        .btn-secondary:hover {
+            background: var(--bg-card);
+            border-color: var(--text-dim);
+            opacity: 1;
+        }
+
+        .hero {
+            padding: 140px 24px 60px;
+            text-align: center;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        .hero h1 {
+            font-size: clamp(2rem, 5vw, 3.5rem);
+            font-weight: 800;
+            color: var(--text-heading);
+            line-height: 1.1;
+            margin-bottom: 16px;
+        }
+        .hero p {
+            font-size: 1.1rem;
+            color: var(--text-dim);
+            max-width: 560px;
+            margin: 0 auto 40px;
+        }
+
+        .section {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 60px 24px 100px;
+        }
+        .section-header {
+            text-align: center;
+            margin-bottom: 48px;
+        }
+        .section-header h2 {
+            font-size: 1.8rem;
+            font-weight: 800;
+            color: var(--text-heading);
+        }
+
+        .assets-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 24px;
+        }
+        .asset-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        .asset-card:hover {
+            transform: translateY(-2px);
+            border-color: var(--accent);
+        }
+        .asset-preview {
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            background: var(--bg-elev);
+            border-radius: var(--radius-sm);
+            display: grid;
+            place-items: center;
+            margin-bottom: 16px;
+            overflow: hidden;
+        }
+        .asset-preview img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        .asset-card h3 {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: var(--text-heading);
+            margin-bottom: 6px;
+        }
+        .asset-card p {
+            font-size: 0.9rem;
+            color: var(--text-dim);
+            margin-bottom: 16px;
+        }
+        .asset-meta {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+        .tag {
+            padding: 4px 10px;
+            background: var(--bg-elev);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            font-size: 0.75rem;
+            color: var(--text-dim);
+        }
+
+        footer {
+            border-top: 1px solid var(--border);
+            padding: 40px 24px;
+            text-align: center;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+        }
+        footer a { color: var(--text-dim); }
+        footer a:hover { color: var(--text-heading); }
+
+        @media (max-width: 600px) {
+            .nav-links { display: none; }
+            .hero { padding: 120px 20px 40px; }
+        }
+    </style>
+</head>
+<body>
+
+    <nav>
+        <div class="nav-inner">
+            <a href="index.html" class="logo">
+                <img src="rustix-logo.png" alt="Rustix" class="logo-icon">
+                Rustix
+            </a>
+            <div class="nav-links">
+                <a href="index.html">Home</a>
+                <a href="assets.html">Assets</a>
+                <a href="index.html#try">Try It</a>
+                <a href="index.html#contribute">Contribute</a>
+                <a href="https://github.com/tigerlero/Rustix" target="_blank" class="btn btn-primary">GitHub</a>
+            </div>
+        </div>
+    </nav>
+
+    <section class="hero">
+        <h1>Assets</h1>
+        <p>Official logos, icons, and brand assets for Rustix Engine. Free to use under the MIT License.</p>
+    </section>
+
+    <section class="section">
+        <div class="section-header">
+            <h2>Brand Kit</h2>
+        </div>
+        <div class="assets-grid">
+            <div class="asset-card">
+                <div class="asset-preview">
+                    <img src="rustix-logo.png" alt="Rustix Logo">
+                </div>
+                <h3>Rustix Logo</h3>
+                <p>Primary logo for use in applications, presentations, and documentation.</p>
+                <div class="asset-meta">
+                    <span class="tag">PNG</span>
+                    <a href="rustix-logo.png" download class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.8rem;">Download</a>
+                </div>
+            </div>
+            <div class="asset-card">
+                <div class="asset-preview">
+                    <img src="rustix-logo.png" alt="Rustix Icon" style="border-radius: 50%;">
+                </div>
+                <h3>App Icon</h3>
+                <p>Square/circular crop suitable for application launchers and taskbar icons.</p>
+                <div class="asset-meta">
+                    <span class="tag">PNG</span>
+                    <a href="rustix-logo.png" download class="btn btn-secondary" style="padding: 6px 14px; font-size: 0.8rem;">Download</a>
+                </div>
+            </div>
+            <div class="asset-card">
+                <div class="asset-preview" style="place-items: start; padding: 16px;">
+                    <div style="display: flex; flex-direction: column; gap: 12px; align-items: center; width: 100%;">
+                        <div style="width: 64px; height: 64px; background: var(--accent); border-radius: 12px; display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 1.4rem;">R</div>
+                        <div style="width: 64px; height: 64px; background: var(--bg); border: 2px solid var(--accent); border-radius: 12px; display: grid; place-items: center; color: var(--accent); font-weight: 800; font-size: 1.4rem;">R</div>
+                    </div>
+                </div>
+                <h3>Color Reference</h3>
+                <p>Primary accent color and palette used across the engine and website.</p>
+                <div class="asset-meta">
+                    <span class="tag">HEX #E67E22</span>
+                    <span class="tag">RGB 230,126,34</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <p>
+            Released under the MIT License —
+            <a href="https://github.com/tigerlero/Rustix" target="_blank">GitHub</a> ·
+            <a href="index.html">Home</a>
+        </p>
+        <p style="margin-top: 8px; opacity: 0.6;">Built with Rust, Vulkan, and caffeine.</p>
+    </footer>
+
+</body>
+</html>
