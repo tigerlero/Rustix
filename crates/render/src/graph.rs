@@ -137,14 +137,9 @@ struct PassNode<'a> {
 /// A GPU image allocated by the graph for a transient resource.
 /// Multiple transient images with non-overlapping lifetimes may be
 /// bound to the same backing memory at different offsets.
-#[allow(dead_code)]
 struct TransientImage {
     image: vk::Image,
     view: vk::ImageView,
-    offset: u64,
-    size: u64,
-    first_pass: usize,
-    last_pass: usize,
 }
 
 /// A compiled frame graph ready for execution.
@@ -747,10 +742,7 @@ impl<'a> FrameGraph<'a> {
                 ).map_err(|e| RenderError::DeviceCreation(format!("transient view {idx}: {e}")))?
             };
 
-            let (first, last) = self.lifetimes[idx].unwrap();
-            self.transient_images.push(TransientImage {
-                image, view, offset, size: reqs[i].size, first_pass: first, last_pass: last,
-            });
+            self.transient_images.push(TransientImage { image, view });
             self.views[idx] = Some(view);
             self.images[idx] = Some(image);
         }

@@ -378,6 +378,8 @@ pub struct UIRenderer {
     pipeline_layout: vk::PipelineLayout,
     vertex_buffer: rustix_render::memory::GpuBuffer,
     index_buffer: rustix_render::memory::GpuBuffer,
+    // These two handles have no Rust-level reads but must outlive `desc_set` in Vulkan.
+    // Destroying the pool or layout while the set is still in use is undefined behavior.
     #[allow(dead_code)]
     desc_set_layout: vk::DescriptorSetLayout,
     #[allow(dead_code)]

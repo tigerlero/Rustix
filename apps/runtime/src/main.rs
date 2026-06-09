@@ -921,15 +921,7 @@ fn main() {
                         // Process egui and upload textures DURING command buffer recording.
                         // update_textures now waits for GPU idle before partial updates to avoid
                         // layout-transition races with in-flight frames.
-                        let mut raw_input = egui_state.take_egui_input(window.inner());
-                        if !input.mouse().down(rustix_platform::input::MouseButton::Left) {
-                            raw_input.events.push(egui::Event::PointerButton {
-                                pos: egui::Pos2::ZERO,
-                                button: egui::PointerButton::Primary,
-                                pressed: false,
-                                modifiers: egui::Modifiers::default(),
-                            });
-                        }
+                        let raw_input = egui_state.take_egui_input(window.inner());
                         let out = egui_ctx.run(raw_input, |ctx| {
                             if ctx.input(|i| i.key_pressed(egui::Key::F10)) {
                                 app.show_frame_graph_overlay = !app.show_frame_graph_overlay;

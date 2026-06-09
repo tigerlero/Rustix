@@ -115,8 +115,8 @@ pub fn init_scene_resources(
 
     let bindless_layout = renderer.bindless_heap().layout();
     match (
-        rustix_render::shader::builtin::vertex_shader(renderer.device().logical()),
-        rustix_render::shader::builtin::fragment_shader(renderer.device().logical()),
+        rustix_render::shader::builtin::vertex_shader_override(renderer.device().logical()),
+        rustix_render::shader::builtin::fragment_shader_override(renderer.device().logical()),
     ) {
         (Ok(vs), Ok(fs)) => {
             let sw = renderer.swapchain.lock();

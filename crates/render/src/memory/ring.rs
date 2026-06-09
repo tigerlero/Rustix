@@ -19,8 +19,6 @@ pub struct GpuUniformRing {
     buffer: GpuBuffer,
     ring: rustix_core::gpu_staging::GpuStagingRing,
     align: u64,
-    #[allow(dead_code)]
-    device: *const ash::Device,
 }
 
 unsafe impl Send for GpuUniformRing {}
@@ -47,7 +45,6 @@ impl GpuUniformRing {
             MemoryLocation::CpuToGpu,
         )?;
         Ok(Self {
-            device: device.logical() as *const ash::Device,
             ring: rustix_core::gpu_staging::GpuStagingRing::new(aligned_cap.max(align)),
             align: align.max(1),
             buffer,

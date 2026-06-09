@@ -153,8 +153,6 @@ impl StagingBufferPool {
 pub struct GpuStagingBuffer {
     buffer: GpuBuffer,
     ring: rustix_core::gpu_staging::GpuStagingRing,
-    #[allow(dead_code)]
-    device: *const ash::Device,
 }
 
 unsafe impl Send for GpuStagingBuffer {}
@@ -176,7 +174,6 @@ impl GpuStagingBuffer {
             MemoryLocation::CpuToGpu,
         )?;
         Ok(Self {
-            device: device.logical() as *const ash::Device,
             ring: rustix_core::gpu_staging::GpuStagingRing::new(capacity),
             buffer,
         })

@@ -134,11 +134,6 @@ impl RapierPhysicsWorld {
         self.gravity = vec3_to_nalgebra(settings.gravity);
     }
 
-    #[allow(dead_code)]
-    fn gravity(&self) -> nalgebra::Vector3<f32> {
-        self.gravity
-    }
-
     /// Register an ECS entity as a dynamic/static/kinematic rigid body.
     pub fn add_entity(
         &mut self,
@@ -628,11 +623,6 @@ fn build_rapier_collider(collider: &Collider) -> rapier3d::geometry::Collider {
 
 fn vec3_to_nalgebra(v: Vec3) -> nalgebra::Vector3<f32> {
     nalgebra::Vector3::new(v.x, v.y, v.z)
-}
-
-#[allow(dead_code)]
-fn nalgebra_point_to_vec3(p: nalgebra::Point3<f32>) -> Vec3 {
-    Vec3::new(p.x, p.y, p.z)
 }
 
 fn nalgebra_vec_to_vec3(v: nalgebra::Vector3<f32>) -> Vec3 {

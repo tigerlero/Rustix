@@ -1,7 +1,6 @@
 use ash::vk;
 use crate::device::GpuDevice;
 use crate::instance::VulkanInstance;
-use crate::memory::GpuMemoryAllocator;
 use crate::error::RenderError;
 
 const MAX_TIMESTAMPS_PER_FRAME: u32 = 8;
@@ -104,81 +103,3 @@ impl Drop for GpuProfiler {
     }
 }
 
-/// A GPU readback buffer for copying GPU data to CPU-visible memory.
-pub struct GpuReadbackBuffer {
-    pub buffer: vk::Buffer,
-    pub size: u64,
-    #[allow(dead_code)]
-    allocation: gpu_allocator::vulkan::Allocation,
-    mapped: *mut u8,
-}
-
-impl GpuReadbackBuffer {
-    pub fn new(
-        device: &GpuDevice,
-        allocator: &mut GpuMemoryAllocator,
-        name: &str,
-        size: u64,
-    ) -> Result<Self, RenderError> {
-        use gpu_allocator::MemoryLocation;
-        let info = vk::BufferCreateInfo::default()
-            .size(size)
-            .usage(vk::BufferUsageFlags::TRANSFER_DST)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE);
-        let buffer = unsafe {
-            device.logical().create_buffer(&info, None)
-                .map_err(|e| RenderError::DeviceCreation(format!("readback buffer: {e}")))?
-        };
-        let req = unsafe { device.logical().get_buffer_memory_requirements(buffer) };
-        let allocation = allocator.allocate(name, req, MemoryLocation::CpuToGpu, true)?;
-        unsafe {
-            device.logical().bind_buffer_memory(buffer, allocation.memory(), allocation.offset())
-                .map_err(|e| RenderError::DeviceCreation(format!("readback bind: {e}")))?;
-        }
-        let mapped = allocation.mapped_ptr()
-            .map(|p| p.as_ptr() as *mut u8)
-            .unwrap_or(std::ptr::null_mut());
-        Ok(Self { buffer, size, allocation, mapped })
-    }
-
-    /// Copy a GPU image region into this readback buffer.
-    pub fn copy_image(
-        &self,
-        cmd: vk::CommandBuffer,
-        device: &GpuDevice,
-        image: vk::Image,
-        extent: vk::Extent2D,
-        image_layout: vk::ImageLayout,
-    ) {
-        let region = vk::BufferImageCopy::default()
-            .buffer_offset(0)
-            .buffer_row_length(0)
-            .buffer_image_height(0)
-            .image_subresource(vk::ImageSubresourceLayers {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                mip_level: 0,
-                base_array_layer: 0,
-                layer_count: 1,
-            })
-            .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
-            .image_extent(vk::Extent3D {
-                width: extent.width,
-                height: extent.height,
-                depth: 1,
-            });
-        unsafe {
-            device.logical().cmd_copy_image_to_buffer(
-                cmd,
-                image,
-                image_layout,
-                self.buffer,
-                &[region],
-            );
-        }
-    }
-
-    /// Read bytes from the mapped CPU-visible memory.
-    pub fn read_bytes(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.mapped, self.size as usize) }
-    }
-}
