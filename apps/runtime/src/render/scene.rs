@@ -232,9 +232,13 @@ pub fn render_3d_scene(
     let mut entity_count = 0u32;
     let mut drawn_count = 0u32;
     let mut missing_mesh_count = 0u32;
+    let mut mesh_signature = 0u64;
 
     for (entity, _transform, mesh_comp) in ecs_world.query::<(Entity, &Transform, &MeshComponent)>().iter() {
         entity_count += 1;
+        for b in mesh_comp.0.bytes() {
+            mesh_signature = mesh_signature.wrapping_mul(31).wrapping_add(b as u64);
+        }
         if let Some(mesh) = meshes.get(&mesh_comp.0) {
             let model = world_transform(ecs_world, entity);
             let world_aabb = mesh.aabb.transform(model);
@@ -268,8 +272,20 @@ pub fn render_3d_scene(
         }
     }
 
-    if renderer.frame_index() % 60 == 0 {
-        tracing::info!("render_3d_scene: {} entities, {} drawn, {} missing mesh", entity_count, drawn_count, missing_mesh_count);
+    // Only log when the counts actually change (entity inserted/deleted/mesh loaded)
+    {
+        use std::cell::RefCell;
+        thread_local! {
+            static LAST_COUNTS: RefCell<(u32, u32, u32, u64)> = RefCell::new((u32::MAX, u32::MAX, u32::MAX, u64::MAX));
+        }
+        LAST_COUNTS.with(|last| {
+            let prev = *last.borrow();
+            let curr = (entity_count, drawn_count, missing_mesh_count, mesh_signature);
+            if curr != prev {
+                tracing::info!("render_3d_scene: {} entities, {} drawn, {} missing mesh", entity_count, drawn_count, missing_mesh_count);
+                *last.borrow_mut() = curr;
+            }
+        });
     }
 
     if let Some(ci) = color_image {

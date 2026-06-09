@@ -669,9 +669,6 @@ pub fn show_viewport(
         );
         ctx.data_mut(|d| d.insert_temp(gizmo_mode_id, gizmo_mode));
 
-        // Toolbar + bookmarks (reads/writes tool settings to temp data)
-        draw_toolbar(ui, ctx, cam, bookmarks, screen);
-
         if !is_playing {
             // Ground grid
             let show_grid = ctx.data(|d| d.get_temp::<bool>(egui::Id::new("viewport_show_grid")).unwrap_or(true));
@@ -708,5 +705,9 @@ pub fn show_viewport(
             // Keyboard shortcuts
             handle_viewport_keys(ctx, world, selected_entities, cam, dirty, undo_history);
         }
+
+        // Toolbar + bookmarks — drawn LAST so it sits on top of the viewport
+        // background click area and receives input first.
+        draw_toolbar(ui, ctx, cam, bookmarks, screen);
     });
 }

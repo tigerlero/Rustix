@@ -9,6 +9,7 @@ pub fn startup_screen(
     new_project: &std::cell::RefCell<Option<String>>,
     show_new_project_type: &std::cell::Cell<bool>,
     new_project_type: &std::cell::Cell<ProjectType>,
+    show_settings: &std::cell::Cell<bool>,
 ) {
     let bg = egui::Color32::from_rgb(22, 22, 28);
     let panel_bg = egui::Color32::from_rgb(30, 30, 38);
@@ -146,6 +147,19 @@ let open_btn = egui::Button::new(
                             {
                                 *open_project.borrow_mut() = Some(path.to_string_lossy().to_string());
                             }
+                        }
+
+                        ui.add_space(16.0);
+
+                        let settings_btn = egui::Button::new(
+                            egui::RichText::new("Settings").size(14.0).color(text_primary)
+                        )
+                        .min_size(btn_size)
+                        .fill(surface)
+                        .stroke(egui::Stroke::new(1.0, border))
+                        .corner_radius(egui::CornerRadius::same(6));
+                        if ui.add(settings_btn).clicked() {
+                            show_settings.set(!show_settings.get());
                         }
 
                         ui.add_space(24.0);

@@ -73,7 +73,7 @@ pub fn editor_screen(
         }
     }
     if !is_playing {
-        dialogs::show_dialogs(ctx, screen, target, current_project, dirty, show_confirm, confirm_target, show_settings, sprite_editor);
+        dialogs::show_dialogs(ctx, screen, target, dirty, show_confirm, confirm_target, sprite_editor);
         undo_redo::handle_undo_redo(ctx, world, selected_entities, dirty, undo_history);
     }
     if is_playing && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {

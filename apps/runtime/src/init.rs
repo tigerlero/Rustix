@@ -46,7 +46,7 @@ pub fn init_scene_resources(
         && ssao_pipeline.is_some() && ssao_blur_pipeline.is_some()
         && taa_pipeline.is_some() && ssr_pipeline.is_some() && fog_pipeline.is_some() && skybox_pipeline.is_some()
         && instanced_pipeline.is_some() && instanced_gbuffer_pipeline.is_some() {
-        tracing::info!("init_scene_resources: already initialized, {} meshes in registry", meshes.len());
+        tracing::trace!("init_scene_resources: already initialized, {} meshes in registry", meshes.len());
         return;
     }
 

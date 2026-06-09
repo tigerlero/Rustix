@@ -279,28 +279,30 @@ fn main() {
                         }
                         renderer.profiler_begin(cmd);
 
-                        init::init_scene_resources(
-                            &renderer, &mut app.meshes,
-                            &mut app.scene_pipeline, &mut app.scene_descriptor_pool, &mut app.scene_descriptor_set,
-                            &mut app.scene_uniform_buffer, &mut app.scene_depth_buffer,
-                            &mut app.shadow_pipeline, &mut app.shadow_descriptor_pool, &mut app.shadow_descriptor_set,
-                            &mut app.csm_resources,
-                            &mut app.point_shadow_resources,
-                            &mut app.spot_shadow_resources,
-                            &mut app.tonemap_pipeline, &mut app.tonemap_desc_set,
-                            &mut app.bloom_extract_pipeline, &mut app.bloom_down_pipeline,
-                            &mut app.bloom_up_pipeline, &mut app.bloom_desc_set,
-                            &mut app.ssao_pipeline, &mut app.ssao_blur_pipeline,
-                            &mut app.ssao_desc_set,
-                            &mut app.taa_pipeline, &mut app.taa_desc_set,
-                            &mut app.ssr_pipeline, &mut app.ssr_desc_set,
-                            &mut app.fog_pipeline, &mut app.fog_desc_set,
-                            &mut app.skybox_pipeline, &mut app.skybox_desc_set,
-                            &mut app.instanced_pipeline, &mut app.instanced_gbuffer_pipeline,
-                            &mut app.mesh_shader_pipeline,
-                            &mut app.oit_accumulate_pipeline, &mut app.oit_composite_pipeline,
-                            &mut app.oit_desc_set,
-                        );
+                        if app.scene_pipeline.is_none() {
+                            init::init_scene_resources(
+                                &renderer, &mut app.meshes,
+                                &mut app.scene_pipeline, &mut app.scene_descriptor_pool, &mut app.scene_descriptor_set,
+                                &mut app.scene_uniform_buffer, &mut app.scene_depth_buffer,
+                                &mut app.shadow_pipeline, &mut app.shadow_descriptor_pool, &mut app.shadow_descriptor_set,
+                                &mut app.csm_resources,
+                                &mut app.point_shadow_resources,
+                                &mut app.spot_shadow_resources,
+                                &mut app.tonemap_pipeline, &mut app.tonemap_desc_set,
+                                &mut app.bloom_extract_pipeline, &mut app.bloom_down_pipeline,
+                                &mut app.bloom_up_pipeline, &mut app.bloom_desc_set,
+                                &mut app.ssao_pipeline, &mut app.ssao_blur_pipeline,
+                                &mut app.ssao_desc_set,
+                                &mut app.taa_pipeline, &mut app.taa_desc_set,
+                                &mut app.ssr_pipeline, &mut app.ssr_desc_set,
+                                &mut app.fog_pipeline, &mut app.fog_desc_set,
+                                &mut app.skybox_pipeline, &mut app.skybox_desc_set,
+                                &mut app.instanced_pipeline, &mut app.instanced_gbuffer_pipeline,
+                                &mut app.mesh_shader_pipeline,
+                                &mut app.oit_accumulate_pipeline, &mut app.oit_composite_pipeline,
+                                &mut app.oit_desc_set,
+                            );
+                        }
 
                         if app.fwd_plus_resources.is_none() {
                             match crate::render::ForwardPlusResources::new(&renderer) {
@@ -928,7 +930,7 @@ fn main() {
                             }
                             match app.screen {
                                 AppScreen::Startup => {
-                                    ui::startup_screen(ctx, &app.recent_projects, &mut app.screen, &app.open_project, &app.new_project, &*app.show_new_project_type, &*app.new_project_type);
+                                    ui::startup_screen(ctx, &app.recent_projects, &mut app.screen, &app.open_project, &app.new_project, &*app.show_new_project_type, &*app.new_project_type, &*app.show_settings);
                                 }
                                 AppScreen::Editor => {
                                     let proj_name = app.current_project.as_ref().map(|p| p.name.as_str()).unwrap_or("Untitled");
@@ -946,63 +948,35 @@ fn main() {
                                     ui::show_frame_graph_overlay(ctx, &mut app.show_frame_graph_overlay, snap);
                                 }
                             }
-                            egui::Window::new("Post-Process")
-                                .default_pos([10.0, 100.0])
-                                .default_size([180.0, 120.0])
-                                .show(ctx, |ui| {
-                                    ui.label("Bloom");
-                                    ui.add(egui::Slider::new(&mut app.bloom_threshold, 0.0..=5.0).text("Threshold"));
-                                    ui.add(egui::Slider::new(&mut app.bloom_intensity, 0.0..=2.0).text("Intensity"));
-                                    ui.separator();
-                                    ui.label("SSAO");
-                                    ui.checkbox(&mut app.ssao_enabled, "Enabled");
-                                    ui.add(egui::Slider::new(&mut app.ssao_radius, 0.1..=2.0).text("Radius"));
-                                    ui.add(egui::Slider::new(&mut app.ssao_bias, 0.0..=0.1).text("Bias"));
-                                    ui.add(egui::Slider::new(&mut app.ssao_power, 0.5..=3.0).text("Power"));
-                                    ui.add(egui::Slider::new(&mut app.ssao_intensity, 0.0..=3.0).text("Intensity"));
-                                    ui.separator();
-                                    ui.label("TAA");
-                                    ui.checkbox(&mut app.taa_enabled, "Enabled");
-                                    ui.add(egui::Slider::new(&mut app.taa_blend_factor, 0.0..=0.5).text("Blend"));
-                                    ui.separator();
-                                    ui.label("SSR");
-                                    ui.checkbox(&mut app.ssr_enabled, "Enabled");
-                                    ui.add(egui::Slider::new(&mut app.ssr_max_steps, 8.0..=128.0).text("Steps"));
-                                    ui.add(egui::Slider::new(&mut app.ssr_stride, 1.0..=8.0).text("Stride"));
-                                    ui.add(egui::Slider::new(&mut app.ssr_max_dist, 10.0..=100.0).text("Dist"));
-                                    ui.separator();
-                                    ui.label("Volumetric Fog");
-                                    ui.checkbox(&mut app.fog_enabled, "Enabled");
-                                    ui.add(egui::Slider::new(&mut app.fog_density, 0.0..=0.1).text("Density"));
-                                    ui.add(egui::Slider::new(&mut app.fog_scattering, 0.0..=2.0).text("Scattering"));
-                                    ui.add(egui::Slider::new(&mut app.fog_height_falloff, 0.0..=0.5).text("Height Falloff"));
-                                    ui.add(egui::Slider::new(&mut app.fog_max_dist, 10.0..=200.0).text("Max Dist"));
-                                    ui.add(egui::Slider::new(&mut app.fog_max_steps, 8.0..=128.0).text("Steps"));
-                                    ui.add(egui::Slider::new(&mut app.fog_sun_intensity, 0.0..=2.0).text("Sun Intensity"));
-                                    ui.separator();
-                                    ui.label("Skybox / Atmosphere");
-                                    ui.checkbox(&mut app.skybox_enabled, "Enabled");
-                                    ui.add(egui::Slider::new(&mut app.skybox_rayleigh, 0.0..=5.0).text("Rayleigh"));
-                                    ui.add(egui::Slider::new(&mut app.skybox_mie, 0.0..=2.0).text("Mie"));
-                                    ui.add(egui::Slider::new(&mut app.skybox_zenith_shift, -0.5..=0.5).text("Zenith Shift"));
-                                    ui.add(egui::Slider::new(&mut app.skybox_exposure, 0.1..=3.0).text("Exposure"));
-                                    ui.separator();
-                                    ui.label("Instanced Rendering");
-                                    ui.checkbox(&mut app.instanced_enabled, "Enabled");
-                                    ui.separator();
-                                    ui.label("GPU Culling");
-                                    ui.checkbox(&mut app.gpu_culling_enabled, "Enabled");
-                                    ui.separator();
-                                    ui.label("Mesh Shaders (NV)");
-                                    let mesh_supported = renderer.device().mesh_shader_supported();
-                                    ui.add_enabled(mesh_supported, egui::Checkbox::new(&mut app.mesh_shader_enabled, "Enabled"));
-                                    if !mesh_supported {
-                                        ui.label("Extension not available on this GPU");
-                                    }
-                                    ui.separator();
-                                    ui.label("Ordered Independent Transparency (OIT)");
-                                    ui.checkbox(&mut app.oit_enabled, "Enabled");
-                                });
+                            if app.show_settings.get() {
+                                egui::Window::new("Settings")
+                                    .default_pos([100.0, 80.0])
+                                    .default_size([860.0, 520.0])
+                                    .show(ctx, |ui| {
+                                        ui::post_process_panel(ui, &mut app);
+                                        if let Some(ref mut proj) = app.current_project {
+                                            ui.separator();
+                                            ui.label(egui::RichText::new("Project").size(14.0).strong());
+                                            ui.add_space(8.0);
+                                            ui.horizontal(|ui| {
+                                                ui.add(egui::DragValue::new(&mut proj.settings.resolution_width).prefix("Width: ").range(320..=7680));
+                                                ui.add(egui::DragValue::new(&mut proj.settings.resolution_height).prefix("Height: ").range(240..=4320));
+                                            });
+                                            ui.add_space(8.0);
+                                            ui.add(egui::Checkbox::new(&mut proj.settings.enable_vsync, "Enable V-Sync"));
+                                            ui.add_space(8.0);
+                                            ui.add(egui::DragValue::new(&mut proj.settings.target_fps).prefix("Target FPS: ").range(30..=480));
+                                            ui.add_space(8.0);
+                                            let mut is_3d = proj.settings.project_type == crate::project::ProjectType::Dim3;
+                                            ui.horizontal(|ui| {
+                                                ui.label("Project type:");
+                                                if ui.selectable_label(is_3d, "3D").clicked() { is_3d = true; }
+                                                if ui.selectable_label(!is_3d, "2D").clicked() { is_3d = false; }
+                                            });
+                                            proj.settings.project_type = if is_3d { crate::project::ProjectType::Dim3 } else { crate::project::ProjectType::Dim2 };
+                                        }
+                                    });
+                            }
                         });
 
                         if let Some(path) = app.open_project.borrow_mut().take() {
