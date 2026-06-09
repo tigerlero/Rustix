@@ -106,6 +106,7 @@ pub fn show_inspector(
     let result = super::dock::show_docked(ctx, "Inspector", panel_id, dock, desired_width, |ui| {
         ui.heading("Inspector");
         ui.separator();
+        egui::ScrollArea::vertical().show(ui, |ui| {
         if selected_count > 1 {
             ui.label(egui::RichText::new(format!("{} entities selected", selected_count)).strong());
             ui.separator();
@@ -443,6 +444,25 @@ pub fn show_inspector(
                     });
                 });
                 ui.checkbox(&mut sc.config.enabled, "Enabled");
+
+                // Preset dropdown
+                let current_preset = sc.preset_name.clone().unwrap_or_else(|| "(Custom)".to_string());
+                egui::ComboBox::from_label("Preset")
+                    .selected_text(&current_preset)
+                    .show_ui(ui, |ui| {
+                        for name in crate::script_presets::PRESET_NAMES {
+                            if ui.selectable_label(current_preset == *name, *name).clicked() {
+                                if *name == "(Custom)" {
+                                    sc.preset_name = None;
+                                } else if let Some(source) = crate::script_presets::get_preset(name) {
+                                    sc.source = source;
+                                    sc.preset_name = Some(name.to_string());
+                                    sc.config.enabled = true;
+                                }
+                            }
+                        }
+                    });
+
                 ui.label("Source:");
                 ui.add_sized([ui.available_width(), 120.0], egui::TextEdit::multiline(&mut sc.source).code_editor());
             }
@@ -749,6 +769,7 @@ pub fn show_inspector(
         }
         ui.add(egui::DragValue::new(&mut cam.yaw).prefix("Yaw: ").speed(0.01));
         ui.add(egui::DragValue::new(&mut cam.pitch).prefix("Pitch: ").speed(0.01).range(-1.57..=1.57));
+        });
     });
     if let Some(inner) = result {
         let actual_width = inner.response.rect.width();

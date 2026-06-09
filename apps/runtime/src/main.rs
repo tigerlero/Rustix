@@ -12,6 +12,7 @@ mod player;
 mod project;
 mod render;
 mod scene;
+mod script_presets;
 mod sprite_editor;
 mod ui;
 mod ui_renderer;
@@ -291,6 +292,9 @@ fn main() {
                                     *b = body;
                                 }
                             }
+
+                            // Run entity scripts
+                            app.script_engine.update(&mut app.ecs_world);
                         }
 
                         if needs_resize {
@@ -973,12 +977,14 @@ fn main() {
                                 AppScreen::Editor => {
                                     let proj_name = app.current_project.as_ref().map(|p| p.name.as_str()).unwrap_or("Untitled");
                                     let proj_name_owned = proj_name.to_string();
-                                    ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut app.screen, &input, target, &ww, &wh, &mut fps, &app.open_project, &app.new_project, &proj_name_owned, &mut app.current_project, &mut app.project_dir, &mut app.ecs_world, &*app.selected_entities, &*app.pending_delete, &*app.dirty, &*app.show_confirm, &*app.confirm_target, &*app.show_settings, &*app.renaming, &*app.rename_buffer, &*app.undo_history, &mut app.sprite_editor, &app.pending_mesh_load, &mut app.audio_engine, &mut app.audio_instance, &mut app.waveform_viewer);
+                                    let project_type = app.current_project.as_ref().map(|p| p.settings.project_type).unwrap_or(crate::project::ProjectType::Dim3);
+                                    ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut app.screen, &input, target, &ww, &wh, &mut fps, &app.open_project, &app.new_project, &proj_name_owned, &mut app.current_project, &mut app.project_dir, &mut app.ecs_world, &*app.selected_entities, &*app.pending_delete, &*app.dirty, &*app.show_confirm, &*app.confirm_target, &*app.show_settings, &*app.renaming, &*app.rename_buffer, &*app.undo_history, &mut app.sprite_editor, &app.pending_mesh_load, &mut app.audio_engine, &mut app.audio_instance, &mut app.waveform_viewer, &mut app.player_manager, project_type);
                                 }
                                 AppScreen::PlayTest => {
                                     let proj_name = app.current_project.as_ref().map(|p| p.name.as_str()).unwrap_or("Untitled");
                                     let proj_name_owned = proj_name.to_string();
-                                    ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut app.screen, &input, target, &ww, &wh, &mut fps, &app.open_project, &app.new_project, &proj_name_owned, &mut app.current_project, &mut app.project_dir, &mut app.ecs_world, &*app.selected_entities, &*app.pending_delete, &*app.dirty, &*app.show_confirm, &*app.confirm_target, &*app.show_settings, &*app.renaming, &*app.rename_buffer, &*app.undo_history, &mut app.sprite_editor, &app.pending_mesh_load, &mut app.audio_engine, &mut app.audio_instance, &mut app.waveform_viewer);
+                                    let project_type = app.current_project.as_ref().map(|p| p.settings.project_type).unwrap_or(crate::project::ProjectType::Dim3);
+                                    ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut app.screen, &input, target, &ww, &wh, &mut fps, &app.open_project, &app.new_project, &proj_name_owned, &mut app.current_project, &mut app.project_dir, &mut app.ecs_world, &*app.selected_entities, &*app.pending_delete, &*app.dirty, &*app.show_confirm, &*app.confirm_target, &*app.show_settings, &*app.renaming, &*app.rename_buffer, &*app.undo_history, &mut app.sprite_editor, &app.pending_mesh_load, &mut app.audio_engine, &mut app.audio_instance, &mut app.waveform_viewer, &mut app.player_manager, project_type);
                                 }
                             }
                             if app.show_frame_graph_overlay {
@@ -1022,6 +1028,8 @@ fn main() {
                             let info = load_project_file(dir).or_else(|| create_project_file(dir, ProjectType::Dim3));
                             if let Some(ref proj_info) = info {
                                 scene_to_world(&mut app.ecs_world, &proj_info.scene);
+                                app.player_manager = crate::player::PlayerManager::new();
+                                app.script_engine = rustix_scripting::ScriptEngine::new();
                                 app.selected_entities.borrow_mut().clear();
                                 tracing::info!("loaded project with {} entities", app.ecs_world.query::<(&Name,)>().iter().count());
                                 if let Some(ref cam_state) = proj_info.editor_camera {
@@ -1077,6 +1085,8 @@ fn main() {
                             let mut info = create_project_file(dir, ptype);
                             if let Some(ref mut proj) = info {
                                 app.ecs_world.clear();
+                                app.player_manager = crate::player::PlayerManager::new();
+                                app.script_engine = rustix_scripting::ScriptEngine::new();
                                 app.selected_entities.borrow_mut().clear();
                                 app.ecs_world.spawn((
                                     Transform { position: Vec3::ZERO, rotation: Vec3::ZERO, scale: Vec3::ONE },
@@ -1113,9 +1123,7 @@ fn main() {
                         if let Err(e) = renderer.end_frame() {
                             tracing::error!("end_frame: {e}");
                         }
-                        if renderer.frame_index() % 60 == 0 {
-                            tracing::info!("frame {} rendered", renderer.frame_index());
-                        }
+                        // Frame logging disabled
                         input.end_tick();
 
                         fc += 1;

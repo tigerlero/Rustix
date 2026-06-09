@@ -726,9 +726,161 @@ Frame N+1: CPU update + render submission (while GPU on N)
 
 ---
 
-## 7. World Streaming & Open World
+## 7. Combat System
 
-### 7.1 Chunk System
+The combat system is implemented in the runtime app (`apps/runtime/src/combat.rs`, `enemy.rs`, `player.rs`) as an ECS-based module. It supports both 3D and 2D projects.
+
+### 7.1 Combat Components
+
+```rust
+// apps/runtime/src/combat.rs
+
+/// Hit points for any combatant (player or enemy).
+pub struct Health {
+    pub current: f32,
+    pub max: f32,
+}
+
+/// Basic combat stats shared by players and enemies.
+pub struct CombatStats {
+    pub attack_damage: f32,      // Damage per basic attack
+    pub attack_range: f32,       // How far the entity can strike
+    pub attack_cooldown: f32,    // Seconds between attacks
+    pub current_cooldown: f32,   // Remaining cooldown (decreased each frame)
+}
+
+/// A special ability with its own cooldown.
+pub struct Skill {
+    pub name: String,
+    pub damage: f32,
+    pub range: f32,
+    pub cooldown: f32,
+    pub current_cooldown: f32,
+}
+
+/// Marker for entities that have been killed and should be cleaned up.
+pub struct Dead;
+```
+
+### 7.2 Damage Events
+
+Damage is queued as events during a frame and resolved at the end of the update, avoiding borrow conflicts:
+
+```rust
+pub struct DamageEvent {
+    pub target: hecs::Entity,
+    pub amount: f32,
+    pub source: hecs::Entity,
+}
+```
+
+**Why event-based?**
+- Prevents borrow conflicts when multiple systems deal damage simultaneously
+- Allows damage to be applied after all combat systems have run
+- Enables easy extension (damage modifiers, shields, resistances)
+
+### 7.3 Combat Systems
+
+| System | Function | File |
+|--------|----------|------|
+| **Tick Cooldowns** | Decreases `current_cooldown` on all `CombatStats` and `Skill` components by `dt` | `combat::tick_cooldowns` |
+| **Resolve Damage** | Applies queued `DamageEvent`s to `Health`, marks dead entities with `Dead` | `combat::resolve_damage` |
+| **Cleanup Dead** | Removes all entities with `Dead` component from the world | `combat::cleanup_dead` |
+
+```rust
+// Game loop integration (main.rs)
+player::update_players(&mut world, &mut player_manager, cam, input, dt, &mut damage_events);
+enemy::update_enemies(&mut world, dt, &mut damage_events);
+combat::tick_cooldowns(&mut world, dt);
+combat::resolve_damage(&mut world, &damage_events);
+let dead = combat::cleanup_dead(&mut world);
+app.player_manager.players.retain(|p| !dead.contains(p));
+```
+
+### 7.4 Player Combat
+
+**Spawn:** Players spawn with `Health` (100 HP) and `CombatStats` (15 dmg, 2.5 range, 0.5s cooldown).
+
+**Controls:**
+- **W/A/S/D** — Move active player(s) relative to camera yaw
+- **Space** — Jump
+- **Mouse Left** — Attack nearest enemy in range
+- **Tab** — Cycle active player
+- **F** — Toggle "control all" mode
+
+**Attack Logic:**
+1. On mouse left click, find the nearest living enemy within `attack_range`
+2. If found and cooldown is ready, queue a `DamageEvent` and reset cooldown
+3. Damage is resolved at end of frame
+
+```rust
+// apps/runtime/src/player.rs
+pub fn update_players(
+    world: &mut EcsWorld,
+    manager: &mut PlayerManager,
+    camera: &EditorCamera,
+    input: &InputManager,
+    dt: f32,
+    damage_events: &mut Vec<DamageEvent>,
+);
+```
+
+### 7.5 Enemy AI
+
+**Components:**
+```rust
+pub struct Enemy {
+    pub enemy_type: EnemyType,  // Melee, Ranged, Boss
+}
+
+pub struct EnemyAI {
+    pub can_follow: bool,      // Chase nearest player
+    pub can_attack: bool,      // Attack when in range
+    pub follow_range: f32,     // Max distance to start following
+    pub move_speed: f32,       // Movement speed when chasing
+    pub stop_distance: f32,    // Stop this far from target when attacking
+}
+```
+
+**AI Behavior:**
+1. Find nearest living player within `follow_range`
+2. If outside `stop_distance`, set velocity toward player at `move_speed`
+3. If within `attack_range` and cooldown ready, attack and queue `DamageEvent`
+4. If no player in range, stop moving
+
+**Spawn Functions:**
+- `spawn_enemy()` — Basic melee enemy with capsule mesh
+- `spawn_enemy_with_skill()` — Enemy with a special `Skill` component
+- `spawn_enemy_2d()` — 2D variant with quad mesh, flat box collider, no gravity
+
+### 7.6 2D vs 3D Combat
+
+The combat system automatically adapts to the project type:
+
+| Feature | 3D | 2D |
+|---------|----|----|
+| **Player mesh** | Capsule | Quad |
+| **Enemy mesh** | Capsule | Quad |
+| **Collider** | Capsule | Box (flat) |
+| **Gravity** | Enabled | Disabled |
+| **Spawn Y** | 2.0 | 0.0 |
+| **Movement plane** | XZ (3D) | XY (2D) |
+
+The **Hierarchy** panel detects the current `ProjectType` (Dim2/Dim3) and spawns the appropriate variant via `spawn_player_2d` / `spawn_enemy_2d`.
+
+### 7.7 Editor Integration
+
+Players and enemies can be spawned at runtime from the **Hierarchy** panel:
+- **Create Player** — Spawns a player, registers in `PlayerManager`
+- **Create Enemy** — Spawns an enemy with default AI stats
+
+Both support undo/redo via `EditorAction::AddEntity`.
+
+---
+
+## 8. World Streaming & Open World
+
+### 8.1 Chunk System
 
 ```
 World
@@ -746,7 +898,7 @@ World
 - Async load: regions beyond keep radius get serialized to disk
 - LOD: distant chunks use lower-detail render proxies
 
-### 7.2 Persistent World State
+### 8.2 Persistent World State
 
 - Regions saved as `.rxregion` files (custom binary format via serde + bincode)
 - Entity serialization: component-based (only components with `Serialize`)
@@ -754,9 +906,9 @@ World
 
 ---
 
-## 8. Networking Layer
+## 9. Networking Layer
 
-### 8.1 Architecture (Authoritative Server)
+### 9.1 Architecture (Authoritative Server)
 
 ```
 Game Server (authoritative)
@@ -779,7 +931,7 @@ Game Server (authoritative)
 - Client sends inputs → server simulates → broadcasts state
 - Snapshot compression: delta encoding + LZ4
 
-### 8.2 Replication
+### 9.2 Replication
 
 ```rust
 // crates/networking/src/replication.rs
@@ -797,7 +949,7 @@ pub struct ReplicationManager {
 
 ---
 
-## 9. Plugin System
+## 10. Plugin System
 
 The engine uses a **plugin-based architecture** (inspired by Bevy but simpler):
 
@@ -831,9 +983,9 @@ impl Plugin for PhysicsPlugin {
 
 ---
 
-## 10. Diagnostics & Profiling
+## 11. Diagnostics & Profiling
 
-### 10.1 Logging (tracing)
+### 11.1 Logging (tracing)
 
 - Use `tracing` crate for structured logging
 - Subscribers:
@@ -854,7 +1006,7 @@ pub fn init_logging(config: &LogConfig) {
 }
 ```
 
-### 10.2 Profiling (Tracy)
+### 11.2 Profiling (Tracy)
 
 - Tracy client integration via `tracy-client` crate
 - Frame markers, zone scopes, GPU zones (via timestamp queries)
@@ -870,7 +1022,7 @@ macro_rules! profile_scope {
 }
 ```
 
-### 10.3 GPU Debugging (RenderDoc)
+### 11.3 GPU Debugging (RenderDoc)
 
 - RenderDoc capture trigger at runtime (e.g. press F12)
 - Vulkan instance created with `VK_LAYER_LUNARG_api_dump` in debug mode
@@ -878,9 +1030,9 @@ macro_rules! profile_scope {
 
 ---
 
-## 11. Cross-Platform Abstraction
+## 12. Cross-Platform Abstraction
 
-### 11.1 Current: Linux (Pop!_OS)
+### 12.1 Current: Linux (Pop!_OS)
 
 Full support for:
 - Wayland windowing (winit + wayland feature)
@@ -888,7 +1040,7 @@ Full support for:
 - evdev raw input
 - Vulkan via ash
 
-### 11.2 Future: Windows
+### 12.2 Future: Windows
 
 - winit with Windows backend
 - DirectX 12 as secondary renderer (or Vulkan via MoltenVK)
@@ -897,7 +1049,7 @@ Full support for:
 
 ---
 
-## 12. Hot-Reload Architecture
+## 13. Hot-Reload Architecture
 
 ```rust
 // Engine hot-reload pipeline:
@@ -919,9 +1071,9 @@ Only supported in debug builds. Release builds use compiled-in assets.
 
 ---
 
-## 13. Build System
+## 14. Build System
 
-### 13.1 Cargo Workspace Configuration
+### 14.1 Cargo Workspace Configuration
 
 ```toml
 # Cargo.toml (root)
@@ -947,7 +1099,7 @@ members = [
 ]
 ```
 
-### 13.2 Linker Configuration
+### 14.2 Linker Configuration
 
 ```toml
 # .cargo/config.toml
@@ -957,7 +1109,7 @@ rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 # rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 ```
 
-### 13.3 Build Profile Tuning
+### 14.3 Build Profile Tuning
 
 ```toml
 [profile.dev]
@@ -975,7 +1127,7 @@ debug = false
 
 ---
 
-## 14. Dependency Graph Summary
+## 15. Dependency Graph Summary
 
 ```
 apps/runtime

@@ -106,6 +106,62 @@ pub fn spawn_player(
     ))
 }
 
+/// Spawn a 2D player entity with quad mesh and flat box collider (no gravity).
+pub fn spawn_player_2d(
+    world: &mut EcsWorld,
+    position: Vec3,
+    index: u32,
+) -> hecs::Entity {
+    let color = match index % 3 {
+        0 => Vec3::new(0.8, 0.3, 0.3),
+        1 => Vec3::new(0.3, 0.8, 0.3),
+        _ => Vec3::new(0.3, 0.3, 0.8),
+    };
+    world.spawn((
+        Transform {
+            position,
+            rotation: Vec3::ZERO,
+            scale: Vec3::ONE,
+        },
+        Name(format!("Player {}", index + 1)),
+        MeshComponent("Quad".into()),
+        Material {
+            base_color: color,
+            alpha: 1.0,
+            roughness: 0.5,
+            metallic: 0.0,
+            ao: 1.0,
+            emissive: 0.0,
+        },
+        RigidBody {
+            body_type: BodyType::Dynamic,
+            mass: 50.0,
+            velocity: Vec3::ZERO,
+            angular_velocity: Vec3::ZERO,
+            gravity_scale: 0.0,
+            drag: 2.0,
+            angular_drag: 0.05,
+            use_gravity: false,
+            can_sleep: true,
+            sleeping: false,
+        },
+        Collider {
+            shape: ColliderShape::Box { half_extents: Vec3::new(0.5, 0.5, 0.05) },
+            is_trigger: false,
+            restitution: 0.0,
+            friction: 0.5,
+        },
+        Player { index },
+        Health::new(100.0),
+        CombatStats {
+            attack_damage: 15.0,
+            attack_range: 2.5,
+            attack_cooldown: 0.5,
+            current_cooldown: 0.0,
+        },
+    ))
+}
+
 /// Update player movement and combat from input.
 ///
 /// - **Tab** cycles the active player.
@@ -167,6 +223,9 @@ pub fn update_players(
     } else {
         manager.active_entity().into_iter().collect()
     };
+    if targets.is_empty() {
+        tracing::debug!("update_players: no active players to control");
+    }
 
     let attack_input = input.mouse().just_pressed(rustix_platform::input::MouseButton::Left);
 

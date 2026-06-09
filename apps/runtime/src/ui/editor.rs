@@ -3,11 +3,12 @@ use rustix_platform::input::InputManager;
 use rustix_audio::{AudioEngine, SoundInstance};
 
 use std::path::Path;
-use crate::project::{AppScreen, ConfirmTarget, ProjectInfo, write_project_file, EditorCameraState, LayoutState, ViewportLayout, DockPosition};
+use crate::project::{AppScreen, ConfirmTarget, ProjectInfo, ProjectType, write_project_file, EditorCameraState, LayoutState, ViewportLayout, DockPosition};
 use crate::scene::world_to_scene;
 use crate::undo::UndoHistory;
 use crate::sprite_editor;
 use crate::waveform;
+use crate::player::PlayerManager;
 
 use super::menu_bar;
 use super::hierarchy;
@@ -48,6 +49,8 @@ pub fn editor_screen(
     audio_engine: &mut Option<AudioEngine>,
     audio_instance: &mut Option<SoundInstance>,
     waveform_viewer: &mut waveform::WaveformViewer,
+    player_manager: &mut PlayerManager,
+    project_type: ProjectType,
 ) {
     let (hierarchy_dock, inspector_dock, console_dock) = current_project
         .as_ref()
@@ -58,7 +61,7 @@ pub fn editor_screen(
     menu_bar::show_menu_bar(ctx, viewport_manager, _input, target, screen, ww, wh, fps, open_project, new_project, project_name, current_project, project_dir, world, dirty, show_confirm, confirm_target, show_settings, sprite_editor, pending_mesh_load, _window);
     let is_playing = *screen == crate::project::AppScreen::PlayTest;
     if !is_playing {
-        hierarchy::show_hierarchy(ctx, world, selected_entities, pending_delete, dirty, renaming, rename_buffer, undo_history, hierarchy_dock);
+        hierarchy::show_hierarchy(ctx, world, selected_entities, pending_delete, dirty, renaming, rename_buffer, undo_history, hierarchy_dock, player_manager, project_type);
         let cam = viewport_manager.primary_camera_mut();
         inspector::show_inspector(ctx, cam, world, selected_entities, dirty, undo_history, inspector_dock);
         console::show_console(ctx, project_dir, audio_engine, audio_instance, waveform_viewer, console_dock);

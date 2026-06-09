@@ -10,6 +10,7 @@ use rustix_audio::{AudioEngine, SoundInstance};
 use rustix_animation::AnimationClip;
 use rustix_physics::PhysicsWorld;
 use rustix_asset::mmap::MappedFile;
+use rustix_scripting::ScriptEngine;
 
 use crate::project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo};
 use crate::scene::{Transform, Name, MeshComponent, Material};
@@ -29,6 +30,7 @@ pub struct AppState {
     pub animation_clips: HashMap<String, AnimationClip>,
     pub physics_world: PhysicsWorld,
     pub player_manager: PlayerManager,
+    pub script_engine: ScriptEngine,
 
     pub scene_pipeline: Option<rustix_render::pipeline::GraphicsPipeline>,
     pub scene_descriptor_pool: Option<vk::DescriptorPool>,
@@ -243,6 +245,7 @@ impl AppState {
             animation_clips: HashMap::new(),
             physics_world: PhysicsWorld::default(),
             player_manager,
+            script_engine: ScriptEngine::new(),
 
             scene_pipeline: None,
             scene_descriptor_pool: None,

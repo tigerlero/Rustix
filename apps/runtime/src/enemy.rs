@@ -103,6 +103,64 @@ pub fn spawn_enemy(
     ))
 }
 
+/// Spawn a 2D enemy entity with quad mesh and flat box collider (no gravity).
+pub fn spawn_enemy_2d(
+    world: &mut EcsWorld,
+    position: Vec3,
+    name: &str,
+    color: Vec3,
+    ai: EnemyAI,
+    health: f32,
+    attack_damage: f32,
+    attack_range: f32,
+    attack_cooldown: f32,
+) -> hecs::Entity {
+    world.spawn((
+        Transform {
+            position,
+            rotation: Vec3::ZERO,
+            scale: Vec3::ONE,
+        },
+        Name(name.into()),
+        MeshComponent("Quad".into()),
+        Material {
+            base_color: color,
+            alpha: 1.0,
+            roughness: 0.5,
+            metallic: 0.0,
+            ao: 1.0,
+            emissive: 0.0,
+        },
+        RigidBody {
+            body_type: BodyType::Dynamic,
+            mass: 40.0,
+            velocity: Vec3::ZERO,
+            angular_velocity: Vec3::ZERO,
+            gravity_scale: 0.0,
+            drag: 4.0,
+            angular_drag: 0.05,
+            use_gravity: false,
+            can_sleep: true,
+            sleeping: false,
+        },
+        Collider {
+            shape: ColliderShape::Box { half_extents: Vec3::new(0.5, 0.5, 0.05) },
+            is_trigger: false,
+            restitution: 0.0,
+            friction: 0.5,
+        },
+        Enemy { enemy_type: EnemyType::Melee },
+        ai,
+        Health::new(health),
+        CombatStats {
+            attack_damage,
+            attack_range,
+            attack_cooldown,
+            current_cooldown: 0.0,
+        },
+    ))
+}
+
 /// Spawn an enemy with a special skill.
 pub fn spawn_enemy_with_skill(
     world: &mut EcsWorld,
@@ -171,6 +229,10 @@ pub fn update_enemies(
         }
         enemies.push((e, transform.position, *ai, *stats, *health));
     }
+    if enemies.is_empty() {
+        tracing::debug!("update_enemies: no living enemies found");
+        return;
+    }
 
     for (entity, pos, ai, mut stats, _) in enemies {
         if !ai.can_follow && !ai.can_attack {
@@ -202,6 +264,7 @@ pub fn update_enemies(
                 if let Ok(mut body) = world.get::<&mut RigidBody>(entity) {
                     body.velocity.x = dir.x * ai.move_speed;
                     body.velocity.z = dir.z * ai.move_speed;
+                    tracing::trace!("enemy {:?} following player {:?} vel=({:.1},{:.1})", entity, target, body.velocity.x, body.velocity.z);
                 }
             } else {
                 // Stop moving when close enough
@@ -228,6 +291,7 @@ pub fn update_enemies(
             }
         } else {
             // No target in range - stop moving
+            tracing::trace!("enemy {:?} no player in follow range {:.1}", entity, ai.follow_range);
             if let Ok(mut body) = world.get::<&mut RigidBody>(entity) {
                 body.velocity.x = 0.0;
                 body.velocity.z = 0.0;

@@ -6,9 +6,11 @@ use rustix_render::{DirectionalLight, PointLight, SpotLight};
 
 use crate::scene::{Transform, Name, MeshComponent, Material, Parent};
 use crate::undo::{UndoHistory, EditorAction};
+use crate::player::{PlayerManager, spawn_player, spawn_player_2d};
+use crate::enemy::{spawn_enemy, spawn_enemy_2d, EnemyAI};
 use rustix_physics::{RigidBody, Collider};
 
-use crate::project::DockPosition;
+use crate::project::{DockPosition, ProjectType};
 
 #[allow(clippy::too_many_arguments)]
 pub fn show_hierarchy(
@@ -21,6 +23,8 @@ pub fn show_hierarchy(
     rename_buffer: &std::cell::RefCell<String>,
     undo_history: &std::cell::RefCell<UndoHistory>,
     dock: DockPosition,
+    player_manager: &mut PlayerManager,
+    project_type: ProjectType,
 ) {
     let gen = ctx.data(|d| d.get_temp::<u64>(egui::Id::new("layout_generation")).unwrap_or(0));
     let panel_id = egui::Id::new(("hierarchy", gen));
@@ -360,7 +364,6 @@ pub fn show_hierarchy(
                 }
                 *renaming.borrow_mut() = None;
             }
-        });
         ctx.data_mut(|d| d.insert_temp(search_id, search_filter));
         let to_delete = pending_delete.borrow_mut().drain(..).collect::<Vec<_>>();
         for entity in to_delete {
@@ -454,6 +457,67 @@ pub fn show_hierarchy(
                 dirty.set(true);
                 ui.close();
             }
+        });
+        ui.menu_button("Create Player", |ui| {
+            let count = player_manager.players.len() as u32;
+            let e = if project_type == ProjectType::Dim2 {
+                let pos = Vec3::new(0.0, 0.0, 0.0);
+                let e = spawn_player_2d(world, pos, count);
+                tracing::info!("hierarchy spawned 2D player {} at {:?}", count + 1, pos);
+                e
+            } else {
+                let pos = Vec3::new(0.0, 2.0, 0.0);
+                let e = spawn_player(world, pos, count, "Capsule");
+                tracing::info!("hierarchy spawned 3D player {} at {:?}", count + 1, pos);
+                e
+            };
+            player_manager.players.push(e);
+            let snapshot = crate::scene::entity_to_scene_entity(world, e);
+            undo_history.borrow_mut().push(EditorAction::AddEntity { entity: e, snapshot });
+            *selected_entities.borrow_mut() = vec![e];
+            dirty.set(true);
+            ui.close();
+        });
+        ui.menu_button("Create Enemy", |ui| {
+            let count = world.query::<&crate::enemy::Enemy>().iter().count() as u32;
+            let e = if project_type == ProjectType::Dim2 {
+                let pos = Vec3::new(0.0, 0.0, 0.0);
+                let e = spawn_enemy_2d(
+                    world,
+                    pos,
+                    &format!("Enemy {}", count + 1),
+                    Vec3::new(0.9, 0.2, 0.2),
+                    EnemyAI { can_follow: true, can_attack: true, follow_range: 20.0, move_speed: 3.0, stop_distance: 1.5 },
+                    40.0,
+                    10.0,
+                    2.0,
+                    1.0,
+                );
+                tracing::info!("hierarchy spawned 2D enemy {} at {:?}", count + 1, pos);
+                e
+            } else {
+                let pos = Vec3::new(0.0, 2.0, 0.0);
+                let e = spawn_enemy(
+                    world,
+                    pos,
+                    &format!("Enemy {}", count + 1),
+                    "Capsule",
+                    Vec3::new(0.9, 0.2, 0.2),
+                    EnemyAI { can_follow: true, can_attack: true, follow_range: 20.0, move_speed: 3.0, stop_distance: 1.5 },
+                    40.0,
+                    10.0,
+                    2.0,
+                    1.0,
+                );
+                tracing::info!("hierarchy spawned 3D enemy {} at {:?}", count + 1, pos);
+                e
+            };
+            let snapshot = crate::scene::entity_to_scene_entity(world, e);
+            undo_history.borrow_mut().push(EditorAction::AddEntity { entity: e, snapshot });
+            *selected_entities.borrow_mut() = vec![e];
+            dirty.set(true);
+            ui.close();
+        });
         });
     });
     if let Some(inner) = result {

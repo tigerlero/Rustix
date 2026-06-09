@@ -72,6 +72,8 @@ pub struct ScriptConfig {
 pub struct ScriptComponent {
     pub source: String,
     pub config: ScriptConfig,
+    #[serde(default)]
+    pub preset_name: Option<String>,
 }
 
 impl Default for ScriptComponent {
@@ -79,6 +81,7 @@ impl Default for ScriptComponent {
         Self {
             source: String::new(),
             config: ScriptConfig::default(),
+            preset_name: None,
         }
     }
 }
@@ -92,12 +95,14 @@ pub struct ScriptInstance {
     pub id: ScriptInstanceId,
     pub entity: Entity,
     pub ast: rhai::AST,
+    pub source: String,
 }
 
 /// Engine API functions available to scripts.
 #[derive(Debug, Default)]
 pub struct ScriptApi {
     pub instances: HashMap<ScriptInstanceId, ScriptInstance>,
+    pub entity_to_instance: HashMap<Entity, ScriptInstanceId>,
     pub next_instance_id: ScriptInstanceId,
 }
 
@@ -106,16 +111,19 @@ impl ScriptApi {
         Self::default()
     }
 
-    pub fn register(&mut self, entity: Entity, ast: rhai::AST) -> ScriptInstanceId {
+    pub fn register(&mut self, entity: Entity, ast: rhai::AST, source: &str) -> ScriptInstanceId {
         let id = self.next_instance_id;
         self.next_instance_id = self.next_instance_id.wrapping_add(1);
-        self.instances.insert(id, ScriptInstance { id, entity, ast });
+        self.instances.insert(id, ScriptInstance { id, entity, ast, source: source.to_string() });
+        self.entity_to_instance.insert(entity, id);
         debug!(entity = ?entity, "Registered script instance");
         id
     }
 
     pub fn unregister(&mut self, id: ScriptInstanceId) {
-        self.instances.remove(&id);
+        if let Some(inst) = self.instances.remove(&id) {
+            self.entity_to_instance.remove(&inst.entity);
+        }
     }
 }
 
@@ -155,6 +163,14 @@ impl ScriptEngine {
         engine.register_fn("cross", Vec3::cross);
         engine.register_fn("distance", Vec3::distance);
 
+        // Register time & math helpers for gameplay scripts
+        let start = std::time::Instant::now();
+        engine.register_fn("time", move || start.elapsed().as_secs_f32());
+        engine.register_fn("sin", |x: f32| x.sin());
+        engine.register_fn("cos", |x: f32| x.cos());
+        engine.register_fn("lerp", |a: f32, b: f32, t: f32| a + (b - a) * t.clamp(0.0, 1.0));
+        engine.register_fn("clamp", |v: f32, min: f32, max: f32| v.clamp(min, max));
+
         Self {
             rhai_engine: engine,
             api: ScriptApi::new(),
@@ -172,7 +188,7 @@ impl ScriptEngine {
             return Ok(0);
         }
         let ast = self.compile(source)?;
-        Ok(self.api.register(entity, ast))
+        Ok(self.api.register(entity, ast, source))
     }
 
     /// Run a script instance (called each tick).
@@ -227,8 +243,49 @@ impl ScriptEngine {
         });
     }
 
-    /// Update all script instances (called each tick).
+    /// Sync script instances with ECS world. Registers new ScriptComponents,
+    /// removes instances for removed/disabled components, and recompiles when source changes.
+    pub fn sync_instances(&mut self, world: &mut hecs::World) {
+        // Collect current enabled script components
+        let mut active: Vec<(Entity, String)> = Vec::new();
+        for (entity, script) in world.query::<(Entity, &ScriptComponent)>().iter() {
+            if script.config.enabled && !script.source.is_empty() {
+                active.push((entity, script.source.clone()));
+            }
+        }
+
+        // Remove stale instances (entity no longer has ScriptComponent or source changed)
+        let mut to_remove: Vec<ScriptInstanceId> = Vec::new();
+        for (id, inst) in &self.api.instances {
+            match active.iter().find(|(e, _)| *e == inst.entity) {
+                Some((_, source)) => {
+                    if *source != inst.source {
+                        to_remove.push(*id);
+                    }
+                }
+                None => {
+                    to_remove.push(*id);
+                }
+            }
+        }
+        for id in to_remove {
+            self.api.unregister(id);
+        }
+
+        // Register new instances
+        for (entity, source) in active {
+            if self.api.entity_to_instance.contains_key(&entity) {
+                continue;
+            }
+            if let Ok(ast) = self.compile(&source) {
+                self.api.register(entity, ast, &source);
+            }
+        }
+    }
+
+    /// Update all script instances (called each tick). Call sync_instances first.
     pub fn update(&mut self, world: &mut hecs::World) {
+        self.sync_instances(world);
         let instances: Vec<ScriptInstanceId> = self.api.instances.keys().copied().collect();
         for id in instances {
             let _ = self.run_script(id, world);

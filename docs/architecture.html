@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Architecture — Rustix Engine</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0b0c10;
+            --bg-elev: #121418;
+            --bg-card: #1a1d23;
+            --border: #2a2f38;
+            --text: #c9d1d9;
+            --text-dim: #8b949e;
+            --text-heading: #f0f6fc;
+            --accent: #e67e22;
+            --accent-hover: #d35400;
+            --accent-glow: rgba(230, 126, 34, 0.25);
+            --success: #2ecc71;
+            --info: #3498db;
+            --code-bg: #0d1117;
+            --radius: 12px;
+            --radius-sm: 8px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        a { color: var(--accent); text-decoration: none; transition: opacity 0.2s; }
+        a:hover { opacity: 0.85; }
+
+        /* Nav */
+        nav {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            z-index: 100;
+            background: rgba(11, 12, 16, 0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+        }
+        .nav-inner {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+            height: 64px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .logo {
+            font-weight: 800;
+            font-size: 1.4rem;
+            color: var(--text-heading);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .logo-icon {
+            width: 36px; height: 36px;
+            border-radius: var(--radius-sm);
+            object-fit: contain;
+        }
+        .nav-links {
+            display: flex;
+            gap: 32px;
+            align-items: center;
+        }
+        .nav-links a {
+            color: var(--text-dim);
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+        .nav-links a:hover { color: var(--text-heading); }
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 22px;
+            border-radius: var(--radius-sm);
+            font-weight: 600;
+            font-size: 0.9rem;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: var(--accent);
+            color: #fff;
+            box-shadow: 0 0 0 0 var(--accent-glow);
+        }
+        .btn-primary:hover {
+            background: var(--accent-hover);
+            box-shadow: 0 0 0 4px var(--accent-glow);
+            opacity: 1;
+        }
+        .btn-secondary {
+            background: transparent;
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        .btn-secondary:hover {
+            background: var(--bg-card);
+            border-color: var(--text-dim);
+            opacity: 1;
+        }
+
+        /* Hero */
+        .hero {
+            padding: 140px 24px 60px;
+            text-align: center;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        .hero h1 {
+            font-size: clamp(2rem, 5vw, 3.5rem);
+            font-weight: 800;
+            color: var(--text-heading);
+            line-height: 1.15;
+            letter-spacing: -0.03em;
+            margin-bottom: 16px;
+        }
+        .hero h1 span { color: var(--accent); }
+        .hero p {
+            font-size: 1.1rem;
+            color: var(--text-dim);
+            max-width: 640px;
+            margin: 0 auto;
+        }
+
+        /* Content */
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 0 24px 80px;
+        }
+        .section {
+            margin-bottom: 80px;
+        }
+        .section h2 {
+            font-size: 1.8rem;
+            font-weight: 800;
+            color: var(--text-heading);
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .section h3 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: var(--text-heading);
+            margin: 32px 0 16px;
+        }
+        .section p {
+            color: var(--text-dim);
+            margin-bottom: 16px;
+            max-width: 780px;
+        }
+        .section ul {
+            margin-left: 20px;
+            color: var(--text-dim);
+        }
+        .section ul li { margin-bottom: 8px; }
+
+        /* Layer stack */
+        .layer-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin: 32px 0;
+        }
+        .layer {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 16px 20px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            transition: border-color 0.2s;
+        }
+        .layer:hover { border-color: var(--accent); }
+        .layer-num {
+            width: 32px; height: 32px;
+            border-radius: 50%;
+            background: var(--accent);
+            color: #fff;
+            font-weight: 700;
+            font-size: 0.85rem;
+            display: grid;
+            place-items: center;
+            flex-shrink: 0;
+        }
+        .layer-title {
+            font-weight: 600;
+            color: var(--text-heading);
+            font-size: 0.95rem;
+            min-width: 140px;
+        }
+        .layer-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .chip {
+            background: var(--bg-elev);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            padding: 4px 12px;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+        }
+
+        /* Cards grid */
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 16px;
+            margin: 24px 0;
+        }
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        .card:hover {
+            transform: translateY(-2px);
+            border-color: var(--accent);
+        }
+        .card h4 {
+            font-size: 1rem;
+            font-weight: 700;
+            color: var(--text-heading);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .card p {
+            font-size: 0.9rem;
+            color: var(--text-dim);
+            margin: 0;
+        }
+        .card .deps {
+            margin-top: 12px;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            opacity: 0.7;
+        }
+
+        /* Code block */
+        .code-block {
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 20px 24px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.82rem;
+            line-height: 1.7;
+            color: var(--text);
+            overflow-x: auto;
+            margin: 20px 0;
+        }
+        .code-block .kw { color: #ff7b72; }
+        .code-block .ty { color: #79c0ff; }
+        .code-block .str { color: #a5d6ff; }
+        .code-block .num { color: #79c0ff; }
+        .code-block .comment { color: #6e7681; }
+
+        /* Terminal */
+        .terminal {
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+            margin: 20px 0;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+        .terminal-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            background: rgba(255,255,255,0.02);
+        }
+        .term-btn {
+            width: 12px; height: 12px;
+            border-radius: 50%;
+        }
+        .term-btn.r { background: #ff5f56; }
+        .term-btn.y { background: #ffbd2e; }
+        .term-btn.g { background: #27c93f; }
+        .terminal-body {
+            padding: 20px 24px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            line-height: 1.7;
+            color: var(--text-dim);
+        }
+        .terminal-body .prompt { color: var(--accent); }
+        .terminal-body .cmd { color: var(--text-heading); }
+
+        /* Table */
+        .table-wrap {
+            overflow-x: auto;
+            margin: 20px 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+        th, td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+        th {
+            color: var(--text-heading);
+            font-weight: 600;
+            background: var(--bg-elev);
+        }
+        td { color: var(--text-dim); }
+        tr:hover td { background: var(--bg-elev); }
+
+        /* Footer */
+        footer {
+            border-top: 1px solid var(--border);
+            padding: 40px 24px;
+            text-align: center;
+            color: var(--text-dim);
+            font-size: 0.85rem;
+        }
+        footer a { color: var(--text-dim); }
+        footer a:hover { color: var(--text-heading); }
+
+        @media (max-width: 700px) {
+            .nav-links { display: none; }
+            .hero { padding: 120px 20px 40px; }
+            .layer { flex-direction: column; align-items: flex-start; }
+        }
+    </style>
+</head>
+<body>
+
+<nav>
+    <div class="nav-inner">
+        <a href="index.html" class="logo">
+            <img src="rustix-logo.png" alt="Rustix" class="logo-icon">
+            Rustix
+        </a>
+        <div class="nav-links">
+            <a href="index.html">Home</a>
+            <a href="assets.html">Assets</a>
+            <a href="architecture.html">Architecture</a>
+            <a href="index.html#try">Try It</a>
+            <a href="index.html#contribute">Contribute</a>
+            <a href="https://github.com/tigerlero/Rustix" target="_blank" class="btn btn-primary">GitHub</a>
+        </div>
+    </div>
+</nav>
+
+<section class="hero">
+    <h1>Engine <span>Architecture</span></h1>
+    <p>A layered, modular monolith built in Rust. From ECS core to Vulkan renderer, every layer has a single responsibility and a clear dependency direction.</p>
+</section>
+
+<div class="container">
+
+    <!-- Layer Stack -->
+    <section class="section">
+        <h2>Layer Stack</h2>
+        <p>Rustix is organized into six layers. Each layer depends only on layers beneath it, eliminating circular dependencies and enabling isolated testing.</p>
+        <div class="layer-stack">
+            <div class="layer">
+                <div class="layer-num">6</div>
+                <div class="layer-title">Diagnostics</div>
+                <div class="layer-chips">
+                    <span class="chip">tracing</span>
+                    <span class="chip">Tracy profiler</span>
+                    <span class="chip">RenderDoc</span>
+                    <span class="chip">Metrics</span>
+                </div>
+            </div>
+            <div class="layer">
+                <div class="layer-num">5</div>
+                <div class="layer-title">Gameplay</div>
+                <div class="layer-chips">
+                    <span class="chip">Physics (Rapier)</span>
+                    <span class="chip">Audio (cpal)</span>
+                    <span class="chip">Animation</span>
+                    <span class="chip">AI / Nav</span>
+                    <span class="chip">Networking</span>
+                    <span class="chip">Scripting</span>
+                    <span class="chip">egui UI</span>
+                </div>
+            </div>
+            <div class="layer">
+                <div class="layer-num">4</div>
+                <div class="layer-title">Content</div>
+                <div class="layer-chips">
+                    <span class="chip">Asset Registry</span>
+                    <span class="chip">Stream Engine</span>
+                    <span class="chip">Hot-Reload</span>
+                    <span class="chip">Import Pipeline</span>
+                    <span class="chip">Terrain Chunks</span>
+                </div>
+            </div>
+            <div class="layer">
+                <div class="layer-num">3</div>
+                <div class="layer-title">Graphics</div>
+                <div class="layer-chips">
+                    <span class="chip">Vulkan (ash)</span>
+                    <span class="chip">Pipeline Cache</span>
+                    <span class="chip">Bindless Descriptors</span>
+                    <span class="chip">Frame Graph</span>
+                    <span class="chip">GPU Memory</span>
+                    <span class="chip">Shader Compiler</span>
+                </div>
+            </div>
+            <div class="layer">
+                <div class="layer-num">2</div>
+                <div class="layer-title">Platform</div>
+                <div class="layer-chips">
+                    <span class="chip">winit</span>
+                    <span class="chip">Wayland / X11</span>
+                    <span class="chip">Input (evdev)</span>
+                    <span class="chip">Gamepad</span>
+                    <span class="chip">Time</span>
+                </div>
+            </div>
+            <div class="layer">
+                <div class="layer-num">1</div>
+                <div class="layer-title">Core</div>
+                <div class="layer-chips">
+                    <span class="chip">ECS (hecs)</span>
+                    <span class="chip">Job System (rayon)</span>
+                    <span class="chip">Math (glam)</span>
+                    <span class="chip">Memory</span>
+                    <span class="chip">Config</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Crate Cards -->
+    <section class="section">
+        <h2>Workspace Crates</h2>
+        <div class="cards">
+            <div class="card">
+                <h4><span style="color: var(--accent);">&#9679;</span> core</h4>
+                <p>ECS, job system, math, memory allocators, config, logging init.</p>
+                <div class="deps">hecs, glam, rayon, tracing, serde</div>
+            </div>
+            <div class="card">
+                <h4><span style="color: var(--accent);">&#9679;</span> platform</h4>
+                <p>Window creation, input (keyboard, mouse, gamepad), OS abstractions.</p>
+                <div class="deps">winit, xkbcommon, evdev</div>
+            </div>
+            <div class="card">
+                <h4><span style="color: var(--accent);">&#9679;</span> render</h4>
+                <p>Vulkan device, swapchain, pipelines, shaders, GPU memory, frame graph.</p>
+                <div class="deps">ash, gpu-allocator, spirv-reflect</div>
+            </div>
+            <div class="card">
+                <h4><span style="color: var(--accent);">&#9679;</span> asset</h4>
+                <p>Asset loading, format decoding, hot-reload, streaming, GPU upload.</p>
+                <div class="deps">serde, tokio, notify</div>
+            </div>
+            <div class="card">
+                <h4><span style="color: var(--accent);">&#9679;</span> physics</h4>
+                <p>Physics world, colliders, rigid bodies, queries, character controllers.</p>
+                <div class="deps">rapier3d</div>
+            </div>
+            <div class="card">
+                <h4><span style="color: var(--accent);">&#9679;</span> audio</h4>
+                <p>Audio playback, streaming, 3D spatialization.</p>
+                <div class="deps">cpal, symphonium</div>
+            </div>
+            <div class="card">
+                <h4><span style="color: var(--accent);">&#9679;</span> animation</h4>
+                <p>Skeleton, skinning, animation clips, blend trees.</p>
+                <div class="deps">core (math)</div>
+            </div>
+            <div class="card">
+                <h4><span style="color: var(--accent);">&#9679;</span> networking</h4>
+                <p>Transport (QUIC/TCP), connection management, replication, RPC.</p>
+                <div class="deps">tokio, quinn</div>
+            </div>
+            <div class="card">
+                <h4><span style="color: var(--info);">&#9679;</span> runtime</h4>
+                <p>The editor and game runtime binary. Combines all crates into a playable application with egui UI, combat, and scene editing.</p>
+                <div class="deps">all above + egui</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ECS -->
+    <section class="section">
+        <h2>ECS Architecture</h2>
+        <p>We use <strong>hecs</strong> — a lightweight archetypal ECS (~1/10th the deps of bevy_ecs). Entities with the same component types are stored in contiguous arrays for cache-friendly iteration. System scheduling is our own code, giving full control over parallelism.</p>
+
+        <div class="code-block">
+<span class="kw">use</span> hecs::{Entity, World <span class="kw">as</span> EcsWorld, Query, EntityBuilder};
+
+<span class="comment">// Spawn an entity with multiple components</span>
+<span class="kw">let</span> e = world.spawn((
+    Transform { position: Vec3::ZERO, .. },
+    Name(<span class="str">"Player"</span>.into()),
+    Health::new(<span class="num">100.0</span>),
+    CombatStats { attack_damage: <span class="num">15.0</span>, .. },
+));
+
+<span class="comment">// Query all living enemies</span>
+<span class="kw">for</span> (e, transform, health) <span class="kw">in</span>
+    world.query::&lt;(Entity, &Transform, &Health)&gt;().iter()
+{
+    <span class="kw">if</span> health.is_alive() { <span class="comment">/* ... */</span> }
+}</span>
+        </div>
+    </section>
+
+    <!-- Combat System -->
+    <section class="section">
+        <h2>Combat System</h2>
+        <p>Implemented in the runtime app as an ECS module. Supports both <strong>2D</strong> and <strong>3D</strong> projects with event-based damage resolution.</p>
+
+        <h3>Combat Components</h3>
+        <div class="code-block">
+<span class="kw">pub struct</span> <span class="ty">Health</span> { <span class="kw">pub</span> current: <span class="ty">f32</span>, <span class="kw">pub</span> max: <span class="ty">f32</span> }
+
+<span class="kw">pub struct</span> <span class="ty">CombatStats</span> {
+    <span class="kw">pub</span> attack_damage: <span class="ty">f32</span>,
+    <span class="kw">pub</span> attack_range: <span class="ty">f32</span>,
+    <span class="kw">pub</span> attack_cooldown: <span class="ty">f32</span>,
+    <span class="kw">pub</span> current_cooldown: <span class="ty">f32</span>,
+}
+
+<span class="kw">pub struct</span> <span class="ty">Skill</span> {
+    <span class="kw">pub</span> name: <span class="ty">String</span>,
+    <span class="kw">pub</span> damage: <span class="ty">f32</span>,
+    <span class="kw">pub</span> range: <span class="ty">f32</span>,
+    <span class="kw">pub</span> cooldown: <span class="ty">f32</span>,
+}
+
+<span class="kw">pub struct</span> <span class="ty">Dead</span>; <span class="comment">// marker component</span>
+        </div>
+
+        <h3>Game Loop Integration</h3>
+        <div class="terminal">
+            <div class="terminal-header">
+                <span class="term-btn r"></span>
+                <span class="term-btn y"></span>
+                <span class="term-btn g"></span>
+            </div>
+            <div class="terminal-body">
+                <div><span class="prompt">&gt;</span> <span class="cmd">player::update_players</span>(world, manager, cam, input, dt, &mut events);</div>
+                <div><span class="prompt">&gt;</span> <span class="cmd">enemy::update_enemies</span>(world, dt, &mut events);</div>
+                <div><span class="prompt">&gt;</span> <span class="cmd">combat::tick_cooldowns</span>(world, dt);</div>
+                <div><span class="prompt">&gt;</span> <span class="cmd">combat::resolve_damage</span>(world, &events);</div>
+                <div><span class="prompt">&gt;</span> <span class="cmd">combat::cleanup_dead</span>(world);</div>
+            </div>
+        </div>
+
+        <h3>2D vs 3D Combat</h3>
+        <div class="table-wrap">
+            <table>
+                <tr>
+                    <th>Feature</th>
+                    <th>3D</th>
+                    <th>2D</th>
+                </tr>
+                <tr><td>Player mesh</td><td>Capsule</td><td>Quad</td></tr>
+                <tr><td>Enemy mesh</td><td>Capsule</td><td>Quad</td></tr>
+                <tr><td>Collider</td><td>Capsule</td><td>Box (flat)</td></tr>
+                <tr><td>Gravity</td><td>Enabled</td><td>Disabled</td></tr>
+                <tr><td>Spawn position</td><td>(0, 2, 0)</td><td>(0, 0, 0)</td></tr>
+                <tr><td>Movement plane</td><td>XZ</td><td>XY</td></tr>
+            </table>
+        </div>
+    </section>
+
+    <!-- Game Loop -->
+    <section class="section">
+        <h2>Game Loop</h2>
+        <p>Variable render + physics step. Player and enemy updates run every frame. Physics applies velocity deltas and writes back transforms.</p>
+        <div class="code-block">
+<span class="comment">// 1. Input poll</span>
+input.poll();
+
+<span class="comment">// 2. Player & enemy AI</span>
+player::update_players(world, manager, cam, input, dt, &mut events);
+enemy::update_enemies(world, dt, &mut events);
+
+<span class="comment">// 3. Combat resolution</span>
+combat::tick_cooldowns(world, dt);
+combat::resolve_damage(world, &events);
+<span class="kw">let</span> dead = combat::cleanup_dead(world);
+
+<span class="comment">// 4. Physics integration</span>
+<span class="kw">let</span> results = step_physics(&mut bodies, &physics_world, dt);
+<span class="kw">for</span> (entity, pos_delta, rot_delta) <span class="kw">in</span> results {
+    transform.position += pos_delta;
+    transform.rotation += rot_delta;
+}
+
+<span class="comment">// 5. Camera & animation</span>
+camera.update(input, dt);
+update_animators(&mut animators, &clips, dt);
+
+<span class="comment">// 6. Render submission</span>
+frame_graph.compile().submit();</span>
+        </div>
+    </section>
+
+    <!-- Editor Integration -->
+    <section class="section">
+        <h2>Editor Integration</h2>
+        <p>The editor UI is built with <strong>egui</strong> inside the runtime. Combat entities can be spawned directly from the <strong>Hierarchy</strong> panel, and the inspector exposes all component fields for live editing.</p>
+        <div class="cards">
+            <div class="card">
+                <h4><span style="color: var(--success);">&#10003;</span> Create Player</h4>
+                <p>Spawns a player entity (3D capsule or 2D quad) and registers it in the PlayerManager.</p>
+            </div>
+            <div class="card">
+                <h4><span style="color: var(--success);">&#10003;</span> Create Enemy</h4>
+                <p>Spawns an enemy with default AI stats. Adapts to Dim2/Dim3 automatically.</p>
+            </div>
+            <div class="card">
+                <h4><span style="color: var(--success);">&#10003;</span> Undo / Redo</h4>
+                <p>Every spawn is recorded as an AddEntity action in the undo history.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Build -->
+    <section class="section">
+        <h2>Build System</h2>
+        <p>A single Cargo workspace with 15+ members. No circular dependencies. Each crate has a single responsibility.</p>
+        <div class="terminal">
+            <div class="terminal-header">
+                <span class="term-btn r"></span>
+                <span class="term-btn y"></span>
+                <span class="term-btn g"></span>
+            </div>
+            <div class="terminal-body">
+                <div><span class="prompt">$</span> <span class="cmd">cargo check -p rustix-runtime</span></div>
+                <div><span class="prompt">$</span> <span class="cmd">cargo test --all</span></div>
+                <div><span class="prompt">$</span> <span class="cmd">cargo run -p rustix-runtime</span></div>
+            </div>
+        </div>
+    </section>
+
+</div>
+
+<footer>
+    <p>
+        Released under the MIT License —
+        <a href="https://github.com/tigerlero/Rustix" target="_blank">GitHub</a> &middot;
+        <a href="index.html">Home</a> &middot;
+        <a href="ARCHITECTURE.md">Raw Markdown</a>
+    </p>
+    <p style="margin-top: 8px; opacity: 0.6;">Built with Rust, Vulkan, and caffeine.</p>
+</footer>
+
+</body>
+</html>
