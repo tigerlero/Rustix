@@ -6,6 +6,7 @@ use rustix_render::pipeline::GraphicsPipeline2D;
 use rustix_render::memory::GpuBuffer;
 use rustix_render::GpuTexture;
 
+#[allow(dead_code)]
 pub fn render_2d_overlay(
     renderer: &Renderer,
     cmd: vk::CommandBuffer,

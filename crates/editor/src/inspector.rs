@@ -1,6 +1,6 @@
 //! Inspector panel: component fields, add/remove components.
 
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 
 /// A serializable field value for the inspector.
 #[derive(Debug, Clone, PartialEq)]

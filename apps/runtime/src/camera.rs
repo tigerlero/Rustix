@@ -77,12 +77,9 @@ impl EditorCamera {
         let zoom_speed = 1.0 * dt;
         let move_speed = 2.0 * dt;
 
-        let (dx, dy) = {
-            let rd = input.mouse().raw_delta();
-            if rd.0 != 0.0 || rd.1 != 0.0 { rd } else { input.mouse().delta() }
-        };
+        let (dx, dy) = input.mouse().delta();
         let shift_held = k.down(KeyCode::ShiftLeft) || k.down(KeyCode::ShiftRight);
-        let alt_held = k.down(KeyCode::AltLeft) || k.down(KeyCode::AltRight);
+        let _alt_held = k.down(KeyCode::AltLeft) || k.down(KeyCode::AltRight);
 
         match self.mode {
             CameraMode::Orbit => {
@@ -103,6 +100,12 @@ impl EditorCamera {
                 }
                 if input.mouse().down(rustix_platform::input::MouseButton::Middle) {
                     self.center += Vec3::new(-dx * 0.01 * self.distance * 0.05, dy * 0.01 * self.distance * 0.05, 0.0);
+                }
+
+                let scroll = input.mouse().scroll();
+                if scroll.1 != 0.0 {
+                    self.distance -= scroll.1 * 0.5 * self.distance.max(1.0);
+                    self.distance = self.distance.max(0.5);
                 }
             }
             CameraMode::FirstPerson => {
@@ -125,6 +128,11 @@ impl EditorCamera {
                 if input.mouse().down(rustix_platform::input::MouseButton::Right) {
                     self.yaw += dx * 0.005;
                     self.pitch = (self.pitch - dy * 0.005).clamp(-1.4, 1.4);
+                }
+
+                let scroll = input.mouse().scroll();
+                if scroll.1 != 0.0 {
+                    self.position += forward * scroll.1 * move_speed * 2.0;
                 }
             }
         }

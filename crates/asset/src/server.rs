@@ -136,7 +136,6 @@ impl<T: Asset> std::fmt::Debug for AssetRef<'_, T> {
 trait AnyStore: Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn replace_any(&self, handle: UntypedHandle, asset: Box<dyn Any>) -> Option<UntypedHandle>;
-    fn is_referenced_any(&self, handle: UntypedHandle) -> bool;
     fn drain_unreferenced_any(&self) -> usize;
 }
 
@@ -148,11 +147,6 @@ impl<T: Asset> AnyStore for RwLock<AssetStore<T>> {
         let typed_asset = asset.downcast::<T>().ok()?;
         let new_handle = self.write().replace(typed_handle, *typed_asset)?;
         Some(new_handle.erase())
-    }
-
-    fn is_referenced_any(&self, handle: UntypedHandle) -> bool {
-        let typed_handle = Handle::<T>::new(handle.index, handle.generation);
-        self.read().is_referenced(typed_handle)
     }
 
     fn drain_unreferenced_any(&self) -> usize {

@@ -219,7 +219,7 @@ pub fn build_chunk_skirt(
     let mut skirt_indices = Vec::new();
 
     // Helper to add a skirt strip between two edges
-    let mut add_strip = |edge0: Vec<usize>, edge1: Vec<usize>, edge1_heights: Option<&[f32]>| {
+    let mut add_strip = |edge0: Vec<usize>, _edge1: Vec<usize>, edge1_heights: Option<&[f32]>| {
         let base = skirt_verts.len() as u16;
         for (i, &idx0) in edge0.iter().enumerate() {
             let v0 = chunk.vertices[idx0];

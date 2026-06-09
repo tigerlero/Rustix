@@ -65,6 +65,8 @@ impl UndoHistory {
         }
     }
 
+    #[allow(dead_code)]
     pub fn can_undo(&self) -> bool { self.index > 0 }
+    #[allow(dead_code)]
     pub fn can_redo(&self) -> bool { self.index < self.actions.len() }
 }

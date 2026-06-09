@@ -13,6 +13,7 @@ pub enum DrawMode {
 }
 
 /// State for the sprite editor.
+#[allow(dead_code)]
 pub struct SpriteEditor {
     sprite: Sprite,
     fill_color: [u8; 4],
@@ -41,6 +42,7 @@ impl Default for SpriteEditor {
     }
 }
 
+#[allow(dead_code)]
 impl SpriteEditor {
     pub fn new(width: u32, height: u32) -> Self {
         Self {

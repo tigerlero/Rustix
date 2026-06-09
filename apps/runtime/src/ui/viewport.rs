@@ -8,7 +8,6 @@ pub use primary::show_viewport;
 pub use secondary::show_secondary_viewport;
 
 use rustix_core::ecs::EcsWorld;
-use crate::camera::EditorCamera;
 use crate::project::{AppScreen, CameraBookmark};
 use crate::undo::UndoHistory;
 

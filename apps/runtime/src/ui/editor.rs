@@ -3,7 +3,6 @@ use rustix_platform::input::InputManager;
 use rustix_audio::{AudioEngine, SoundInstance};
 
 use std::path::Path;
-use crate::camera::EditorCamera;
 use crate::project::{AppScreen, ConfirmTarget, ProjectInfo, write_project_file, EditorCameraState, LayoutState, ViewportLayout, DockPosition};
 use crate::scene::world_to_scene;
 use crate::undo::UndoHistory;

@@ -3,7 +3,6 @@
 //! Provides structures for serializing entity layouts, component
 //! data, and asset references to a format that can be loaded back.
 
-use hecs::Entity;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 

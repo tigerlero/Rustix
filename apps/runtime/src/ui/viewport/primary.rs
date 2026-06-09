@@ -84,7 +84,7 @@ fn draw_toolbar(
             let rect = egui::Rect::from_min_size(toolbar_rect.min, egui::vec2(320.0, 28.0));
             ui.painter().rect_filled(rect, 6.0, toolbar_bg);
             ui.painter().rect_stroke(rect, 6.0, egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 60, 75)), egui::StrokeKind::Inside);
-            ui.allocate_ui_at_rect(rect.shrink(4.0), |ui| {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect.shrink(4.0)), |ui| {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Gizmo:").weak().size(11.0));
                     if ui.selectable_label(gizmo_mode == 0, egui::RichText::new("E").size(12.0).strong()).clicked() { gizmo_mode = 0; }
@@ -95,7 +95,7 @@ fn draw_toolbar(
                     ui.add_space(4.0);
                     if ui.selectable_label(snap_enabled, egui::RichText::new("Snap").size(11.0)).clicked() { snap_enabled = !snap_enabled; }
                     if snap_enabled {
-                        ui.add(egui::DragValue::new(&mut snap_size).speed(0.1).range(0.01..=10.0).prefix("").suffix("").clamp_to_range(false));
+                        ui.add(egui::DragValue::new(&mut snap_size).speed(0.1).range(0.01..=10.0).prefix("").suffix("").clamp_existing_to_range(false));
                     }
                     ui.add_space(8.0);
                     if *screen == AppScreen::PlayTest {
@@ -615,6 +615,7 @@ fn handle_viewport_keys(
     }
 }
 
+#[allow(deprecated)]
 pub fn show_viewport(
     ctx: &egui::Context,
     cam: &mut EditorCamera,
@@ -626,7 +627,7 @@ pub fn show_viewport(
     is_playing: bool,
     screen: &mut AppScreen,
 ) {
-    let mut frame = egui::Frame::central_panel(&ctx.style());
+    let mut frame = egui::Frame::central_panel(&ctx.global_style());
     frame.fill = egui::Color32::TRANSPARENT;
     egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
         let rect = ui.max_rect();

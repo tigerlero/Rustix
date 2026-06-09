@@ -1,5 +1,5 @@
 use egui::{Color32, Pos2, Rect, RichText, Stroke, Vec2};
-use rustix_render::graph::{FrameGraphSnapshot, PassQueue, PassBarrier, PassDesc};
+use rustix_render::graph::{FrameGraphSnapshot, PassQueue};
 
 /// Show a debug overlay window visualizing the last frame graph snapshot.
 pub fn show_frame_graph_overlay(ctx: &egui::Context, open: &mut bool, snapshot: &FrameGraphSnapshot) {
@@ -42,7 +42,7 @@ pub fn show_frame_graph_overlay(ctx: &egui::Context, open: &mut bool, snapshot: 
                 let cols = 4usize;
                 let total_width = cols as f32 * (pass_node_size.x + gap.x);
 
-                let mut cursor = ui.cursor();
+                let cursor = ui.cursor();
                 let origin = cursor.min;
 
                 // Draw merged group backgrounds first

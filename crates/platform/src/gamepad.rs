@@ -1,4 +1,6 @@
-use crate::input::{GamepadAxis, GamepadButton, GamepadId, InputEvent};
+#[cfg(feature = "gamepad")]
+use crate::input::{GamepadAxis, GamepadButton, GamepadId};
+use crate::input::InputEvent;
 
 /// Gamepad input source.
 /// When the `gamepad` feature is enabled, this is backed by `gilrs`.

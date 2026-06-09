@@ -3,7 +3,7 @@ use std::path::Path;
 use rustix_core::ecs::EcsWorld;
 use rustix_platform::input::InputManager;
 
-use crate::camera::{EditorCamera, CameraMode};
+use crate::camera::CameraMode;
 use crate::project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo, write_project_file, EditorCameraState, LayoutState};
 use crate::scene::world_to_scene;
 use crate::sprite_editor;
@@ -11,6 +11,7 @@ use crate::ui::viewport::{ViewportManager, MAX_VIEWPORTS};
 use rustix_platform::window::{CursorMode, WindowHandle};
 
 #[allow(clippy::too_many_arguments)]
+#[allow(deprecated)]
 pub fn show_menu_bar(
     ctx: &egui::Context,
     viewport_manager: &mut ViewportManager,

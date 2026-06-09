@@ -6,6 +6,7 @@ use rustix_render::RenderError;
 /// - accumulation: RGBA16F (weighted premultiplied color)
 /// - revealage: R16F (alpha coverage)
 /// - composite: RGBA16F (result of blending transparency over opaque)
+#[allow(dead_code)]
 pub struct OitResources {
     pub accum_image: vk::Image,
     pub accum_view: vk::ImageView,
@@ -18,6 +19,7 @@ pub struct OitResources {
     _allocations: Vec<gpu_allocator::vulkan::Allocation>,
 }
 
+#[allow(dead_code)]
 impl OitResources {
     pub fn new(renderer: &Renderer, width: u32, height: u32) -> Result<Self, RenderError> {
         let accum_format = vk::Format::R16G16B16A16_SFLOAT;

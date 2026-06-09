@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use rustix_core::ecs::{EcsWorld, Entity};
-use rustix_core::math::{Vec3, Vec4};
+use rustix_core::math::Vec3;
 use rustix_render::{DirectionalLight, PointLight, SpotLight};
 
 use crate::scene::{Transform, Name, MeshComponent, Material, Parent};
@@ -193,7 +193,7 @@ pub fn show_hierarchy(
                     });
                 } else {
                     let drag_id = egui::Id::new(("hier_drag", entity.to_bits().get()));
-                    let drop_frame = egui::Frame::none().inner_margin(2.0);
+                    let drop_frame = egui::Frame::new().inner_margin(2.0);
                     let (_drop_inner, dropped) = ui.dnd_drop_zone(drop_frame, |ui| {
                         let _drag = ui.dnd_drag_source(drag_id, entity, |ui| {
                             ui.horizontal(|ui| {

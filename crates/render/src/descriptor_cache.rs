@@ -65,7 +65,7 @@ impl DescriptorSetLayoutCache {
                 .bindings(bindings)
                 .flags(flags);
 
-            let mut bf: Vec<vk::DescriptorBindingFlags> = Vec::new();
+            let bf;
             let mut binding_flags_info = if let Some(binding_flags) = binding_flags_opt {
                 bf = binding_flags.to_vec();
                 Some(

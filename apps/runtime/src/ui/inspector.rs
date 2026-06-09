@@ -4,7 +4,6 @@ use rustix_render::{DirectionalLight, PointLight, SpotLight, Camera};
 use rustix_audio::{AudioSource, AudioListener};
 use rustix_scripting::ScriptComponent;
 use rustix_physics::{RigidBody, Collider, BodyType, ColliderShape};
-use egui::color_picker::{color_picker_hsva_2d, Alpha};
 
 use crate::camera::{EditorCamera, CameraMode};
 use crate::scene::{Transform, Name, Material, MeshComponent, Parent};
@@ -464,9 +463,9 @@ pub fn show_inspector(
                 });
                 ui.horizontal(|ui| {
                     ui.label("Type:");
-                    let mut is_static = rb.body_type == BodyType::Static;
-                    let mut is_kinematic = rb.body_type == BodyType::Kinematic;
-                    let mut is_dynamic = rb.body_type == BodyType::Dynamic;
+                    let is_static = rb.body_type == BodyType::Static;
+                    let is_kinematic = rb.body_type == BodyType::Kinematic;
+                    let is_dynamic = rb.body_type == BodyType::Dynamic;
                     if ui.selectable_label(is_static, "Static").clicked() { rb.body_type = BodyType::Static; }
                     if ui.selectable_label(is_kinematic, "Kinematic").clicked() { rb.body_type = BodyType::Kinematic; }
                     if ui.selectable_label(is_dynamic, "Dynamic").clicked() { rb.body_type = BodyType::Dynamic; }
@@ -494,9 +493,9 @@ pub fn show_inspector(
                 });
                 ui.horizontal(|ui| {
                     ui.label("Shape:");
-                    let mut is_sphere = matches!(col.shape, ColliderShape::Sphere { .. });
-                    let mut is_box = matches!(col.shape, ColliderShape::Box { .. });
-                    let mut is_capsule = matches!(col.shape, ColliderShape::Capsule { .. });
+                    let is_sphere = matches!(col.shape, ColliderShape::Sphere { .. });
+                    let is_box = matches!(col.shape, ColliderShape::Box { .. });
+                    let is_capsule = matches!(col.shape, ColliderShape::Capsule { .. });
                     if ui.selectable_label(is_sphere, "Sphere").clicked() { col.shape = ColliderShape::Sphere { radius: 0.5 }; }
                     if ui.selectable_label(is_box, "Box").clicked() { col.shape = ColliderShape::Box { half_extents: Vec3::splat(0.5) }; }
                     if ui.selectable_label(is_capsule, "Capsule").clicked() { col.shape = ColliderShape::Capsule { radius: 0.3, height: 1.0 }; }

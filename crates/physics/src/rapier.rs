@@ -93,7 +93,7 @@ pub struct RapierPhysicsWorld {
     pub integration_parameters: IntegrationParameters,
     pub query_pipeline: QueryPipeline,
     pub physics_hooks: (),
-    pub event_handler: CollisionEventCollector,
+    event_handler: CollisionEventCollector,
     gravity: nalgebra::Vector3<f32>,
 
     entity_to_body: HashMap<hecs::Entity, RigidBodyHandle>,
@@ -134,6 +134,7 @@ impl RapierPhysicsWorld {
         self.gravity = vec3_to_nalgebra(settings.gravity);
     }
 
+    #[allow(dead_code)]
     fn gravity(&self) -> nalgebra::Vector3<f32> {
         self.gravity
     }
@@ -629,6 +630,7 @@ fn vec3_to_nalgebra(v: Vec3) -> nalgebra::Vector3<f32> {
     nalgebra::Vector3::new(v.x, v.y, v.z)
 }
 
+#[allow(dead_code)]
 fn nalgebra_point_to_vec3(p: nalgebra::Point3<f32>) -> Vec3 {
     Vec3::new(p.x, p.y, p.z)
 }

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use ash::vk;
 use rustix_core::ecs::{EcsWorld, Entity};
-use rustix_core::math::{Vec3, Vec4, Mat4};
+use rustix_core::math::{Vec4, Mat4};
 use rustix_render::mesh::Mesh;
 use rustix_render::memory::{GpuBuffer, GpuMemoryAllocator};
 use rustix_render::device::GpuDevice;
@@ -36,6 +36,7 @@ impl InstanceData {
 }
 
 /// A GPU buffer that holds per-instance data for one frame.
+#[allow(dead_code)]
 pub struct InstanceBuffer {
     pub buffer: GpuBuffer,
     pub capacity: usize, // max instances
@@ -72,12 +73,14 @@ impl InstanceBuffer {
         count
     }
 
+    #[allow(dead_code)]
     pub fn destroy(&mut self, device: &ash::Device) {
         unsafe { device.destroy_buffer(self.buffer.buffer, None); }
     }
 }
 
 /// GPU buffer holding VkDrawIndexedIndirectCommand entries, one per mesh batch.
+#[allow(dead_code)]
 pub struct IndirectDrawBuffer {
     pub buffer: GpuBuffer,
     pub capacity: usize,
@@ -113,12 +116,14 @@ impl IndirectDrawBuffer {
         count
     }
 
+    #[allow(dead_code)]
     pub fn destroy(&mut self, device: &ash::Device) {
         unsafe { device.destroy_buffer(self.buffer.buffer, None); }
     }
 }
 
 /// One mesh batch: all entities sharing the same mesh.
+#[allow(dead_code)]
 pub struct MeshBatch {
     pub mesh_name: String,
     pub instance_offset: u32, // index into the instance buffer
@@ -127,6 +132,7 @@ pub struct MeshBatch {
 }
 
 /// Groups visible scene entities by mesh and builds instance/indirect buffers.
+#[allow(dead_code)]
 pub struct InstancedMeshBatcher {
     pub instance_buffer: InstanceBuffer,
     pub indirect_buffer: IndirectDrawBuffer,
@@ -137,6 +143,7 @@ pub struct InstancedMeshBatcher {
     max_batches: usize,
 }
 
+#[allow(dead_code)]
 impl InstancedMeshBatcher {
     pub fn new(
         device: &GpuDevice,

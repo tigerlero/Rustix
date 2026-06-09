@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
@@ -18,22 +17,17 @@ mod waveform;
 
 use ash::vk;
 use rustix_core::config;
-use rustix_core::ecs::{EcsWorld, Entity};
-use rustix_core::math::{Vec3, Vec4, Mat4};
+use rustix_core::math::{Vec3, Mat4};
 use rustix_platform::input::InputManager;
 use rustix_platform::window::{WindowConfig, WindowHandle};
 use rustix_render::{Renderer, DirectionalLight};
-use rustix_render::mesh::Mesh;
-use rustix_audio::{AudioEngine, SoundInstance};
-use rustix_animation::{Animator, AnimationClip, update_animators};
-use rustix_physics::{RigidBody, Collider, PhysicsWorld, step_physics};
+use rustix_animation::{Animator, update_animators};
+use rustix_physics::{RigidBody, step_physics};
 
 use rustix_asset::mmap::MappedFile;
 
-use camera::EditorCamera;
-use project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo, load_project_file, create_project_file, add_recent_project, load_recent_projects, write_project_file};
+use project::{AppScreen, ProjectType, load_project_file, create_project_file, add_recent_project, write_project_file};
 use scene::{Transform, Name, MeshComponent, Material, world_transform, scene_to_world, world_to_scene};
-use undo::UndoHistory;
 
 fn main() {
     std::panic::set_hook(Box::new(|info| {
@@ -225,7 +219,7 @@ fn main() {
                         // Update animations
                         {
                             let mut animators: Vec<(hecs::Entity, &mut Animator)> = Vec::new();
-                            for (e, mut a) in app.ecs_world.query_mut::<(&hecs::Entity, &mut Animator)>() {
+                            for (e, a) in app.ecs_world.query_mut::<(&hecs::Entity, &mut Animator)>() {
                                 animators.push((*e, a));
                             }
                             let results = update_animators(&mut animators, &app.animation_clips, dt);
@@ -460,7 +454,7 @@ fn main() {
 
                         // Multi-viewport: determine size and create framebuffers for each open viewport.
                         let frame_idx = renderer.frame_index() % 3;
-                        let mut any_offscreen = false;
+                        let mut _any_offscreen = false;
                         let num_viewports = viewport_manager.viewports.len();
 
                         let ppp = egui_ctx.pixels_per_point();
@@ -527,7 +521,6 @@ fn main() {
                             match crate::render::BloomResources::new(&renderer, sw_extent.width, sw_extent.height) {
                                 Ok(br) => {
                                     app.bloom_resources = Some(br);
-                                    app.bloom_fb_size = (sw_extent.width, sw_extent.height);
                                 }
                                 Err(e) => tracing::error!("Bloom resources creation failed: {e}"),
                             }
@@ -536,7 +529,6 @@ fn main() {
                             match crate::render::OitResources::new(&renderer, sw_extent.width, sw_extent.height) {
                                 Ok(or) => {
                                     app.oit_resources = Some(or);
-                                    app.oit_fb_size = (sw_extent.width, sw_extent.height);
                                 }
                                 Err(e) => tracing::error!("OIT resources creation failed: {e}"),
                             }
@@ -545,7 +537,6 @@ fn main() {
                             match crate::render::SsaoResources::new(&renderer, sw_extent.width, sw_extent.height) {
                                 Ok(sr) => {
                                     app.ssao_resources = Some(sr);
-                                    app.ssao_fb_size = (sw_extent.width, sw_extent.height);
                                 }
                                 Err(e) => tracing::error!("SSAO resources creation failed: {e}"),
                             }
@@ -554,7 +545,6 @@ fn main() {
                             match crate::render::TaaResources::new(&renderer, sw_extent.width, sw_extent.height) {
                                 Ok(tr) => {
                                     app.taa_resources = Some(tr);
-                                    app.taa_fb_size = (sw_extent.width, sw_extent.height);
                                 }
                                 Err(e) => tracing::error!("TAA resources creation failed: {e}"),
                             }
@@ -563,7 +553,6 @@ fn main() {
                             match crate::render::SsrResources::new(&renderer, sw_extent.width, sw_extent.height) {
                                 Ok(sr) => {
                                     app.ssr_resources = Some(sr);
-                                    app.ssr_fb_size = (sw_extent.width, sw_extent.height);
                                 }
                                 Err(e) => tracing::error!("SSR resources creation failed: {e}"),
                             }
@@ -572,7 +561,6 @@ fn main() {
                             match crate::render::VolumetricFogResources::new(&renderer, sw_extent.width, sw_extent.height) {
                                 Ok(fr) => {
                                     app.fog_resources = Some(fr);
-                                    app.fog_fb_size = (sw_extent.width, sw_extent.height);
                                 }
                                 Err(e) => tracing::error!("Fog resources creation failed: {e}"),
                             }
@@ -581,7 +569,6 @@ fn main() {
                             match crate::render::SkyboxResources::new(&renderer, sw_extent.width, sw_extent.height) {
                                 Ok(sb) => {
                                     app.skybox_resources = Some(sb);
-                                    app.skybox_fb_size = (sw_extent.width, sw_extent.height);
                                 }
                                 Err(e) => tracing::error!("Skybox resources creation failed: {e}"),
                             }
@@ -612,12 +599,11 @@ fn main() {
                         }
 
                         let mut shadow_layout_opt = if app.csm_resources.is_some() { Some(app.shadow_layout) } else { None };
-                        let mut used_hdr = false;
                         if app.scene_pipeline.is_some() && app.scene_depth_buffer.is_some() && app.scene_uniform_buffer.is_some() {
                             // Clear swapchain once before any offscreen rendering.
                             for vp_idx in 0..num_viewports {
-                                if let Some(ref fb) = app.viewport_framebuffers[vp_idx][frame_idx] {
-                                    any_offscreen = true;
+                                if let Some(ref _fb) = app.viewport_framebuffers[vp_idx][frame_idx] {
+                                    _any_offscreen = true;
                                     if vp_idx == 0 {
                                         renderer.begin_scene_pass(cmd, app.scene_depth_buffer.as_ref().unwrap(), [0.05, 0.05, 0.05, 1.0]);
                                         renderer.end_scene_pass(cmd);
@@ -652,7 +638,7 @@ fn main() {
                                         let cam_proj = Mat4::perspective_rh_gl(std::f32::consts::FRAC_PI_4, aspect, 0.1, 100.0);
                                         let light_dir = {
                                             let mut d = Vec3::new(0.5, 0.8, 0.3);
-                                            for (dirlight, xform) in app.ecs_world.query::<(&DirectionalLight, &Transform)>().iter() {
+                                            for (_dirlight, xform) in app.ecs_world.query::<(&DirectionalLight, &Transform)>().iter() {
                                                 d = render::directional_light_dir_from_euler(xform.rotation);
                                                 break;
                                             }
@@ -907,7 +893,6 @@ fn main() {
                                             device.cmd_pipeline_barrier2(cmd, &dep2);
                                         }
                                     }
-                                    used_hdr = true;
 
                                     let valid_key = egui::Id::new(format!("viewport_offscreen_valid_{}", vp_idx));
                                     egui_ctx.data_mut(|d| d.remove_temp::<bool>(valid_key));
@@ -1017,7 +1002,7 @@ fn main() {
                                     ui.checkbox(&mut app.gpu_culling_enabled, "Enabled");
                                     ui.separator();
                                     ui.label("Mesh Shaders (NV)");
-                                    let mut mesh_supported = renderer.device().mesh_shader_supported();
+                                    let mesh_supported = renderer.device().mesh_shader_supported();
                                     ui.add_enabled(mesh_supported, egui::Checkbox::new(&mut app.mesh_shader_enabled, "Enabled"));
                                     if !mesh_supported {
                                         ui.label("Extension not available on this GPU");
@@ -1057,7 +1042,7 @@ fn main() {
                                         let primary = viewport_manager.viewports.remove(0);
                                         viewport_manager.viewports.clear();
                                         viewport_manager.viewports.push(primary);
-                                        for (i, vp_layout) in layout.viewports.iter().enumerate().skip(1) {
+                                        for (_i, vp_layout) in layout.viewports.iter().enumerate().skip(1) {
                                             if let Some(idx) = viewport_manager.add_viewport() {
                                                 if let Some(vp) = viewport_manager.viewports.get_mut(idx) {
                                                     vp.name = vp_layout.name.clone();

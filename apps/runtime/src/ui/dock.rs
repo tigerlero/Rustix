@@ -2,6 +2,7 @@ use crate::project::DockPosition;
 
 /// Render content in a dockable container based on `dock` position.
 /// Returns `Some(InnerResponse)` for visible positions, `None` for `Hidden`.
+#[allow(deprecated)]
 pub fn show_docked<R>(
     ctx: &egui::Context,
     title: &str,

@@ -24,3 +24,6 @@ rustix-ai = { path = "../crates/ai" }
 rustix-terrain = { path = "../crates/terrain" }
 rustix-world = { path = "../crates/world" }
 rustix-editor = { path = "../crates/editor" }
+
+[features]
+profiling = []

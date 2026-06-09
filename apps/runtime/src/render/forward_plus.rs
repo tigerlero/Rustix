@@ -4,6 +4,7 @@ use rustix_render::memory::GpuBuffer;
 use rustix_render::RenderError;
 
 /// GPU buffers and pipeline state for Forward+ tiled light culling.
+#[allow(dead_code)]
 pub struct ForwardPlusResources {
     pub light_buffer: GpuBuffer,
     pub tile_buffer: GpuBuffer,
@@ -13,6 +14,7 @@ pub struct ForwardPlusResources {
     pub compute_layout: vk::PipelineLayout,
 }
 
+#[allow(dead_code)]
 impl ForwardPlusResources {
     pub const MAX_LIGHTS: usize = 256;
     pub const TILE_SIZE: u32 = 16;

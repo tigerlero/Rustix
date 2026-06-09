@@ -378,7 +378,9 @@ pub struct UIRenderer {
     pipeline_layout: vk::PipelineLayout,
     vertex_buffer: rustix_render::memory::GpuBuffer,
     index_buffer: rustix_render::memory::GpuBuffer,
+    #[allow(dead_code)]
     desc_set_layout: vk::DescriptorSetLayout,
+    #[allow(dead_code)]
     desc_pool: vk::DescriptorPool,
     desc_set: vk::DescriptorSet,
     atlas_texture: Option<GpuTexture>,

@@ -10,6 +10,7 @@ pub fn viewport_texture_id(index: usize) -> egui::TextureId {
 
 /// A single editor viewport with its own camera.
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct Viewport {
     pub camera: EditorCamera,
     pub name: String,

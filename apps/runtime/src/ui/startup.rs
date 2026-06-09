@@ -1,5 +1,6 @@
 use crate::project::{ProjectEntry, ProjectType};
 
+#[allow(deprecated)]
 pub fn startup_screen(
     ctx: &egui::Context,
     recent: &[ProjectEntry],

@@ -12,5 +12,4 @@ pub mod frame_graph_overlay;
 
 pub use startup::startup_screen;
 pub use editor::editor_screen;
-pub use viewport::{Viewport, ViewportManager, MAX_VIEWPORTS, viewport_texture_id, show_viewports};
 pub use frame_graph_overlay::show_frame_graph_overlay;

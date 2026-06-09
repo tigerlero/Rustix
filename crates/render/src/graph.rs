@@ -137,6 +137,7 @@ struct PassNode<'a> {
 /// A GPU image allocated by the graph for a transient resource.
 /// Multiple transient images with non-overlapping lifetimes may be
 /// bound to the same backing memory at different offsets.
+#[allow(dead_code)]
 struct TransientImage {
     image: vk::Image,
     view: vk::ImageView,

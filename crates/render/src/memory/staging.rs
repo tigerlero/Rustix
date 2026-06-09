@@ -153,6 +153,7 @@ impl StagingBufferPool {
 pub struct GpuStagingBuffer {
     buffer: GpuBuffer,
     ring: rustix_core::gpu_staging::GpuStagingRing,
+    #[allow(dead_code)]
     device: *const ash::Device,
 }
 

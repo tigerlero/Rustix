@@ -63,6 +63,7 @@ pub struct GenDrawPushConstants {
 }
 
 /// GPU-driven culling resources.
+#[allow(dead_code)]
 pub struct GpuCullingResources {
     /// Input buffer with CullInstance data (culling binding 0).
     pub input_buffer: GpuBuffer,
@@ -92,6 +93,7 @@ pub struct GpuCullingResources {
     pub max_batches: usize,
 }
 
+#[allow(dead_code)]
 impl GpuCullingResources {
     pub fn new(
         renderer: &rustix_render::Renderer,

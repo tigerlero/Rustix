@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use ash::vk;
 use rustix_core::ecs::{EcsWorld, Entity};
-use rustix_core::math::{Vec2, Vec3, Vec4, Mat4, Frustum};
+use rustix_core::math::{Vec3, Vec4, Mat4};
 use rustix_render::Renderer;
 use rustix_render::mesh::Mesh;
 use rustix_render::pipeline::GraphicsPipeline;
@@ -17,14 +17,14 @@ use super::{CsmResources, PointShadowResources, SpotShadowResources, ForwardPlus
 pub fn render_deferred_with_graph(
     renderer: &Renderer,
     cmd: vk::CommandBuffer,
-    scene_pipeline: &GraphicsPipeline,
+    _scene_pipeline: &GraphicsPipeline,
     shadow_pipeline: Option<&rustix_render::pipeline::ShadowPipeline>,
     depth_buf: &DepthBuffer,
     mut csm: Option<&mut CsmResources>,
     point_shadow: Option<&PointShadowResources>,
     mut spot_shadow: Option<&mut SpotShadowResources>,
     shadow_layout: Option<vk::ImageLayout>,
-    ubo: &GpuBuffer,
+    _ubo: &GpuBuffer,
     meshes: &HashMap<String, Mesh>,
     ecs_world: &EcsWorld,
     cam: &EditorCamera,
@@ -35,7 +35,7 @@ pub fn render_deferred_with_graph(
     gbuf: &GBufferResources,
     fwd_plus: Option<&ForwardPlusResources>,
 ) -> (Option<vk::ImageLayout>, Option<rustix_render::graph::FrameGraphSnapshot>, Mat4) {
-    use rustix_render::graph::{FrameGraph, ResourceId, PassDesc, PassQueue, TextureDesc, Access};
+    use rustix_render::graph::{FrameGraph, ResourceId, PassDesc, PassQueue, TextureDesc};
 
     let sw = renderer.swapchain.lock();
     let sw_extent = sw.extent();
@@ -123,7 +123,7 @@ pub fn render_deferred_with_graph(
         let cam_proj = Mat4::perspective_rh_gl(std::f32::consts::FRAC_PI_4, aspect, 0.1, 100.0);
         let light_dir = {
             let mut d = Vec3::new(0.5, 0.8, 0.3);
-            for (dirlight, xform) in ecs_world.query::<(&DirectionalLight, &Transform)>().iter() {
+            for (_dirlight, xform) in ecs_world.query::<(&DirectionalLight, &Transform)>().iter() {
                 d = directional_light_dir_from_euler(xform.rotation);
                 break;
             }
@@ -241,7 +241,7 @@ pub fn render_deferred_with_graph(
 
     // CSM shadow passes — one per cascade
     if let (Some(sp), Some(ref mut c)) = (shadow_pipeline, csm) {
-        let meshes_clone = meshes.clone();
+        let meshes_clone = meshes;
         let shadow_layout_cell_ref = shadow_layout_cell.clone();
         let size = c.shadow_map_size;
         let views = [c.shadow_maps[0].view, c.shadow_maps[1].view, c.shadow_maps[2].view];
@@ -255,7 +255,7 @@ pub fn render_deferred_with_graph(
             let csm_res_id = csm_res[cascade_idx];
             let sm_view = views[cascade_idx];
             let light_matrix = matrices[cascade_idx];
-            let meshes_c = meshes_clone.clone();
+            let meshes_c = meshes_clone;
             let sp_c = sp_clone.clone();
             let sl_ref = shadow_layout_cell_ref.clone();
             let cascade_names = ["shadow0", "shadow1", "shadow2"];
@@ -429,8 +429,8 @@ pub fn render_deferred_with_graph(
     });
 
     // Tonemap pass
-    let sw_w = sw_extent.width;
-    let sw_h = sw_extent.height;
+    let _sw_w = sw_extent.width;
+    let _sw_h = sw_extent.height;
     graph.add_pass(PassDesc {
         name: "tonemap",
         queue: PassQueue::Graphics,

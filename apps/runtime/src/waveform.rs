@@ -1,6 +1,6 @@
 //! Waveform visualization widget for audio preview.
 
-use egui::{Color32, Pos2, Rect, Sense, Stroke, Vec2};
+use egui::{Color32, Pos2, Sense, Stroke, Vec2};
 
 /// Renders an interactive waveform of audio samples.
 ///

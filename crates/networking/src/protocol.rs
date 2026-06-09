@@ -6,7 +6,6 @@ use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc;
 use tokio::time::{interval, Duration, Instant};
 
 /// Connection state machine.
@@ -308,7 +307,7 @@ pub fn spawn_heartbeat_task(
         let mut ticker = interval(Duration::from_secs(interval_secs));
         loop {
             ticker.tick().await;
-            let mut mgr = manager.lock().await;
+            let mgr = manager.lock().await;
             let addrs: Vec<SocketAddr> = mgr.connections.keys().copied().collect();
             for addr in addrs {
                 if let Some(conn) = mgr.connections.get(&addr) {

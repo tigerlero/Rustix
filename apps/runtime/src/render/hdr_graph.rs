@@ -606,9 +606,9 @@ pub fn render_hdr_with_graph(
             [inv_vp.w_axis.x, inv_vp.w_axis.y, inv_vp.w_axis.z, inv_vp.w_axis.w],
         ];
         let sun_dir = Vec3::new(0.3, -1.0, 0.2).normalize();
-        let mut pc_data2 = pc_data;
-        pc_data2[0] = [sun_dir.x, sun_dir.y, sun_dir.z, 1.0];
-        pc_data2[1] = [skybox_rayleigh, skybox_mie, skybox_zenith_shift, skybox_exposure];
+        let mut _pc_data2 = pc_data;
+        _pc_data2[0] = [sun_dir.x, sun_dir.y, sun_dir.z, 1.0];
+        _pc_data2[1] = [skybox_rayleigh, skybox_mie, skybox_zenith_shift, skybox_exposure];
         graph.add_pass(PassDesc {
             name: "skybox",
             queue: rustix_render::graph::PassQueue::Graphics,

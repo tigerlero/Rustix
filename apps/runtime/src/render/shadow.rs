@@ -28,7 +28,7 @@ pub struct CsmResources {
 
 impl CsmResources {
     pub fn new(renderer: &Renderer, size: u32) -> Result<Self, RenderError> {
-        let device = renderer.device().logical();
+        let _device = renderer.device().logical();
 
         // Create 3 shadow maps
         let mut shadow_maps = Vec::with_capacity(3);

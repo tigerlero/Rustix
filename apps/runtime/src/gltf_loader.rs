@@ -78,8 +78,6 @@ pub fn load_glb(renderer: &Renderer, data: &[u8], name: &str) -> Result<GlbResul
 
 /// Generate a minimal cube in GLB format (valid glTF 2.0 binary).
 pub fn generate_cube_glb() -> Vec<u8> {
-    use std::io::Write;
-
     // Cube vertices: 8 corners repeated 3 times each for flat shading (24 verts)
     let positions: [[f32;3]; 24] = [
         // +X

@@ -1,8 +1,7 @@
 use ash::vk;
-use rustix_core::math::{Vec3, Vec4, Mat4};
+use rustix_core::math::{Vec3, Mat4};
 use rustix_render::Renderer;
 use rustix_render::DepthBuffer;
-use rustix_render::graph::PassContext;
 
 pub fn execute_fog_pass(
     cmd: vk::CommandBuffer,

@@ -38,6 +38,7 @@ fn default_alpha() -> f32 { 1.0 }
 
 impl Material {
     /// Build a runtime `Material` from an asset definition.
+    #[allow(dead_code)]
     pub fn from_asset(asset: &rustix_asset::material::MaterialAsset) -> Self {
         Self {
             base_color: Vec3::new(asset.base_color[0], asset.base_color[1], asset.base_color[2]),
@@ -286,6 +287,7 @@ pub fn scene_to_world(world: &mut EcsWorld, data: &SceneData) {
 }
 
 /// Spawn a slice of prefab entities into the world, returning root entities.
+#[allow(dead_code)]
 fn spawn_prefab_entities(
     world: &mut EcsWorld,
     entities: &[rustix_asset::prefab::PrefabEntity],
@@ -441,6 +443,7 @@ fn spawn_prefab_entities(
 ///
 /// The prefab's entities are created with an optional base transform offset.
 /// Parent-child relationships within the prefab are preserved.
+#[allow(dead_code)]
 pub fn spawn_prefab(
     world: &mut EcsWorld,
     prefab: &rustix_asset::prefab::PrefabAsset,
@@ -457,6 +460,7 @@ pub fn spawn_prefab(
 ///
 /// Region metadata (ambient color, fog, etc.) is applied as ECS components
 /// on a dedicated metadata entity if the runtime has matching components.
+#[allow(dead_code)]
 pub fn spawn_region(
     world: &mut EcsWorld,
     region: &rustix_asset::region::RegionAsset,

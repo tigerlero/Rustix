@@ -84,7 +84,7 @@ impl MouseState {
     }
 
     pub(crate) fn move_to(&mut self, x: f32, y: f32) {
-        self.delta = (x - self.position.0, y - self.position.1);
+        self.delta = (self.delta.0 + x - self.position.0, self.delta.1 + y - self.position.1);
         self.position = (x, y);
     }
 

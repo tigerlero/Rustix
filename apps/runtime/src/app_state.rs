@@ -3,21 +3,19 @@ use std::path::Path;
 use std::time::Instant;
 use ash::vk;
 use rustix_core::ecs::EcsWorld;
-use rustix_core::math::{Vec3, Vec4, Mat4};
-use rustix_platform::input::InputManager;
-use rustix_platform::window::WindowHandle;
-use rustix_render::{Renderer, DirectionalLight};
+use rustix_core::math::Vec3;
+use rustix_render::Renderer;
 use rustix_render::mesh::Mesh;
 use rustix_audio::{AudioEngine, SoundInstance};
-use rustix_animation::{Animator, AnimationClip, update_animators};
-use rustix_physics::{RigidBody, PhysicsWorld, step_physics};
+use rustix_animation::AnimationClip;
+use rustix_physics::PhysicsWorld;
 use rustix_asset::mmap::MappedFile;
 
-use crate::camera::EditorCamera;
-use crate::project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo, load_project_file, create_project_file, add_recent_project, write_project_file};
-use crate::scene::{Transform, Name, MeshComponent, Material, world_transform, scene_to_world, world_to_scene};
+use crate::project::{AppScreen, ConfirmTarget, ProjectType, ProjectInfo};
+use crate::scene::{Transform, Name, MeshComponent, Material};
 use crate::undo::UndoHistory;
 
+#[allow(dead_code)]
 pub struct AppState {
     pub screen: AppScreen,
     pub recent_projects: Vec<crate::project::ProjectEntry>,
@@ -163,6 +161,7 @@ pub struct AppState {
     pub start_time: Instant,
 }
 
+#[allow(dead_code)]
 impl AppState {
     pub fn new() -> Self {
         let mut ecs_world = EcsWorld::new();

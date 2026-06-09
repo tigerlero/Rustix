@@ -85,7 +85,7 @@ fn main() {
     writeln!(&mut out).unwrap();
 
     // Write each SPIR-V as a const slice
-    for (idx, (name, _stage, spv)) in archive_entries.iter().enumerate() {
+    for (name, _stage, spv) in &archive_entries {
         let ident = sanitize_ident(name);
         writeln!(
             &mut out,

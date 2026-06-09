@@ -4,6 +4,7 @@ use rustix_render::RenderError;
 use rustix_render::DepthBuffer;
 
 /// G-buffer attachments and pipeline state for deferred shading.
+#[allow(dead_code)]
 pub struct GBufferResources {
     pub albedo_image: vk::Image,
     pub albedo_view: vk::ImageView,
@@ -24,11 +25,12 @@ pub struct GBufferResources {
     _material_alloc: gpu_allocator::vulkan::Allocation,
 }
 
+#[allow(dead_code)]
 impl GBufferResources {
     pub fn new(renderer: &Renderer, extent: vk::Extent2D, depth_buf: &DepthBuffer) -> Result<Self, RenderError> {
         let device = renderer.device().logical();
 
-        let mut create_gbuffer_image = |format: vk::Format, name: &str| -> Result<(vk::Image, vk::ImageView, gpu_allocator::vulkan::Allocation), RenderError> {
+        let create_gbuffer_image = |format: vk::Format, name: &str| -> Result<(vk::Image, vk::ImageView, gpu_allocator::vulkan::Allocation), RenderError> {
             let image = unsafe {
                 device.create_image(
                     &vk::ImageCreateInfo::default()

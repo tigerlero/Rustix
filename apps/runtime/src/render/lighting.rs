@@ -1,10 +1,11 @@
 use rustix_core::ecs::{EcsWorld, Entity};
-use rustix_core::math::{Vec3, Vec4, Mat4, Quat, EulerRot};
+use rustix_core::math::{Vec3, Mat4, Quat, EulerRot};
 use rustix_render::{PointLight, SpotLight};
 use crate::scene::Transform;
 
 /// Compute the light view-projection matrix for shadow mapping.
 /// The light is placed behind the target center looking toward it.
+#[allow(dead_code)]
 pub fn compute_light_view_proj(light_dir: Vec3, center: Vec3) -> Mat4 {
     let light_dir = light_dir.normalize();
     let light_pos = center - light_dir * 20.0;

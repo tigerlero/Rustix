@@ -2,6 +2,9 @@
 
 > Generated from `cargo check --all` and `cargo test --all --no-run`.
 > Last updated: 2026-06-09
+>
+> **STATUS: All compiler warnings have been fixed as of this update.**
+> `cargo check --all` reports 0 warnings (excluding generated code and build-script artifacts).
 
 ## Table of Contents
 1. [Test Compilation Errors (Blocking)](#test-compilation-errors-blocking)

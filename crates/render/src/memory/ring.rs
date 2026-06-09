@@ -19,6 +19,7 @@ pub struct GpuUniformRing {
     buffer: GpuBuffer,
     ring: rustix_core::gpu_staging::GpuStagingRing,
     align: u64,
+    #[allow(dead_code)]
     device: *const ash::Device,
 }
 

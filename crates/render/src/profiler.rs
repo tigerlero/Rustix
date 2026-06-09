@@ -108,6 +108,7 @@ impl Drop for GpuProfiler {
 pub struct GpuReadbackBuffer {
     pub buffer: vk::Buffer,
     pub size: u64,
+    #[allow(dead_code)]
     allocation: gpu_allocator::vulkan::Allocation,
     mapped: *mut u8,
 }

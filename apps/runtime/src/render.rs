@@ -32,7 +32,6 @@ pub use skybox::*;
 pub use instanced::*;
 pub use gpu_culling::*;
 pub use oit::*;
-pub use overlay::*;
 
 #[cfg(test)]
 #[path = "render_tests.rs"]
