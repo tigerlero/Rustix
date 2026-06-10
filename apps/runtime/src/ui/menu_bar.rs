@@ -34,6 +34,7 @@ pub fn show_menu_bar(
     sprite_editor: &mut sprite_editor::SpriteEditor,
     pending_mesh_load: &std::cell::RefCell<Option<String>>,
     window: &mut WindowHandle,
+    animation_editor: &mut crate::ui::animation_editor::AnimationEditor,
 ) {
     egui::Panel::top("menu_bar").show(ctx, |ui| {
         egui::MenuBar::new().ui(ui, |ui| {
@@ -116,11 +117,12 @@ pub fn show_menu_bar(
                     }
                 }
                 ui.separator();
-                if ui.button("Load GLB\u{2026}").clicked() {
+                if ui.button("Load Mesh\u{2026}").clicked() {
                     ui.close();
                     if let Some(path) = rfd::FileDialog::new()
-                        .set_title("Import GLB Mesh")
+                        .set_title("Import Mesh")
                         .add_filter("GLB", &["glb"])
+                        .add_filter("OBJ", &["obj"])
                         .pick_file()
                     {
                         pending_mesh_load.replace(Some(path.to_string_lossy().to_string()));
@@ -220,6 +222,21 @@ pub fn show_menu_bar(
                             }
                         }
                     });
+                    ui.menu_button("Asset Browser Position", |ui| {
+                        let positions = [
+                            crate::project::DockPosition::Left,
+                            crate::project::DockPosition::Right,
+                            crate::project::DockPosition::Bottom,
+                            crate::project::DockPosition::Floating,
+                            crate::project::DockPosition::Hidden,
+                        ];
+                        for pos in positions {
+                            if ui.selectable_label(layout.asset_browser_dock == pos, format!("{:?}", pos)).clicked() {
+                                layout.asset_browser_dock = pos;
+                                ui.close();
+                            }
+                        }
+                    });
                 }
 
                 ui.separator();
@@ -285,10 +302,29 @@ pub fn show_menu_bar(
                     sprite_editor.set_visible(true);
                     ui.close();
                 }
+                if ui.button("Animation Editor").clicked() {
+                    animation_editor.show = !animation_editor.show;
+                    // Set active entity to first selected entity that has a skeleton
+                    if animation_editor.show && animation_editor.active_entity.is_none() {
+                        for (entity, _) in world.query::<(hecs::Entity, &crate::scene::Name)>().iter() {
+                            if world.get::<&rustix_animation::Skeleton>(entity).is_ok() {
+                                animation_editor.active_entity = Some(entity);
+                                break;
+                            }
+                        }
+                    }
+                    ui.close();
+                }
             });
 
             let about_id = egui::Id::new("show_about");
             let mut show_about = ctx.data(|d| d.get_temp::<bool>(about_id).unwrap_or(false));
+            ui.menu_button("Project", |ui| {
+                if ui.button("Build Game").clicked() {
+                    ui.close();
+                    ctx.data_mut(|d| d.insert_temp(egui::Id::new("show_build_dialog"), true));
+                }
+            });
             ui.menu_button("Help", |ui| {
                 if ui.button("About Rustix").clicked() {
                     show_about = true;
@@ -318,6 +354,11 @@ pub fn show_menu_bar(
                 let ptype = current_project.as_ref().map(|p| match p.settings.project_type {
                     ProjectType::Dim3 => "3D",
                     ProjectType::Dim2 => "2D",
+                    ProjectType::Voxel => "Voxel",
+                    ProjectType::Tetris => "Tetris",
+                    ProjectType::EndlessRunner3D => "Endless Runner 3D",
+                    ProjectType::Breakout2D => "Breakout 2D",
+                    ProjectType::Platformer3D => "Platformer 3D",
                 }).unwrap_or("");
                 if !ptype.is_empty() {
                     ui.label(egui::RichText::new(ptype).color(egui::Color32::from_rgb(120, 240, 200)).weak());

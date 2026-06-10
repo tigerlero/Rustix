@@ -2,11 +2,17 @@ use std::path::Path;
 use std::time::Instant;
 
 mod app_state;
+mod build_game;
 mod camera;
 mod combat;
+mod breakout;
+mod endless_runner;
+mod platformer;
 mod enemy;
 mod fonts;
 mod gltf_loader;
+mod model_import;
+mod obj_loader;
 mod init;
 mod player;
 mod project;
@@ -16,6 +22,8 @@ mod script_presets;
 mod sprite_editor;
 mod ui;
 mod ui_renderer;
+mod voxel;
+mod tetris;
 mod undo;
 mod waveform;
 
@@ -32,6 +40,58 @@ use rustix_asset::mmap::MappedFile;
 
 use project::{AppScreen, ProjectType, load_project_file, create_project_file, add_recent_project, write_project_file};
 use scene::{Transform, Name, MeshComponent, Material, world_transform, scene_to_world, world_to_scene};
+
+fn generate_voxel_world(
+    app: &mut app_state::AppState,
+    renderer: &Renderer,
+    cam: &mut crate::camera::EditorCamera,
+) {
+    use crate::scene::{Transform, Name, MeshComponent, Material};
+    use crate::voxel::{Chunk, generate_chunk_terrain, build_chunk_mesh};
+
+    // Clear existing voxel chunks
+    app.voxel_chunks.clear();
+
+    // Generate a 4x4 chunk grid
+    let chunk_count = 4;
+    for cz in 0..chunk_count {
+        for cx in 0..chunk_count {
+            let mut chunk = Chunk::new(cx, cz);
+            generate_chunk_terrain(&mut chunk);
+            let mesh_name = format!("chunk_{}_{}", cx, cz);
+            if let Ok(mesh) = build_chunk_mesh(renderer, &chunk, &mesh_name) {
+                app.meshes.insert(mesh_name.clone(), mesh);
+                let pos = Vec3::new(
+                    (cx * crate::voxel::CHUNK_SIZE as i32) as f32,
+                    0.0,
+                    (cz * crate::voxel::CHUNK_SIZE as i32) as f32,
+                );
+                app.ecs_world.spawn((
+                    Transform { position: pos, rotation: Vec3::ZERO, scale: Vec3::ONE },
+                    Name(mesh_name.clone()),
+                    MeshComponent(mesh_name),
+                    Material {
+                        base_color: Vec3::ONE,
+                        alpha: 1.0,
+                        roughness: 0.8,
+                        metallic: 0.0,
+                        ao: 1.0,
+                        emissive: 0.0,
+                    },
+                ));
+            }
+            app.voxel_chunks.push(chunk);
+        }
+    }
+
+    // Set first-person camera
+    cam.mode = crate::camera::CameraMode::FirstPerson;
+    cam.position = Vec3::new(8.0, crate::voxel::terrain_height(8, 8) as f32 + 2.0, 8.0);
+    cam.yaw = 0.0;
+    cam.pitch = 0.0;
+    cam.follow_target = false;
+    cam.controlling_player = false;
+}
 
 fn main() {
     std::panic::set_hook(Box::new(|info| {
@@ -97,6 +157,35 @@ fn main() {
     let mut fps = 0u64;
 
     let mut app = app_state::AppState::new();
+
+    // Parse CLI args for --project and --playtest
+    {
+        let args: Vec<String> = std::env::args().collect();
+        let mut i = 1;
+        while i < args.len() {
+            match args[i].as_str() {
+                "--project" => {
+                    if i + 1 < args.len() {
+                        app.cli_project_path = Some(args[i + 1].clone());
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                "--playtest" => {
+                    app.cli_playtest = true;
+                    i += 1;
+                }
+                _ => i += 1,
+            }
+        }
+    }
+
+    // Queue CLI project for auto-loading on first frame
+    if let Some(path) = app.cli_project_path.clone() {
+        app.open_project.borrow_mut().replace(path);
+    }
+
     let _ = std::fs::create_dir_all(&app.recording_dir);
     let mut gamepad_input = rustix_platform::gamepad::GamepadInput::new();
     let mut input_actions = rustix_platform::actions::InputActions::new();
@@ -255,6 +344,74 @@ fn main() {
                         };
                         viewport_manager.primary_camera_mut().follow(follow_pos);
 
+                        // Tetris game update and input
+                        if let Some(ref proj) = app.current_project {
+                            if proj.settings.project_type == ProjectType::Tetris {
+                                let k = input.keyboard();
+                                use rustix_platform::input::KeyCode;
+                                for key in [KeyCode::Left, KeyCode::Right, KeyCode::Down, KeyCode::Up, KeyCode::Space, KeyCode::Z, KeyCode::X, KeyCode::C, KeyCode::ShiftLeft, KeyCode::ShiftRight] {
+                                    if k.just_pressed(key) {
+                                        app.tetris_game.on_key(key, true);
+                                    }
+                                    if k.just_released(key) {
+                                        app.tetris_game.on_key(key, false);
+                                    }
+                                }
+                                app.tetris_game.update_autoshift(dt);
+                                app.tetris_game.update(dt);
+                            }
+                        }
+
+                        // Endless Runner 3D update and input
+                        if let Some(ref proj) = app.current_project {
+                            if proj.settings.project_type == ProjectType::EndlessRunner3D {
+                                let k = input.keyboard();
+                                use rustix_platform::input::KeyCode;
+                                let audio_ref = app.audio_engine.as_ref();
+                                for key in [KeyCode::Left, KeyCode::Right, KeyCode::Space] {
+                                    if k.just_pressed(key) {
+                                        app.endless_runner_game.on_key(key, audio_ref);
+                                    }
+                                }
+                                app.endless_runner_game.update(dt, audio_ref);
+                            }
+                        }
+
+                        // Breakout 2D update and input
+                        if let Some(ref proj) = app.current_project {
+                            if proj.settings.project_type == ProjectType::Breakout2D {
+                                let k = input.keyboard();
+                                use rustix_platform::input::KeyCode;
+                                let audio_ref = app.audio_engine.as_ref();
+                                if k.just_pressed(KeyCode::Space) {
+                                    app.breakout_game.on_key(KeyCode::Space, audio_ref);
+                                }
+                                // Mouse controls paddle
+                                let mouse = input.mouse();
+                                let mouse_dx = mouse.delta().0;
+                                if mouse_dx != 0.0 {
+                                    app.breakout_game.move_paddle(mouse_dx * 0.015);
+                                }
+                                app.breakout_game.update(dt, audio_ref);
+                            }
+                        }
+
+                        // Platformer 3D update and input
+                        if let Some(ref proj) = app.current_project {
+                            if proj.settings.project_type == ProjectType::Platformer3D {
+                                let audio_ref = app.audio_engine.as_ref();
+                                let cam = &mut viewport_manager.viewports[0].camera;
+                                crate::platformer::update_platformer(
+                                    &mut app.ecs_world,
+                                    &mut app.platformer_game,
+                                    &input,
+                                    audio_ref,
+                                    cam,
+                                    dt,
+                                );
+                            }
+                        }
+
                         // Update animations
                         {
                             let mut animators: Vec<(hecs::Entity, &mut Animator)> = Vec::new();
@@ -272,6 +429,8 @@ fn main() {
                                     if let Some(s) = scale { t.scale = s; }
                                 }
                             }
+                            // Update animation editor playback
+                            app.animation_editor.update_playback(dt);
                         }
 
                         // Update physics
@@ -476,20 +635,35 @@ fn main() {
                                 let mesh_name = Path::new(&path)
                                     .file_stem().and_then(|s| s.to_str()).unwrap_or("Imported")
                                     .to_string();
-                                if let Ok(result) = gltf_loader::load_glb(&renderer, &data, &mesh_name) {
-                                    tracing::info!("loaded mesh {mesh_name} from {path} (base={:?} rough={:.2} metal={:.2})",
-                                        result.base_color, result.roughness, result.metallic);
-                                    app.meshes.insert(mesh_name.clone(), result.mesh);
-                                    let e = app.ecs_world.spawn((
-                                        Transform { position: Vec3::new(0.0, 1.0, 0.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
-                                        Name(mesh_name.clone()),
-                                        MeshComponent(mesh_name),
-                                        Material { base_color: Vec3::from(result.base_color), alpha: 1.0, roughness: result.roughness, metallic: result.metallic, ao: 1.0, emissive: 0.0 },
-                                    ));
-                                    *app.selected_entities.borrow_mut() = vec![e];
-                                    app.dirty.set(true);
-                                } else {
-                                    tracing::error!("failed to load mesh from {path}");
+                                let ext = Path::new(&path)
+                                    .extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+                                match model_import::import_model(&renderer, &data, &mesh_name, &ext) {
+                                    Ok(result) => {
+                                        let mat = &result.material;
+                                        tracing::info!("loaded mesh {mesh_name} from {path} (base={:?} rough={:.2} metal={:.2}) [degen={} zero_area={} nan={}]",
+                                            mat.base_color, mat.roughness, mat.metallic,
+                                            result.validation.degenerate_triangles,
+                                            result.validation.zero_area_faces,
+                                            result.validation.nan_vertices);
+                                        if !result.validation.warnings.is_empty() {
+                                            for w in &result.validation.warnings {
+                                                tracing::warn!("mesh validation: {}", w);
+                                            }
+                                        }
+                                        app.meshes.insert(mesh_name.clone(), result.mesh);
+                                        let e = app.ecs_world.spawn((
+                                            Transform { position: Vec3::new(0.0, 1.0, 0.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
+                                            Name(mesh_name.clone()),
+                                            MeshComponent(mesh_name.clone()),
+                                            Material { base_color: Vec3::from(mat.base_color), alpha: 1.0, roughness: mat.roughness, metallic: mat.metallic, ao: mat.ao, emissive: mat.emissive },
+                                        ));
+                                        if let Some(skel) = result.skeleton {
+                                            let _ = app.ecs_world.insert(e, (skel,));
+                                        }
+                                        *app.selected_entities.borrow_mut() = vec![e];
+                                        app.dirty.set(true);
+                                    }
+                                    Err(e) => tracing::error!("failed to load mesh from {path}: {e}"),
                                 }
                             } else {
                                 tracing::error!("failed to read file {path}");
@@ -978,15 +1152,86 @@ fn main() {
                                     let proj_name = app.current_project.as_ref().map(|p| p.name.as_str()).unwrap_or("Untitled");
                                     let proj_name_owned = proj_name.to_string();
                                     let project_type = app.current_project.as_ref().map(|p| p.settings.project_type).unwrap_or(crate::project::ProjectType::Dim3);
-                                    ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut app.screen, &input, target, &ww, &wh, &mut fps, &app.open_project, &app.new_project, &proj_name_owned, &mut app.current_project, &mut app.project_dir, &mut app.ecs_world, &*app.selected_entities, &*app.pending_delete, &*app.dirty, &*app.show_confirm, &*app.confirm_target, &*app.show_settings, &*app.renaming, &*app.rename_buffer, &*app.undo_history, &mut app.sprite_editor, &app.pending_mesh_load, &mut app.audio_engine, &mut app.audio_instance, &mut app.waveform_viewer, &mut app.player_manager, project_type);
+                                    ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut app.screen, &input, target, &ww, &wh, &mut fps, &app.open_project, &app.new_project, &proj_name_owned, &mut app.current_project, &mut app.project_dir, &mut app.ecs_world, &*app.selected_entities, &*app.pending_delete, &*app.dirty, &*app.show_confirm, &*app.confirm_target, &*app.show_settings, &*app.renaming, &*app.rename_buffer, &*app.undo_history, &mut app.sprite_editor, &app.pending_mesh_load, &mut app.audio_engine, &mut app.audio_instance, &mut app.waveform_viewer, &mut app.player_manager, project_type, &mut app.animation_editor);
                                 }
                                 AppScreen::PlayTest => {
                                     let proj_name = app.current_project.as_ref().map(|p| p.name.as_str()).unwrap_or("Untitled");
                                     let proj_name_owned = proj_name.to_string();
                                     let project_type = app.current_project.as_ref().map(|p| p.settings.project_type).unwrap_or(crate::project::ProjectType::Dim3);
-                                    ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut app.screen, &input, target, &ww, &wh, &mut fps, &app.open_project, &app.new_project, &proj_name_owned, &mut app.current_project, &mut app.project_dir, &mut app.ecs_world, &*app.selected_entities, &*app.pending_delete, &*app.dirty, &*app.show_confirm, &*app.confirm_target, &*app.show_settings, &*app.renaming, &*app.rename_buffer, &*app.undo_history, &mut app.sprite_editor, &app.pending_mesh_load, &mut app.audio_engine, &mut app.audio_instance, &mut app.waveform_viewer, &mut app.player_manager, project_type);
+                                    ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut app.screen, &input, target, &ww, &wh, &mut fps, &app.open_project, &app.new_project, &proj_name_owned, &mut app.current_project, &mut app.project_dir, &mut app.ecs_world, &*app.selected_entities, &*app.pending_delete, &*app.dirty, &*app.show_confirm, &*app.confirm_target, &*app.show_settings, &*app.renaming, &*app.rename_buffer, &*app.undo_history, &mut app.sprite_editor, &app.pending_mesh_load, &mut app.audio_engine, &mut app.audio_instance, &mut app.waveform_viewer, &mut app.player_manager, project_type, &mut app.animation_editor);
                                 }
                             }
+                            // Render Tetris UI when in a Tetris project
+                            if let Some(ref proj) = app.current_project {
+                                if proj.settings.project_type == ProjectType::Tetris && (app.screen == AppScreen::Editor || app.screen == AppScreen::PlayTest) {
+                                    crate::tetris::render_tetris_ui(ctx, &mut app.tetris_game);
+                                }
+                            }
+
+                            // Render Endless Runner 3D UI when in an Endless Runner project
+                            if let Some(ref proj) = app.current_project {
+                                if proj.settings.project_type == ProjectType::EndlessRunner3D && (app.screen == AppScreen::Editor || app.screen == AppScreen::PlayTest) {
+                                    crate::endless_runner::render_endless_runner_ui(ctx, &mut app.endless_runner_game);
+                                }
+                            }
+
+                            // Render Breakout 2D UI when in a Breakout project
+                            if let Some(ref proj) = app.current_project {
+                                if proj.settings.project_type == ProjectType::Breakout2D && (app.screen == AppScreen::Editor || app.screen == AppScreen::PlayTest) {
+                                    crate::breakout::render_breakout_ui(ctx, &mut app.breakout_game);
+                                }
+                            }
+
+                            // Render Platformer 3D UI when in a Platformer project
+                            if let Some(ref proj) = app.current_project {
+                                if proj.settings.project_type == ProjectType::Platformer3D && (app.screen == AppScreen::Editor || app.screen == AppScreen::PlayTest) {
+                                    crate::platformer::render_platformer_ui(ctx, &mut app.platformer_game);
+                                }
+                            }
+
+                            // Build Game dialog
+                            {
+                                let build_id = egui::Id::new("show_build_dialog");
+                                let mut show_build = ctx.data(|d| d.get_temp::<bool>(build_id).unwrap_or(false));
+                                if show_build {
+                                    egui::Window::new("Build Game")
+                                        .default_pos([200.0, 150.0])
+                                        .default_size([400.0, 200.0])
+                                        .collapsible(false)
+                                        .show(ctx, |ui| {
+                                            ui.label("Package your game into a standalone build.");
+                                            ui.add_space(8.0);
+                                            if let Some(ref dir) = app.project_dir {
+                                                ui.label(format!("Project: {}", dir));
+                                                ui.add_space(12.0);
+                                                if ui.button("Build Release").clicked() {
+                                                    let result = crate::build_game::build_game(Path::new(dir));
+                                                    if result.success {
+                                                        tracing::info!("Build succeeded: {}", result.message);
+                                                        ctx.data_mut(|d| d.insert_temp(egui::Id::new("build_result"), result.message.clone()));
+                                                    } else {
+                                                        tracing::error!("Build failed: {}", result.message);
+                                                        ctx.data_mut(|d| d.insert_temp(egui::Id::new("build_result"), result.message.clone()));
+                                                    }
+                                                }
+                                            } else {
+                                                ui.label("No project loaded. Open a project first.");
+                                            }
+                                            ui.add_space(8.0);
+                                            if let Some(msg) = ctx.data(|d| d.get_temp::<String>(egui::Id::new("build_result"))) {
+                                                ui.separator();
+                                                ui.label(&msg);
+                                            }
+                                            ui.add_space(8.0);
+                                            if ui.button("Close").clicked() {
+                                                show_build = false;
+                                                ctx.data_mut(|d| d.remove_temp::<String>(egui::Id::new("build_result")));
+                                            }
+                                        });
+                                }
+                                ctx.data_mut(|d| d.insert_temp(build_id, show_build));
+                            }
+
                             if app.show_frame_graph_overlay {
                                 if let Some(ref snap) = app.frame_graph_snapshot {
                                     ui::show_frame_graph_overlay(ctx, &mut app.show_frame_graph_overlay, snap);
@@ -1011,19 +1256,24 @@ fn main() {
                                             ui.add_space(8.0);
                                             ui.add(egui::DragValue::new(&mut proj.settings.target_fps).prefix("Target FPS: ").range(30..=480));
                                             ui.add_space(8.0);
-                                            let mut is_3d = proj.settings.project_type == crate::project::ProjectType::Dim3;
+                                            let ptype = proj.settings.project_type;
                                             ui.horizontal(|ui| {
                                                 ui.label("Project type:");
-                                                if ui.selectable_label(is_3d, "3D").clicked() { is_3d = true; }
-                                                if ui.selectable_label(!is_3d, "2D").clicked() { is_3d = false; }
+                                                if ui.selectable_label(ptype == crate::project::ProjectType::Dim3, "3D").clicked() { proj.settings.project_type = crate::project::ProjectType::Dim3; }
+                                                if ui.selectable_label(ptype == crate::project::ProjectType::Dim2, "2D").clicked() { proj.settings.project_type = crate::project::ProjectType::Dim2; }
+                                                if ui.selectable_label(ptype == crate::project::ProjectType::Voxel, "Voxel").clicked() { proj.settings.project_type = crate::project::ProjectType::Voxel; }
+                                                if ui.selectable_label(ptype == crate::project::ProjectType::Tetris, "Tetris").clicked() { proj.settings.project_type = crate::project::ProjectType::Tetris; }
+                                                if ui.selectable_label(ptype == crate::project::ProjectType::EndlessRunner3D, "Endless Runner 3D").clicked() { proj.settings.project_type = crate::project::ProjectType::EndlessRunner3D; }
+                                                if ui.selectable_label(ptype == crate::project::ProjectType::Breakout2D, "Breakout 2D").clicked() { proj.settings.project_type = crate::project::ProjectType::Breakout2D; }
+                                                if ui.selectable_label(ptype == crate::project::ProjectType::Platformer3D, "Platformer 3D").clicked() { proj.settings.project_type = crate::project::ProjectType::Platformer3D; }
                                             });
-                                            proj.settings.project_type = if is_3d { crate::project::ProjectType::Dim3 } else { crate::project::ProjectType::Dim2 };
                                         }
                                     });
                             }
                         });
 
-                        if let Some(path) = app.open_project.borrow_mut().take() {
+                        let open_path = app.open_project.borrow_mut().take();
+                        if let Some(path) = open_path {
                             let dir = Path::new(&path);
                             let info = load_project_file(dir).or_else(|| create_project_file(dir, ProjectType::Dim3));
                             if let Some(ref proj_info) = info {
@@ -1041,6 +1291,19 @@ fn main() {
                                     cam.distance = cam_state.distance;
                                     cam.mode = cam_state.mode;
                                     cam.follow_target = cam_state.follow_target;
+                                }
+
+                                // Generate voxel world if Voxel project
+                                if proj_info.settings.project_type == ProjectType::Voxel {
+                                    generate_voxel_world(&mut app, &renderer, viewport_manager.primary_camera_mut());
+                                }
+
+                                // Spawn platformer level if Platformer 3D project
+                                if proj_info.settings.project_type == ProjectType::Platformer3D {
+                                    crate::platformer::clear_platformer_level(&mut app.ecs_world);
+                                    crate::platformer::spawn_platformer_level(&mut app.ecs_world);
+                                    app.platformer_game.reset();
+                                    app.platformer_game.total_coins = 9;
                                 }
 
                                 // Restore layout
@@ -1074,12 +1337,19 @@ fn main() {
                                 app.current_project = info;
                                 app.project_dir = Some(path.clone());
                                 add_recent_project(&mut app.recent_projects, path, &app.current_project);
-                                app.screen = AppScreen::Editor;
+                                if app.cli_playtest {
+                                    app.screen = AppScreen::PlayTest;
+                                    app.cli_playtest = false;
+                                    app.cli_project_path = None;
+                                } else {
+                                    app.screen = AppScreen::Editor;
+                                }
                                 next_frame_time = Instant::now();
                                 window.request_redraw();
                             }
                         }
-                        if let Some(path) = app.new_project.borrow_mut().take() {
+                        let new_path = app.new_project.borrow_mut().take();
+                        if let Some(path) = new_path {
                             let dir = Path::new(&path);
                             let ptype = app.new_project_type.get();
                             let mut info = create_project_file(dir, ptype);
@@ -1088,17 +1358,25 @@ fn main() {
                                 app.player_manager = crate::player::PlayerManager::new();
                                 app.script_engine = rustix_scripting::ScriptEngine::new();
                                 app.selected_entities.borrow_mut().clear();
-                                app.ecs_world.spawn((
-                                    Transform { position: Vec3::ZERO, rotation: Vec3::ZERO, scale: Vec3::ONE },
-                                    Name("Cube".into()),
-                                    MeshComponent("Cube".into()),
-                                    Material { base_color: Vec3::new(0.7, 0.7, 0.7), alpha: 1.0, roughness: 0.5, metallic: 0.0, ao: 1.0, emissive: 0.0 },
-                                ));
-                                app.ecs_world.spawn((
-                                    Transform { position: Vec3::new(5.0, 10.0, 5.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
-                                    Name("Light".into()),
-                                    DirectionalLight { color: Vec3::new(1.0, 1.0, 1.0), intensity: 1.0 },
-                                ));
+                                if ptype == ProjectType::Voxel {
+                                    generate_voxel_world(&mut app, &renderer, viewport_manager.primary_camera_mut());
+                                } else if ptype == ProjectType::Platformer3D {
+                                    crate::platformer::spawn_platformer_level(&mut app.ecs_world);
+                                    app.platformer_game.reset();
+                                    app.platformer_game.total_coins = 9;
+                                } else {
+                                    app.ecs_world.spawn((
+                                        Transform { position: Vec3::ZERO, rotation: Vec3::ZERO, scale: Vec3::ONE },
+                                        Name("Cube".into()),
+                                        MeshComponent("Cube".into()),
+                                        Material { base_color: Vec3::new(0.7, 0.7, 0.7), alpha: 1.0, roughness: 0.5, metallic: 0.0, ao: 1.0, emissive: 0.0 },
+                                    ));
+                                    app.ecs_world.spawn((
+                                        Transform { position: Vec3::new(5.0, 10.0, 5.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
+                                        Name("Light".into()),
+                                        DirectionalLight { color: Vec3::new(1.0, 1.0, 1.0), intensity: 1.0 },
+                                    ));
+                                }
                                 proj.scene = world_to_scene(&app.ecs_world);
                                 let _ = write_project_file(dir, proj);
                                 app.current_project = info;

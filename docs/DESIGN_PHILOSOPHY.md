@@ -113,8 +113,20 @@ The engine is designed to be editor-hosting from the start:
 - Event system for undo/redo hooks
 - Asset pipeline has import/export stages (editor modifies → reimport)
 - Scene serialization built into ECS component model
+- **Game Templates**: Built-in starter scenes (2D, 3D, Voxel, Tetris) demonstrate engine capabilities and provide starting points for new projects — not a game framework, but a curated set of examples that ship with the editor
 
-### 9. Cache-Centric Resource Management
+### 9. Build & Ship Pipeline
+
+Editor development is only half the story. Rustix includes a **build pipeline** to package projects into standalone, distributable games:
+
+- **CLI headless mode**: `./rustix-runtime --project <path> --playtest` launches straight into the game with no editor chrome
+- **In-editor Build dialog**: `Project → Build Game` compiles the runtime in release mode, copies the binary, project assets, and scene, and produces a ready-to-distribute folder
+- **Output**: A self-contained folder with the compiled binary, project data, and a `launch.sh` script
+- **Current target**: Linux only (matching the Linux-first philosophy)
+
+**Design decision:** The runtime binary serves double duty as both editor and player. The `--playtest` flag is the switch. This avoids maintaining two separate binaries until there's a concrete need for a stripped-down player build.
+
+### 10. Cache-Centric Resource Management
 
 Vulkan object creation is expensive. The engine caches aggressively and reuses handles keyed by creation parameters.
 
@@ -126,7 +138,7 @@ Vulkan object creation is expensive. The engine caches aggressively and reuses h
 
 **Principle:** If you can create it once and reuse it, cache it. Per-frame allocations are unacceptable in the hot path.
 
-### 10. Stable Addresses for Raw Pointers
+### 11. Stable Addresses for Raw Pointers
 
 When raw pointers to Vulkan objects (or the `ash::Device` itself) are stored in caches or long-lived structs, the target must remain at a **stable memory address** for the pointer's entire lifetime.
 
@@ -136,7 +148,7 @@ When raw pointers to Vulkan objects (or the `ash::Device` itself) are stored in 
 
 **Rule:** Any `*const ash::Device` or `*const T` stored in a cache or struct must point to a heap allocation (`Box`, `Arc`, or `static`) that outlives the cache.
 
-### 11. Build for the Hardware
+### 12. Build for the Hardware
 
 | Hardware | Strategy |
 |----------|----------|
@@ -145,7 +157,7 @@ When raw pointers to Vulkan objects (or the `ash::Device` itself) are stored in 
 | NVMe SSD | Direct IO where possible, async readahead for streaming |
 | 16+ GB RAM | Aggressive caching, large staging buffer pools |
 
-### 12. Practical Over Trendy
+### 13. Practical Over Trendy
 
 We use proven technology, not the latest hype:
 
@@ -156,7 +168,7 @@ We use proven technology, not the latest hype:
 - `rapier` (production physics) over custom (not worth the effort)
 - `tracing` (structured, composable) over `log` (basic, unstructured)
 
-### 13. Actual Crate Versions (Phase 0)
+### 14. Actual Crate Versions (Phase 0)
 
 The following versions are locked and tested for Phase 0:
 
@@ -173,7 +185,7 @@ The following versions are locked and tested for Phase 0:
 | `serde` | 1 | Serialization framework |
 | `toml` | 0.8 | Configuration format |
 
-### 14. API Migration Debt (Fall 2024 → Spring 2026)
+### 15. API Migration Debt (Fall 2024 → Spring 2026)
 
 Both ash and winit underwent significant breaking API changes between their 2024 and 2026 releases. The Rustix codebase absorbed these migrations during Phase 0:
 
@@ -188,7 +200,7 @@ These migrations consumed significant Phase 0 effort but ensure the engine build
 - No dynamic plugin loading in v1 (compile-time plugins only)
 - No built-in networking authority model beyond client-server
 - No engine-side entity scripting in Lua (WASM only, future)
-- No baked-in game framework (this is an engine, not a game template)
+- No baked-in game framework (starter scenes are templates, not a framework — they demonstrate engine features, not impose game architecture)
 - No prefab system beyond what ECS serialization provides
 
 ## Coding Standards

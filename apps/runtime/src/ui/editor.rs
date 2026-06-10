@@ -17,6 +17,7 @@ use super::console;
 use super::viewport::{self, ViewportManager};
 use super::dialogs;
 use super::undo_redo;
+use super::animation_editor::{self as anim_ed, AnimationEditor};
 
 #[allow(clippy::too_many_arguments)]
 pub fn editor_screen(
@@ -51,20 +52,23 @@ pub fn editor_screen(
     waveform_viewer: &mut waveform::WaveformViewer,
     player_manager: &mut PlayerManager,
     project_type: ProjectType,
+    animation_editor: &mut AnimationEditor,
 ) {
-    let (hierarchy_dock, inspector_dock, console_dock) = current_project
+    let (hierarchy_dock, inspector_dock, console_dock, asset_browser_dock) = current_project
         .as_ref()
         .and_then(|p| p.layout.as_ref())
-        .map(|l| (l.hierarchy_dock, l.inspector_dock, l.console_dock))
-        .unwrap_or((DockPosition::Left, DockPosition::Right, DockPosition::Bottom));
+        .map(|l| (l.hierarchy_dock, l.inspector_dock, l.console_dock, l.asset_browser_dock))
+        .unwrap_or((DockPosition::Left, DockPosition::Right, DockPosition::Bottom, DockPosition::Left));
 
-    menu_bar::show_menu_bar(ctx, viewport_manager, _input, target, screen, ww, wh, fps, open_project, new_project, project_name, current_project, project_dir, world, dirty, show_confirm, confirm_target, show_settings, sprite_editor, pending_mesh_load, _window);
+    menu_bar::show_menu_bar(ctx, viewport_manager, _input, target, screen, ww, wh, fps, open_project, new_project, project_name, current_project, project_dir, world, dirty, show_confirm, confirm_target, show_settings, sprite_editor, pending_mesh_load, _window, animation_editor);
     let is_playing = *screen == crate::project::AppScreen::PlayTest;
     if !is_playing {
         hierarchy::show_hierarchy(ctx, world, selected_entities, pending_delete, dirty, renaming, rename_buffer, undo_history, hierarchy_dock, player_manager, project_type);
         let cam = viewport_manager.primary_camera_mut();
         inspector::show_inspector(ctx, cam, world, selected_entities, dirty, undo_history, inspector_dock);
         console::show_console(ctx, project_dir, audio_engine, audio_instance, waveform_viewer, console_dock);
+        super::asset_browser::show_asset_browser(ctx, project_dir, asset_browser_dock, world);
+        anim_ed::show_animation_editor(ctx, animation_editor, world, dirty);
     }
     {
         let bookmarks = current_project.as_mut().map(|p| &mut p.bookmarks);
@@ -124,9 +128,9 @@ pub fn editor_screen(
                     size,
                 });
             }
-            let (h_dock, i_dock, c_dock) = proj.layout.as_ref()
-                .map(|l| (l.hierarchy_dock, l.inspector_dock, l.console_dock))
-                .unwrap_or((DockPosition::Left, DockPosition::Right, DockPosition::Bottom));
+            let (h_dock, i_dock, c_dock, a_dock) = proj.layout.as_ref()
+                .map(|l| (l.hierarchy_dock, l.inspector_dock, l.console_dock, l.asset_browser_dock))
+                .unwrap_or((DockPosition::Left, DockPosition::Right, DockPosition::Bottom, DockPosition::Left));
             proj.layout = Some(LayoutState {
                 hierarchy_width,
                 inspector_width,
@@ -135,6 +139,7 @@ pub fn editor_screen(
                 hierarchy_dock: h_dock,
                 inspector_dock: i_dock,
                 console_dock: c_dock,
+                asset_browser_dock: a_dock,
             });
 
             if let Some(ref dir) = project_dir {

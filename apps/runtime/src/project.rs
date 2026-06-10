@@ -25,6 +25,11 @@ pub enum ConfirmTarget {
 pub enum ProjectType {
     Dim2,
     Dim3,
+    Voxel,
+    Tetris,
+    EndlessRunner3D,
+    Breakout2D,
+    Platformer3D,
 }
 
 impl Default for ProjectType {
@@ -105,6 +110,8 @@ pub struct LayoutState {
     pub inspector_dock: DockPosition,
     #[serde(default = "default_console_dock")]
     pub console_dock: DockPosition,
+    #[serde(default = "default_asset_browser_dock")]
+    pub asset_browser_dock: DockPosition,
 }
 
 fn default_hierarchy_width() -> f32 { 220.0 }
@@ -112,6 +119,7 @@ fn default_inspector_width() -> f32 { 260.0 }
 fn default_console_height() -> f32 { 160.0 }
 fn default_inspector_dock() -> DockPosition { DockPosition::Right }
 fn default_console_dock() -> DockPosition { DockPosition::Bottom }
+fn default_asset_browser_dock() -> DockPosition { DockPosition::Left }
 
 impl Default for LayoutState {
     fn default() -> Self {
@@ -123,6 +131,7 @@ impl Default for LayoutState {
             hierarchy_dock: DockPosition::Left,
             inspector_dock: DockPosition::Right,
             console_dock: DockPosition::Bottom,
+            asset_browser_dock: DockPosition::Left,
         }
     }
 }
@@ -203,6 +212,7 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                             up: Vec3::new(0.0, 1.0, 0.0),
                         }),
                         camera: Some(Camera { fov_degrees: 60.0, near: 0.1, far: 1000.0 }),
+                        skeleton: None,
                         parent_idx: None,
                     },
                     SceneEntity {
@@ -223,6 +233,7 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         collider: None,
                         audiolistener: None,
                         camera: None,
+                        skeleton: None,
                         parent_idx: None,
                     },
                     SceneEntity {
@@ -240,6 +251,7 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         collider: None,
                         audiolistener: None,
                         camera: None,
+                        skeleton: None,
                         parent_idx: None,
                     },
                     SceneEntity {
@@ -264,6 +276,7 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         collider: None,
                         audiolistener: None,
                         camera: None,
+                        skeleton: None,
                         parent_idx: None,
                     },
                 ],
@@ -291,6 +304,7 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                             up: Vec3::new(0.0, 1.0, 0.0),
                         }),
                         camera: Some(Camera { fov_degrees: 60.0, near: 0.1, far: 1000.0 }),
+                        skeleton: None,
                         parent_idx: None,
                     },
                     SceneEntity {
@@ -315,12 +329,273 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         collider: None,
                         audiolistener: None,
                         camera: None,
+                        skeleton: None,
+                        parent_idx: None,
+                    },
+                ],
+            }
+        }
+        ProjectType::Voxel => {
+            SceneData {
+                entities: vec![
+                    SceneEntity {
+                        name: "Player".to_string(),
+                        position: [8.0, terrain_height(8, 8) as f32 + 2.0, 8.0],
+                        rotation: [0.0, 0.0, 0.0],
+                        scale: [1.0, 1.0, 1.0],
+                        mesh: None,
+                        dirlight: None,
+                        pointlight: None,
+                        spotlight: None,
+                        material: None,
+                        script: None,
+                        rigidbody: None,
+                        collider: None,
+                        audiolistener: Some(rustix_audio::AudioListener {
+                            position: Vec3::new(0.0, 0.0, 0.0),
+                            forward: Vec3::new(0.0, 0.0, -1.0),
+                            up: Vec3::new(0.0, 1.0, 0.0),
+                        }),
+                        camera: Some(Camera { fov_degrees: 75.0, near: 0.1, far: 1000.0 }),
+                        skeleton: None,
+                        parent_idx: None,
+                    },
+                    SceneEntity {
+                        name: "Sun".to_string(),
+                        position: [20.0, 40.0, 10.0],
+                        rotation: [0.0, 0.0, 0.0],
+                        scale: [1.0, 1.0, 1.0],
+                        mesh: None,
+                        dirlight: Some(DirectionalLight {
+                            color: Vec3::new(1.0, 0.98, 0.95),
+                            intensity: 1.5,
+                        }),
+                        pointlight: None,
+                        spotlight: None,
+                        material: None,
+                        script: None,
+                        rigidbody: None,
+                        collider: None,
+                        audiolistener: None,
+                        camera: None,
+                        skeleton: None,
+                        parent_idx: None,
+                    },
+                ],
+            }
+        }
+        ProjectType::Tetris => {
+            SceneData {
+                entities: vec![
+                    SceneEntity {
+                        name: "Main Camera".to_string(),
+                        position: [0.0, 0.0, 5.0],
+                        rotation: [0.0, 0.0, 0.0],
+                        scale: [1.0, 1.0, 1.0],
+                        mesh: None,
+                        dirlight: None,
+                        pointlight: None,
+                        spotlight: None,
+                        material: None,
+                        script: None,
+                        rigidbody: None,
+                        collider: None,
+                        audiolistener: Some(rustix_audio::AudioListener {
+                            position: Vec3::new(0.0, 0.0, 0.0),
+                            forward: Vec3::new(0.0, 0.0, -1.0),
+                            up: Vec3::new(0.0, 1.0, 0.0),
+                        }),
+                        camera: Some(Camera { fov_degrees: 60.0, near: 0.1, far: 1000.0 }),
+                        skeleton: None,
+                        parent_idx: None,
+                    },
+                ],
+            }
+        }
+        ProjectType::EndlessRunner3D => {
+            SceneData {
+                entities: vec![
+                    SceneEntity {
+                        name: "Main Camera".to_string(),
+                        position: [0.0, 8.0, 12.0],
+                        rotation: [-30.0, 0.0, 0.0],
+                        scale: [1.0, 1.0, 1.0],
+                        mesh: None,
+                        dirlight: None,
+                        pointlight: None,
+                        spotlight: None,
+                        material: None,
+                        script: None,
+                        rigidbody: None,
+                        collider: None,
+                        audiolistener: Some(rustix_audio::AudioListener {
+                            position: Vec3::new(0.0, 0.0, 0.0),
+                            forward: Vec3::new(0.0, 0.0, -1.0),
+                            up: Vec3::new(0.0, 1.0, 0.0),
+                        }),
+                        camera: Some(Camera { fov_degrees: 60.0, near: 0.1, far: 1000.0 }),
+                        skeleton: None,
+                        parent_idx: None,
+                    },
+                    SceneEntity {
+                        name: "Sun".to_string(),
+                        position: [5.0, 10.0, 5.0],
+                        rotation: [0.0, 0.0, 0.0],
+                        scale: [1.0, 1.0, 1.0],
+                        mesh: None,
+                        dirlight: Some(DirectionalLight {
+                            color: Vec3::new(1.0, 0.98, 0.95),
+                            intensity: 1.5,
+                        }),
+                        pointlight: None,
+                        spotlight: None,
+                        material: None,
+                        script: None,
+                        rigidbody: None,
+                        collider: None,
+                        audiolistener: None,
+                        camera: None,
+                        skeleton: None,
+                        parent_idx: None,
+                    },
+                    SceneEntity {
+                        name: "Ground".to_string(),
+                        position: [0.0, -0.5, 0.0],
+                        rotation: [0.0, 0.0, 0.0],
+                        scale: [6.0, 1.0, 100.0],
+                        mesh: Some("Cube".to_string()),
+                        dirlight: None,
+                        pointlight: None,
+                        spotlight: None,
+                        material: Some(Material {
+                            base_color: Vec3::new(0.2, 0.3, 0.2),
+                            alpha: 1.0,
+                            roughness: 0.9,
+                            metallic: 0.0,
+                            ao: 1.0,
+                            emissive: 0.0,
+                        }),
+                        script: None,
+                        rigidbody: None,
+                        collider: None,
+                        audiolistener: None,
+                        camera: None,
+                        skeleton: None,
+                        parent_idx: None,
+                    },
+                    SceneEntity {
+                        name: "Player".to_string(),
+                        position: [0.0, 0.5, 0.0],
+                        rotation: [0.0, 0.0, 0.0],
+                        scale: [0.8, 0.8, 0.8],
+                        mesh: Some("Capsule".to_string()),
+                        dirlight: None,
+                        pointlight: None,
+                        spotlight: None,
+                        material: Some(Material {
+                            base_color: Vec3::new(0.3, 0.6, 0.9),
+                            alpha: 1.0,
+                            roughness: 0.4,
+                            metallic: 0.1,
+                            ao: 1.0,
+                            emissive: 0.0,
+                        }),
+                        script: None,
+                        rigidbody: None,
+                        collider: None,
+                        audiolistener: None,
+                        camera: None,
+                        skeleton: None,
+                        parent_idx: None,
+                    },
+                ],
+            }
+        }
+        ProjectType::Breakout2D => {
+            SceneData {
+                entities: vec![
+                    SceneEntity {
+                        name: "Main Camera".to_string(),
+                        position: [0.0, 0.0, 5.0],
+                        rotation: [0.0, 0.0, 0.0],
+                        scale: [1.0, 1.0, 1.0],
+                        mesh: None,
+                        dirlight: None,
+                        pointlight: None,
+                        spotlight: None,
+                        material: None,
+                        script: None,
+                        rigidbody: None,
+                        collider: None,
+                        audiolistener: Some(rustix_audio::AudioListener {
+                            position: Vec3::new(0.0, 0.0, 0.0),
+                            forward: Vec3::new(0.0, 0.0, -1.0),
+                            up: Vec3::new(0.0, 1.0, 0.0),
+                        }),
+                        camera: Some(Camera { fov_degrees: 60.0, near: 0.1, far: 1000.0 }),
+                        skeleton: None,
+                        parent_idx: None,
+                    },
+                ],
+            }
+        }
+        ProjectType::Platformer3D => {
+            SceneData {
+                entities: vec![
+                    SceneEntity {
+                        name: "Main Camera".to_string(),
+                        position: [0.0, 5.0, 10.0],
+                        rotation: [-25.0, 0.0, 0.0],
+                        scale: [1.0, 1.0, 1.0],
+                        mesh: None,
+                        dirlight: None,
+                        pointlight: None,
+                        spotlight: None,
+                        material: None,
+                        script: None,
+                        rigidbody: None,
+                        collider: None,
+                        audiolistener: Some(rustix_audio::AudioListener {
+                            position: Vec3::new(0.0, 0.0, 0.0),
+                            forward: Vec3::new(0.0, 0.0, -1.0),
+                            up: Vec3::new(0.0, 1.0, 0.0),
+                        }),
+                        camera: Some(Camera { fov_degrees: 60.0, near: 0.1, far: 1000.0 }),
+                        skeleton: None,
+                        parent_idx: None,
+                    },
+                    SceneEntity {
+                        name: "Sun".to_string(),
+                        position: [5.0, 10.0, 5.0],
+                        rotation: [0.0, 0.0, 0.0],
+                        scale: [1.0, 1.0, 1.0],
+                        mesh: None,
+                        dirlight: Some(DirectionalLight {
+                            color: Vec3::new(1.0, 0.98, 0.95),
+                            intensity: 1.5,
+                        }),
+                        pointlight: None,
+                        spotlight: None,
+                        material: None,
+                        script: None,
+                        rigidbody: None,
+                        collider: None,
+                        audiolistener: None,
+                        camera: None,
+                        skeleton: None,
                         parent_idx: None,
                     },
                 ],
             }
         }
     }
+}
+
+fn terrain_height(x: i32, z: i32) -> i32 {
+    let base = 8.0;
+    let variation = crate::voxel::smooth_noise(x, z) * 8.0;
+    let hills = (crate::voxel::smooth_noise(x / 3, z / 3) * 6.0).sin() * 3.0;
+    (base + variation + hills).max(1.0).min(crate::voxel::CHUNK_HEIGHT as f32 - 2.0) as i32
 }
 
 pub fn create_project_file(dir: &Path, project_type: ProjectType) -> Option<ProjectInfo> {

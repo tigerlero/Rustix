@@ -3,6 +3,7 @@ use rustix_core::math::{Vec3, Mat4, Quat, EulerRot};
 use rustix_render::{DirectionalLight, PointLight, SpotLight};
 use rustix_scripting::ScriptComponent;
 use rustix_physics::{RigidBody, Collider};
+use rustix_animation::Skeleton;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Transform {
@@ -66,6 +67,8 @@ pub struct SceneEntity {
     #[serde(default)]
     pub camera: Option<rustix_render::Camera>,
     #[serde(default)]
+    pub skeleton: Option<Skeleton>,
+    #[serde(default)]
     pub parent_idx: Option<usize>,
 }
 
@@ -104,6 +107,7 @@ pub fn entity_to_scene_entity(world: &EcsWorld, entity: hecs::Entity) -> SceneEn
     let collider = world.get::<&Collider>(entity).ok().map(|r| *r);
     let audiolistener = world.get::<&rustix_audio::AudioListener>(entity).ok().map(|r| *r);
     let camera = world.get::<&rustix_render::Camera>(entity).ok().map(|r| *r);
+    let skeleton = world.get::<&Skeleton>(entity).ok().map(|r| (*r).clone());
     SceneEntity {
         name,
         position: t.position.into(),
@@ -119,6 +123,7 @@ pub fn entity_to_scene_entity(world: &EcsWorld, entity: hecs::Entity) -> SceneEn
         collider,
         audiolistener,
         camera,
+        skeleton,
         parent_idx: None,
     }
 }
@@ -165,6 +170,9 @@ pub fn spawn_entity(world: &mut EcsWorld, e: &SceneEntity) -> hecs::Entity {
     if let Some(ref cam) = e.camera {
         let _ = world.insert(entity, (*cam,));
     }
+    if let Some(ref skel) = e.skeleton {
+        let _ = world.insert(entity, (skel.clone(),));
+    }
     entity
 }
 
@@ -186,6 +194,7 @@ pub fn world_to_scene(world: &EcsWorld) -> SceneData {
         let collider = world.get::<&Collider>(entity).ok().map(|r| *r);
         let audiolistener = world.get::<&rustix_audio::AudioListener>(entity).ok().map(|r| *r);
         let camera = world.get::<&rustix_render::Camera>(entity).ok().map(|r| *r);
+        let skeleton = world.get::<&Skeleton>(entity).ok().map(|r| (*r).clone());
         let parent_idx = world.get::<&Parent>(entity).ok()
             .and_then(|p| p.0.and_then(|pe| entity_to_idx.get(&pe).copied()));
         entities.push(SceneEntity {
@@ -203,6 +212,7 @@ pub fn world_to_scene(world: &EcsWorld) -> SceneData {
             collider,
             audiolistener,
             camera,
+            skeleton,
             parent_idx,
         });
     }
@@ -256,6 +266,9 @@ pub fn scene_to_world(world: &mut EcsWorld, data: &SceneData) {
         }
         if let Some(ref cam) = e.camera {
             let _ = world.insert(entity, (*cam,));
+        }
+        if let Some(ref skel) = e.skeleton {
+            let _ = world.insert(entity, (skel.clone(),));
         }
         idx_to_entity.push(entity);
     }

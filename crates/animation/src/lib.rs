@@ -160,6 +160,29 @@ impl EventTrack {
     }
 }
 
+/// Per-bone animation tracks for skeletal animation.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct BoneAnimationTracks {
+    pub position_track: AnimationTrack,
+    pub rotation_track: RotationTrack,
+    pub scale_track: AnimationTrack,
+}
+
+impl BoneAnimationTracks {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sample all tracks at the given time.
+    pub fn sample(&self, time: f32) -> (Option<Vec3>, Option<Quat>, Option<Vec3>) {
+        (
+            self.position_track.sample(time),
+            self.rotation_track.sample(time),
+            self.scale_track.sample(time),
+        )
+    }
+}
+
 /// A named animation clip composed of position, rotation, and scale tracks.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimationClip {
@@ -275,6 +298,45 @@ impl AnimationClip {
             delta_position: curr_pos - prev_pos,
             delta_rotation: curr_rot * prev_rot.inverse(),
         }
+    }
+}
+
+/// A skeletal animation clip with per-bone position, rotation, and scale tracks.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkeletalAnimationClip {
+    pub name: String,
+    pub duration: f32,
+    pub bone_tracks: HashMap<String, BoneAnimationTracks>,
+    pub event_track: EventTrack,
+}
+
+impl SkeletalAnimationClip {
+    pub fn new(name: impl Into<String>, duration: f32) -> Self {
+        Self {
+            name: name.into(),
+            duration,
+            bone_tracks: HashMap::new(),
+            event_track: EventTrack::new(),
+        }
+    }
+
+    /// Get or create tracks for a bone by name.
+    pub fn bone_tracks_mut(&mut self, bone_name: impl Into<String>) -> &mut BoneAnimationTracks {
+        self.bone_tracks.entry(bone_name.into()).or_insert_with(BoneAnimationTracks::new)
+    }
+
+    /// Sample all bone tracks at the given time, returning a map of bone name → (pos, rot, scl).
+    pub fn sample_pose(&self, time: f32) -> HashMap<String, (Option<Vec3>, Option<Quat>, Option<Vec3>)> {
+        let mut result = HashMap::with_capacity(self.bone_tracks.len());
+        for (name, tracks) in &self.bone_tracks {
+            result.insert(name.clone(), tracks.sample(time));
+        }
+        result
+    }
+
+    /// Sample events between prev_time and current_time.
+    pub fn sample_events(&self, prev_time: f32, time: f32, looped: bool) -> Vec<&AnimationEvent> {
+        self.event_track.events_between(prev_time, time, self.duration, looped)
     }
 }
 

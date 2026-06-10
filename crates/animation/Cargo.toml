@@ -9,6 +9,7 @@ tracing = { workspace = true }
 thiserror = { workspace = true }
 hecs = { workspace = true }
 rayon = "1.10"
+serde = { workspace = true }
 
 rustix-core = { path = "../core" }
 rustix-asset = { path = "../asset" }

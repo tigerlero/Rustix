@@ -3,7 +3,7 @@
 use rustix_core::math::{Vec3, Mat4};
 
 /// A single bone in a skeleton hierarchy.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Bone {
     /// Bone name (for debugging and animation targeting).
     pub name: [u8; 32],
@@ -28,7 +28,7 @@ impl Bone {
 
 /// A skeleton is a hierarchy of bones with inverse bind matrices,
 /// used for GPU skinning and animation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Skeleton {
     pub bones: Vec<Bone>,
 }

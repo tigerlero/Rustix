@@ -18,6 +18,7 @@ use crate::undo::UndoHistory;
 use crate::player::{PlayerManager, spawn_player};
 use crate::enemy::{spawn_enemy, spawn_enemy_with_skill, EnemyAI};
 use crate::combat::{CombatStats, Skill};
+use crate::ui::animation_editor::AnimationEditor;
 
 #[allow(dead_code)]
 pub struct AppState {
@@ -31,6 +32,8 @@ pub struct AppState {
     pub physics_world: PhysicsWorld,
     pub player_manager: PlayerManager,
     pub script_engine: ScriptEngine,
+    pub voxel_chunks: Vec<crate::voxel::Chunk>,
+    pub tetris_game: crate::tetris::TetrisGame,
 
     pub scene_pipeline: Option<rustix_render::pipeline::GraphicsPipeline>,
     pub scene_descriptor_pool: Option<vk::DescriptorPool>,
@@ -165,6 +168,13 @@ pub struct AppState {
     pub input_recorder: rustix_platform::recorder::InputRecorder,
     pub recording_dir: std::path::PathBuf,
     pub start_time: Instant,
+    pub animation_editor: AnimationEditor,
+
+    pub cli_project_path: Option<String>,
+    pub cli_playtest: bool,
+    pub endless_runner_game: crate::endless_runner::EndlessRunnerGame,
+    pub breakout_game: crate::breakout::BreakoutGame,
+    pub platformer_game: crate::platformer::PlatformerGame,
 }
 
 #[allow(dead_code)]
@@ -246,6 +256,8 @@ impl AppState {
             physics_world: PhysicsWorld::default(),
             player_manager,
             script_engine: ScriptEngine::new(),
+            voxel_chunks: Vec::new(),
+            tetris_game: crate::tetris::TetrisGame::new(),
 
             scene_pipeline: None,
             scene_descriptor_pool: None,
@@ -384,6 +396,12 @@ impl AppState {
                 .map(|d| d.join("rustix").join("recordings"))
                 .unwrap_or_else(|| std::path::PathBuf::from("recordings")),
             start_time: Instant::now(),
+            animation_editor: AnimationEditor::default(),
+            cli_project_path: None,
+            cli_playtest: false,
+            endless_runner_game: crate::endless_runner::EndlessRunnerGame::new(),
+            breakout_game: crate::breakout::BreakoutGame::new(),
+            platformer_game: crate::platformer::PlatformerGame::new(),
         }
     }
 
@@ -532,20 +550,35 @@ impl AppState {
                 let mesh_name = Path::new(&path)
                     .file_stem().and_then(|s| s.to_str()).unwrap_or("Imported")
                     .to_string();
-                if let Ok(result) = crate::gltf_loader::load_glb(renderer, &data, &mesh_name) {
-                    tracing::info!("loaded mesh {mesh_name} from {path} (base={:?} rough={:.2} metal={:.2})",
-                        result.base_color, result.roughness, result.metallic);
-                    self.meshes.insert(mesh_name.clone(), result.mesh);
-                    let e = self.ecs_world.spawn((
-                        Transform { position: Vec3::new(0.0, 1.0, 0.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
-                        Name(mesh_name.clone()),
-                        MeshComponent(mesh_name),
-                        Material { base_color: Vec3::from(result.base_color), alpha: 1.0, roughness: result.roughness, metallic: result.metallic, ao: 1.0, emissive: 0.0 },
-                    ));
-                    *self.selected_entities.borrow_mut() = vec![e];
-                    self.dirty.set(true);
-                } else {
-                    tracing::error!("failed to load mesh from {path}");
+                let ext = Path::new(&path)
+                    .extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+                match crate::model_import::import_model(renderer, &data, &mesh_name, &ext) {
+                    Ok(result) => {
+                        let mat = &result.material;
+                        tracing::info!("loaded mesh {mesh_name} from {path} (base={:?} rough={:.2} metal={:.2}) [degen={} zero_area={} nan={}]",
+                            mat.base_color, mat.roughness, mat.metallic,
+                            result.validation.degenerate_triangles,
+                            result.validation.zero_area_faces,
+                            result.validation.nan_vertices);
+                        if !result.validation.warnings.is_empty() {
+                            for w in &result.validation.warnings {
+                                tracing::warn!("mesh validation: {}", w);
+                            }
+                        }
+                        self.meshes.insert(mesh_name.clone(), result.mesh);
+                        let e = self.ecs_world.spawn((
+                            Transform { position: Vec3::new(0.0, 1.0, 0.0), rotation: Vec3::ZERO, scale: Vec3::ONE },
+                            Name(mesh_name.clone()),
+                            MeshComponent(mesh_name.clone()),
+                            Material { base_color: Vec3::from(mat.base_color), alpha: 1.0, roughness: mat.roughness, metallic: mat.metallic, ao: mat.ao, emissive: mat.emissive },
+                        ));
+                        if let Some(skel) = result.skeleton {
+                            let _ = self.ecs_world.insert(e, (skel,));
+                        }
+                        *self.selected_entities.borrow_mut() = vec![e];
+                        self.dirty.set(true);
+                    }
+                    Err(e) => tracing::error!("failed to load mesh from {path}: {e}"),
                 }
             } else {
                 tracing::error!("failed to read file {path}");

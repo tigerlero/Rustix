@@ -226,7 +226,7 @@ let open_btn = egui::Button::new(
                     let btn3d = egui::Button::new(
                         egui::RichText::new("3D Project").size(16.0).color(egui::Color32::WHITE)
                     )
-                    .min_size(egui::vec2(120.0, 60.0))
+                    .min_size(egui::vec2(100.0, 60.0))
                     .fill(accent)
                     .corner_radius(egui::CornerRadius::same(6));
                     if ui.add(btn3d).clicked() {
@@ -242,11 +242,91 @@ let open_btn = egui::Button::new(
                     let btn2d = egui::Button::new(
                         egui::RichText::new("2D Project").size(16.0).color(egui::Color32::WHITE)
                     )
-                    .min_size(egui::vec2(120.0, 60.0))
+                    .min_size(egui::vec2(100.0, 60.0))
                     .fill(accent)
                     .corner_radius(egui::CornerRadius::same(6));
                     if ui.add(btn2d).clicked() {
                         new_project_type.set(ProjectType::Dim2);
+                        show_new_project_type.set(false);
+                        if let Some(path) = rfd::FileDialog::new()
+                            .set_title("Create New Project")
+                            .pick_folder()
+                        {
+                            new_project.borrow_mut().replace(path.to_string_lossy().to_string());
+                        }
+                    }
+                    let btn_voxel = egui::Button::new(
+                        egui::RichText::new("Voxel").size(16.0).color(egui::Color32::WHITE)
+                    )
+                    .min_size(egui::vec2(80.0, 60.0))
+                    .fill(accent)
+                    .corner_radius(egui::CornerRadius::same(6));
+                    if ui.add(btn_voxel).clicked() {
+                        new_project_type.set(ProjectType::Voxel);
+                        show_new_project_type.set(false);
+                        if let Some(path) = rfd::FileDialog::new()
+                            .set_title("Create New Project")
+                            .pick_folder()
+                        {
+                            new_project.borrow_mut().replace(path.to_string_lossy().to_string());
+                        }
+                    }
+                    let btn_tetris = egui::Button::new(
+                        egui::RichText::new("Tetris").size(16.0).color(egui::Color32::WHITE)
+                    )
+                    .min_size(egui::vec2(80.0, 60.0))
+                    .fill(accent)
+                    .corner_radius(egui::CornerRadius::same(6));
+                    if ui.add(btn_tetris).clicked() {
+                        new_project_type.set(ProjectType::Tetris);
+                        show_new_project_type.set(false);
+                        if let Some(path) = rfd::FileDialog::new()
+                            .set_title("Create New Project")
+                            .pick_folder()
+                        {
+                            new_project.borrow_mut().replace(path.to_string_lossy().to_string());
+                        }
+                    }
+                    let btn_runner = egui::Button::new(
+                        egui::RichText::new("Endless Runner 3D").size(16.0).color(egui::Color32::WHITE)
+                    )
+                    .min_size(egui::vec2(100.0, 60.0))
+                    .fill(accent)
+                    .corner_radius(egui::CornerRadius::same(6));
+                    if ui.add(btn_runner).clicked() {
+                        new_project_type.set(ProjectType::EndlessRunner3D);
+                        show_new_project_type.set(false);
+                        if let Some(path) = rfd::FileDialog::new()
+                            .set_title("Create New Project")
+                            .pick_folder()
+                        {
+                            new_project.borrow_mut().replace(path.to_string_lossy().to_string());
+                        }
+                    }
+                    let btn_breakout = egui::Button::new(
+                        egui::RichText::new("Breakout 2D").size(16.0).color(egui::Color32::WHITE)
+                    )
+                    .min_size(egui::vec2(100.0, 60.0))
+                    .fill(accent)
+                    .corner_radius(egui::CornerRadius::same(6));
+                    if ui.add(btn_breakout).clicked() {
+                        new_project_type.set(ProjectType::Breakout2D);
+                        show_new_project_type.set(false);
+                        if let Some(path) = rfd::FileDialog::new()
+                            .set_title("Create New Project")
+                            .pick_folder()
+                        {
+                            new_project.borrow_mut().replace(path.to_string_lossy().to_string());
+                        }
+                    }
+                    let btn_platformer = egui::Button::new(
+                        egui::RichText::new("Platformer 3D").size(16.0).color(egui::Color32::WHITE)
+                    )
+                    .min_size(egui::vec2(100.0, 60.0))
+                    .fill(accent)
+                    .corner_radius(egui::CornerRadius::same(6));
+                    if ui.add(btn_platformer).clicked() {
+                        new_project_type.set(ProjectType::Platformer3D);
                         show_new_project_type.set(false);
                         if let Some(path) = rfd::FileDialog::new()
                             .set_title("Create New Project")

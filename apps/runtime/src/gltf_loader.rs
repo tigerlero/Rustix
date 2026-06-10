@@ -1,14 +1,10 @@
-use rustix_render::mesh::{Mesh, Vertex};
+use rustix_core::math::{Vec3, Mat4, Quat};
+use rustix_render::mesh::Vertex;
 use rustix_render::Renderer;
+use rustix_animation::Skeleton;
+use crate::model_import::{ImportedModel, MaterialInfo, build_imported_model};
 
-pub struct GlbResult {
-    pub mesh: Mesh,
-    pub base_color: [f32; 3],
-    pub roughness: f32,
-    pub metallic: f32,
-}
-
-pub fn load_glb(renderer: &Renderer, data: &[u8], name: &str) -> Result<GlbResult, String> {
+pub fn load_glb(renderer: &Renderer, data: &[u8], name: &str) -> Result<ImportedModel, String> {
     let (doc, buffers, _images) = gltf::import_slice(data)
         .map_err(|e| format!("glTF parse: {e}"))?;
 
@@ -65,15 +61,90 @@ pub fn load_glb(renderer: &Renderer, data: &[u8], name: &str) -> Result<GlbResul
     }
 
     let ibuf = if all_indices.is_empty() { None } else { Some((&all_indices[..], all_indices.len() as u32)) };
-    let mesh = Mesh::new(renderer, name, bytemuck::cast_slice(&all_verts), all_verts.len() as u32, ibuf)
-        .map_err(|e| format!("mesh upload: {e}"))?;
-
-    Ok(GlbResult {
-        mesh,
+    let material = MaterialInfo {
         base_color: pbr_base,
         roughness: pbr_roughness,
         metallic: pbr_metallic,
-    })
+        ao: 1.0,
+        emissive: 0.0,
+    };
+
+    // Extract skeleton from first skin if present
+    let skeleton = extract_skeleton(&doc, &buffers);
+
+    build_imported_model(renderer, name, &all_verts, ibuf, material, skeleton)
+}
+
+fn extract_skeleton(doc: &gltf::Document, buffers: &[gltf::buffer::Data]) -> Option<Skeleton> {
+    let skin = doc.skins().next()?;
+    let joints: Vec<gltf::Node<'_>> = skin.joints().collect();
+    if joints.is_empty() {
+        return None;
+    }
+
+    // Build node_index -> bone_index map
+    let mut node_to_bone: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for (i, joint) in joints.iter().enumerate() {
+        node_to_bone.insert(joint.index(), i);
+    }
+
+    // Build child -> parent reverse map from scene graph
+    let mut child_to_parent: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for node in doc.nodes() {
+        for child in node.children() {
+            child_to_parent.insert(child.index(), node.index());
+        }
+    }
+
+    // Read inverse bind matrices
+    let ibm_reader = skin.reader(|buf| Some(&buffers[buf.index()]));
+    let ibms: Vec<Mat4> = if let Some(iter) = ibm_reader.read_inverse_bind_matrices() {
+        iter.map(|m| {
+            let cols = m;
+            Mat4::from_cols_array(&[
+                cols[0][0], cols[0][1], cols[0][2], cols[0][3],
+                cols[1][0], cols[1][1], cols[1][2], cols[1][3],
+                cols[2][0], cols[2][1], cols[2][2], cols[2][3],
+                cols[3][0], cols[3][1], cols[3][2], cols[3][3],
+            ])
+        }).collect()
+    } else {
+        vec![Mat4::IDENTITY; joints.len()]
+    };
+
+    let mut bones = Vec::with_capacity(joints.len());
+    for (i, joint) in joints.iter().enumerate() {
+        let name = joint.name().unwrap_or("bone");
+        let mut name_arr = [0u8; 32];
+        let bytes = name.as_bytes();
+        let len = bytes.len().min(32);
+        name_arr[..len].copy_from_slice(&bytes[..len]);
+
+        // Find parent within the joint set
+        let parent = child_to_parent.get(&joint.index())
+            .and_then(|p| node_to_bone.get(p))
+            .copied()
+            .unwrap_or(u16::MAX as usize);
+
+        // Extract local TRS from node transform
+        let (t, r, s) = joint.transform().decomposed();
+        let local_pos = Vec3::new(t[0], t[1], t[2]);
+        let quat = Quat::from_array([r[0], r[1], r[2], r[3]]);
+        let (rx, ry, rz) = quat.to_euler(rustix_core::math::EulerRot::XYZ);
+        let local_rot = Vec3::new(rx, ry, rz);
+        let local_scl = Vec3::new(s[0], s[1], s[2]);
+
+        bones.push(rustix_animation::Bone {
+            name: name_arr,
+            parent: parent as u16,
+            local_pos,
+            local_rot,
+            local_scl,
+            inverse_bind: ibms.get(i).copied().unwrap_or(Mat4::IDENTITY),
+        });
+    }
+
+    Some(Skeleton::new(bones))
 }
 
 /// Generate a minimal cube in GLB format (valid glTF 2.0 binary).
