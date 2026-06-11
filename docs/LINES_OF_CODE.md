@@ -46,7 +46,7 @@ Files with over 200 lines (sorted by line count, descending).
 | 366 | apps/runtime/src/ui/menu_bar.rs |
 | 361 | crates/render/src/swapchain.rs |
 | 359 | crates/asset/src/cook.rs |
-| 355 | crates/render/src/renderer/texture.rs |
+| 355 | crates/render/src/renderer/texture.rs |e
 | 355 | crates/core/src/soa_storage.rs |
 | 354 | crates/core/src/config.rs |
 | 353 | crates/core/src/math.rs |

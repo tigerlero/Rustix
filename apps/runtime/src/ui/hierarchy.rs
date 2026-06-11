@@ -49,6 +49,7 @@ pub fn show_hierarchy(
                 if ui.button("Paste").clicked() {
                     if let Some(copied) = ui.ctx().data(|d| d.get_temp::<Vec<crate::scene::SceneEntity>>(egui::Id::new("copied_entities"))) {
                         let mut new_selection = Vec::new();
+                        undo_history.borrow_mut().begin_compound("Paste Entities");
                         for (idx, mut pasted) in copied.iter().cloned().enumerate() {
                             pasted.name = format!("{} (Pasted)", pasted.name);
                             pasted.position[0] += 1.0 + idx as f32 * 0.5;
@@ -57,6 +58,7 @@ pub fn show_hierarchy(
                             undo_history.borrow_mut().push(EditorAction::AddEntity { entity: new_entity, snapshot });
                             new_selection.push(new_entity);
                         }
+                        undo_history.borrow_mut().end_compound();
                         *selected_entities.borrow_mut() = new_selection;
                         dirty.set(true);
                     }
@@ -65,6 +67,7 @@ pub fn show_hierarchy(
                     let to_dup: Vec<hecs::Entity> = selected_entities.borrow().iter().copied().collect();
                     if !to_dup.is_empty() {
                         let mut new_selection = Vec::new();
+                        undo_history.borrow_mut().begin_compound("Duplicate Entities");
                         for (idx, sel) in to_dup.iter().enumerate() {
                             let name = world.get::<&Name>(*sel).ok().map(|n| n.0.clone()).unwrap_or_default();
                             let transform = world.get::<&Transform>(*sel).ok().map(|r| (*r).clone()).unwrap_or_default();
@@ -101,6 +104,7 @@ pub fn show_hierarchy(
                             undo_history.borrow_mut().push(EditorAction::AddEntity { entity: new_entity, snapshot });
                             new_selection.push(new_entity);
                         }
+                        undo_history.borrow_mut().end_compound();
                         *selected_entities.borrow_mut() = new_selection;
                         dirty.set(true);
                     }
@@ -366,15 +370,19 @@ pub fn show_hierarchy(
             }
         ctx.data_mut(|d| d.insert_temp(search_id, search_filter));
         let to_delete = pending_delete.borrow_mut().drain(..).collect::<Vec<_>>();
-        for entity in to_delete {
-            let snapshot = crate::scene::entity_to_scene_entity(world, entity);
-            undo_history.borrow_mut().push(EditorAction::DeleteEntity { entity, snapshot });
-            let _ = world.despawn(entity);
-            dirty.set(true);
-            let mut sel = selected_entities.borrow_mut();
-            if let Some(pos) = sel.iter().position(|x| *x == entity) {
-                sel.remove(pos);
+        if !to_delete.is_empty() {
+            undo_history.borrow_mut().begin_compound("Delete Entities");
+            for entity in to_delete {
+                let snapshot = crate::scene::entity_to_scene_entity(world, entity);
+                undo_history.borrow_mut().push(EditorAction::DeleteEntity { entity, snapshot });
+                let _ = world.despawn(entity);
+                dirty.set(true);
+                let mut sel = selected_entities.borrow_mut();
+                if let Some(pos) = sel.iter().position(|x| *x == entity) {
+                    sel.remove(pos);
+                }
             }
+            undo_history.borrow_mut().end_compound();
         }
         ui.add_space(4.0);
         if ui.button("Create Empty").clicked() {
@@ -435,6 +443,7 @@ pub fn show_hierarchy(
         ui.menu_button("Create Character", |ui| {
             if ui.button("Dog").clicked() {
                 let count = world.query::<(&Name,)>().iter().filter(|(n,)| n.0.starts_with("Dog")).count() as u32;
+                undo_history.borrow_mut().begin_compound("Spawn Dog");
                 let root = world.spawn((
                     Name(format!("Dog {}", count + 1)),
                     Transform { position: Vec3::new(0.0, 0.0, 0.0), ..Default::default() },
@@ -442,7 +451,7 @@ pub fn show_hierarchy(
                 let snapshot = crate::scene::entity_to_scene_entity(world, root);
                 undo_history.borrow_mut().push(EditorAction::AddEntity { entity: root, snapshot });
 
-                let spawn_part = |world: &mut EcsWorld, name: &str, pos: Vec3, scl: Vec3, mesh: &str, color: Vec3, parent: hecs::Entity| {
+                let spawn_part = |world: &mut EcsWorld, name: &str, pos: Vec3, scl: Vec3, mesh: &str, color: Vec3, parent: hecs::Entity, undo_history: &std::cell::RefCell<UndoHistory>| {
                     let e = world.spawn((
                         Name(name.to_string()),
                         Transform { position: pos, scale: scl, ..Default::default() },
@@ -454,20 +463,22 @@ pub fn show_hierarchy(
                     undo_history.borrow_mut().push(EditorAction::AddEntity { entity: e, snapshot });
                 };
 
-                spawn_part(world, "Body", Vec3::new(0.0, 0.5, 0.0), Vec3::new(0.5, 0.8, 0.9), "Capsule", Vec3::new(0.6, 0.4, 0.2), root);
-                spawn_part(world, "Head", Vec3::new(0.0, 1.15, 0.35), Vec3::new(0.35, 0.35, 0.35), "Sphere", Vec3::new(0.5, 0.35, 0.25), root);
-                spawn_part(world, "Leg FL", Vec3::new(-0.25, 0.0, 0.3), Vec3::new(0.12, 0.5, 0.12), "Capsule", Vec3::new(0.5, 0.3, 0.2), root);
-                spawn_part(world, "Leg FR", Vec3::new(0.25, 0.0, 0.3), Vec3::new(0.12, 0.5, 0.12), "Capsule", Vec3::new(0.5, 0.3, 0.2), root);
-                spawn_part(world, "Leg BL", Vec3::new(-0.25, 0.0, -0.3), Vec3::new(0.12, 0.5, 0.12), "Capsule", Vec3::new(0.5, 0.3, 0.2), root);
-                spawn_part(world, "Leg BR", Vec3::new(0.25, 0.0, -0.3), Vec3::new(0.12, 0.5, 0.12), "Capsule", Vec3::new(0.5, 0.3, 0.2), root);
-                spawn_part(world, "Tail", Vec3::new(0.0, 0.65, -0.55), Vec3::new(0.08, 0.4, 0.08), "Capsule", Vec3::new(0.5, 0.3, 0.15), root);
+                spawn_part(world, "Body", Vec3::new(0.0, 0.5, 0.0), Vec3::new(0.5, 0.8, 0.9), "Capsule", Vec3::new(0.6, 0.4, 0.2), root, undo_history);
+                spawn_part(world, "Head", Vec3::new(0.0, 1.15, 0.35), Vec3::new(0.35, 0.35, 0.35), "Sphere", Vec3::new(0.5, 0.35, 0.25), root, undo_history);
+                spawn_part(world, "Leg FL", Vec3::new(-0.25, 0.0, 0.3), Vec3::new(0.12, 0.5, 0.12), "Capsule", Vec3::new(0.5, 0.3, 0.2), root, undo_history);
+                spawn_part(world, "Leg FR", Vec3::new(0.25, 0.0, 0.3), Vec3::new(0.12, 0.5, 0.12), "Capsule", Vec3::new(0.5, 0.3, 0.2), root, undo_history);
+                spawn_part(world, "Leg BL", Vec3::new(-0.25, 0.0, -0.3), Vec3::new(0.12, 0.5, 0.12), "Capsule", Vec3::new(0.5, 0.3, 0.2), root, undo_history);
+                spawn_part(world, "Leg BR", Vec3::new(0.25, 0.0, -0.3), Vec3::new(0.12, 0.5, 0.12), "Capsule", Vec3::new(0.5, 0.3, 0.2), root, undo_history);
+                spawn_part(world, "Tail", Vec3::new(0.0, 0.65, -0.55), Vec3::new(0.08, 0.4, 0.08), "Capsule", Vec3::new(0.5, 0.3, 0.15), root, undo_history);
 
+                undo_history.borrow_mut().end_compound();
                 *selected_entities.borrow_mut() = vec![root];
                 dirty.set(true);
                 ui.close();
             }
             if ui.button("Humanoid").clicked() {
                 let count = world.query::<(&Name,)>().iter().filter(|(n,)| n.0.starts_with("Humanoid")).count() as u32;
+                undo_history.borrow_mut().begin_compound("Spawn Humanoid");
                 let root = world.spawn((
                     Name(format!("Humanoid {}", count + 1)),
                     Transform { position: Vec3::new(0.0, 0.0, 0.0), ..Default::default() },
@@ -475,7 +486,7 @@ pub fn show_hierarchy(
                 let snapshot = crate::scene::entity_to_scene_entity(world, root);
                 undo_history.borrow_mut().push(EditorAction::AddEntity { entity: root, snapshot });
 
-                let spawn_part = |world: &mut EcsWorld, name: &str, pos: Vec3, scl: Vec3, mesh: &str, color: Vec3, parent: hecs::Entity| {
+                let spawn_part = |world: &mut EcsWorld, name: &str, pos: Vec3, scl: Vec3, mesh: &str, color: Vec3, parent: hecs::Entity, undo_history: &std::cell::RefCell<UndoHistory>| {
                     let e = world.spawn((
                         Name(name.to_string()),
                         Transform { position: pos, scale: scl, ..Default::default() },
@@ -487,13 +498,14 @@ pub fn show_hierarchy(
                     undo_history.borrow_mut().push(EditorAction::AddEntity { entity: e, snapshot });
                 };
 
-                spawn_part(world, "Torso", Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.4, 0.7, 0.25), "Capsule", Vec3::new(0.3, 0.5, 0.7), root);
-                spawn_part(world, "Head", Vec3::new(0.0, 1.65, 0.0), Vec3::new(0.25, 0.25, 0.25), "Sphere", Vec3::new(0.85, 0.75, 0.65), root);
-                spawn_part(world, "Arm L", Vec3::new(-0.5, 1.25, 0.0), Vec3::new(0.12, 0.5, 0.12), "Capsule", Vec3::new(0.3, 0.5, 0.7), root);
-                spawn_part(world, "Arm R", Vec3::new(0.5, 1.25, 0.0), Vec3::new(0.12, 0.5, 0.12), "Capsule", Vec3::new(0.3, 0.5, 0.7), root);
-                spawn_part(world, "Leg L", Vec3::new(-0.2, 0.35, 0.0), Vec3::new(0.14, 0.6, 0.14), "Capsule", Vec3::new(0.25, 0.25, 0.5), root);
-                spawn_part(world, "Leg R", Vec3::new(0.2, 0.35, 0.0), Vec3::new(0.14, 0.6, 0.14), "Capsule", Vec3::new(0.25, 0.25, 0.5), root);
+                spawn_part(world, "Torso", Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.4, 0.7, 0.25), "Capsule", Vec3::new(0.3, 0.5, 0.7), root, undo_history);
+                spawn_part(world, "Head", Vec3::new(0.0, 1.65, 0.0), Vec3::new(0.25, 0.25, 0.25), "Sphere", Vec3::new(0.85, 0.75, 0.65), root, undo_history);
+                spawn_part(world, "Arm L", Vec3::new(-0.5, 1.25, 0.0), Vec3::new(0.12, 0.5, 0.12), "Capsule", Vec3::new(0.3, 0.5, 0.7), root, undo_history);
+                spawn_part(world, "Arm R", Vec3::new(0.5, 1.25, 0.0), Vec3::new(0.12, 0.5, 0.12), "Capsule", Vec3::new(0.3, 0.5, 0.7), root, undo_history);
+                spawn_part(world, "Leg L", Vec3::new(-0.2, 0.35, 0.0), Vec3::new(0.14, 0.6, 0.14), "Capsule", Vec3::new(0.25, 0.25, 0.5), root, undo_history);
+                spawn_part(world, "Leg R", Vec3::new(0.2, 0.35, 0.0), Vec3::new(0.14, 0.6, 0.14), "Capsule", Vec3::new(0.25, 0.25, 0.5), root, undo_history);
 
+                undo_history.borrow_mut().end_compound();
                 *selected_entities.borrow_mut() = vec![root];
                 dirty.set(true);
                 ui.close();

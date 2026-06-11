@@ -1,7 +1,8 @@
 //! Build & export game functionality for Rustix.
 //!
-//! Provides a simple pipeline to compile the runtime in release mode,
-//! package the project assets, and produce a standalone game folder.
+//! Compiles the runtime in release mode, cooks the project (strips editor
+//! metadata and packs assets into a `.pak` archive), and produces a
+//! standalone game folder.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -20,7 +21,7 @@ pub struct BuildResult {
 /// 1. Compile rustix-runtime in release mode.
 /// 2. Create output directory.
 /// 3. Copy the release binary.
-/// 4. Copy the project directory (assets, scene, settings).
+/// 4. **Cook** the project: strip editor metadata and pack assets into `assets.pak`.
 /// 5. Write a launch script.
 pub fn build_game(project_dir: &Path) -> BuildResult {
     let project_name = project_dir
@@ -82,26 +83,26 @@ pub fn build_game(project_dir: &Path) -> BuildResult {
         };
     }
 
-    // Step 4: Copy project directory
-    let project_out = output_dir.join("project");
-    if let Err(e) = copy_dir_all(project_dir, &project_out) {
+    // Step 4: Cook project — strip editor metadata and pack assets
+    let cook_result = crate::asset_cook::cook_project(project_dir, &output_dir);
+    if !cook_result.success {
         return BuildResult {
             success: false,
-            output_dir: None,
-            message: format!("Failed to copy project assets: {}", e),
+            output_dir: Some(output_dir.clone()),
+            message: format!("Asset cooking failed: {}", cook_result.message),
         };
     }
 
     // Step 5: Write launch script
     let launch_script = format!(
-        "#!/bin/bash\n# Auto-generated launch script for {}\ncd \"$(dirname \"$0\")\"\n./{} --project ./project\n",
+        "#!/bin/bash\n# Auto-generated launch script for {}\ncd \"$(dirname \"$0\")\"\n./{} --project .\n",
         project_name, binary_name
     );
     let launch_path = output_dir.join("launch.sh");
     if let Err(e) = std::fs::write(&launch_path, launch_script) {
         return BuildResult {
             success: false,
-            output_dir: None,
+            output_dir: Some(output_dir.clone()),
             message: format!("Failed to write launch script: {}", e),
         };
     }
@@ -117,26 +118,10 @@ pub fn build_game(project_dir: &Path) -> BuildResult {
         success: true,
         output_dir: Some(output_dir.clone()),
         message: format!(
-            "Build complete! Output: {}\nRun: ./build/{}/launch.sh",
+            "Build complete! Output: {}\n{}\nRun: ./build/{}/launch.sh",
             output_dir.display(),
+            cook_result.message,
             project_name
         ),
     }
-}
-
-/// Recursively copy a directory.
-fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
-    std::fs::create_dir_all(&dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let ty = entry.file_type()?;
-        let src_path = entry.path();
-        let dst_path = dst.as_ref().join(entry.file_name());
-        if ty.is_dir() {
-            copy_dir_all(&src_path, &dst_path)?;
-        } else {
-            std::fs::copy(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
 }

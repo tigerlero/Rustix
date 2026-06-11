@@ -13,6 +13,10 @@ mod fonts;
 mod gltf_loader;
 mod model_import;
 mod obj_loader;
+mod texture_import;
+mod audio_import;
+mod asset_cook;
+mod asset_watcher;
 mod init;
 mod player;
 mod project;
@@ -25,6 +29,9 @@ mod ui_renderer;
 mod voxel;
 mod tetris;
 mod undo;
+mod terrain;
+mod prefab;
+mod play_mode;
 mod waveform;
 
 use ash::vk;
@@ -456,6 +463,42 @@ fn main() {
                             app.script_engine.update(&mut app.ecs_world);
                         }
 
+                        // Update GPU particle systems
+                        app.particle_system.update(dt, &app.ecs_world, &renderer);
+
+                        // Evaluate streaming zones against primary camera
+                        {
+                            let viewer_pos = viewport_manager.primary_camera().position;
+                            let changes = crate::scene::evaluate_streaming(&mut app.scene_manager.streaming_zones, viewer_pos.into());
+                            for (path, should_load) in changes {
+                                if should_load {
+                                    if let Some(data) = crate::scene::load_scene(std::path::Path::new(&path)) {
+                                        let name = std::path::Path::new(&path)
+                                            .file_stem()
+                                            .map(|s| s.to_string_lossy().to_string())
+                                            .unwrap_or_else(|| "streamed".to_string());
+                                        if !app.scene_manager.is_loaded(&name) {
+                                            let entities = crate::scene::merge_scene_into_world(&mut app.ecs_world, &data, &name);
+                                            app.scene_manager.register(name, path, entities.len());
+                                            app.dirty.set(true);
+                                        }
+                                    }
+                                } else {
+                                    let name = std::path::Path::new(&path)
+                                        .file_stem()
+                                        .map(|s| s.to_string_lossy().to_string())
+                                        .unwrap_or_else(|| "streamed".to_string());
+                                    if app.scene_manager.is_loaded(&name) {
+                                        let removed = crate::scene::unload_scene(&mut app.ecs_world, &name);
+                                        if removed > 0 {
+                                            app.scene_manager.unregister(&name);
+                                            app.dirty.set(true);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         if needs_resize {
                             if let Err(e) = renderer.swapchain.lock().recreate(&renderer.instance, &renderer.device) {
                                 tracing::error!("swapchain recreate failed: {e}");
@@ -483,7 +526,7 @@ fn main() {
                         if app.scene_pipeline.is_none() {
                             init::init_scene_resources(
                                 &renderer, &mut app.meshes,
-                                &mut app.scene_pipeline, &mut app.scene_descriptor_pool, &mut app.scene_descriptor_set,
+                                &mut app.scene_pipeline, &mut app.wireframe_scene_pipeline, &mut app.scene_descriptor_pool, &mut app.scene_descriptor_set,
                                 &mut app.scene_uniform_buffer, &mut app.scene_depth_buffer,
                                 &mut app.shadow_pipeline, &mut app.shadow_descriptor_pool, &mut app.shadow_descriptor_set,
                                 &mut app.csm_resources,
@@ -667,6 +710,25 @@ fn main() {
                                 }
                             } else {
                                 tracing::error!("failed to read file {path}");
+                            }
+                        }
+
+                        // Handle pending texture import
+                        app.handle_pending_texture_load(&renderer);
+
+                        // Handle pending audio import
+                        app.handle_pending_audio_load();
+
+                        // Handle terrain mesh regeneration
+                        app.handle_terrain_regen(&renderer);
+
+                        // Handle hot-reloaded assets
+                        if let Some(ref mut watcher) = app.asset_watcher {
+                            watcher.set_enabled(app.hot_reload_enabled);
+                            if app.hot_reload_enabled {
+                                for path in watcher.take_events() {
+                                    crate::asset_watcher::reload_asset(&path, &renderer, &mut app);
+                                }
                             }
                         }
 
@@ -1026,6 +1088,17 @@ fn main() {
                                     shadow_layout_opt = new_layout;
                                     app.frame_graph_snapshot = snapshot;
 
+                                    // Render GPU particles after the frame graph
+                                    {
+                                        let sw = renderer.swapchain.lock();
+                                        let color_view = sw.current_image_view();
+                                        let format = sw.format();
+                                        let extent = sw.extent();
+                                        drop(sw);
+                                        let cam_pos = viewport_manager.primary_camera().position;
+                                        app.particle_system.render_swapchain(cmd, &renderer, color_view, format, extent, cam_pos.into());
+                                    }
+
                                     // After TAA, copy resolved output to history for next frame
                                     if app.taa_enabled && app.taa_resources.is_some() {
                                         let taa = app.taa_resources.as_ref().unwrap();
@@ -1152,13 +1225,13 @@ fn main() {
                                     let proj_name = app.current_project.as_ref().map(|p| p.name.as_str()).unwrap_or("Untitled");
                                     let proj_name_owned = proj_name.to_string();
                                     let project_type = app.current_project.as_ref().map(|p| p.settings.project_type).unwrap_or(crate::project::ProjectType::Dim3);
-                                    ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut app.screen, &input, target, &ww, &wh, &mut fps, &app.open_project, &app.new_project, &proj_name_owned, &mut app.current_project, &mut app.project_dir, &mut app.ecs_world, &*app.selected_entities, &*app.pending_delete, &*app.dirty, &*app.show_confirm, &*app.confirm_target, &*app.show_settings, &*app.renaming, &*app.rename_buffer, &*app.undo_history, &mut app.sprite_editor, &app.pending_mesh_load, &mut app.audio_engine, &mut app.audio_instance, &mut app.waveform_viewer, &mut app.player_manager, project_type, &mut app.animation_editor);
+                                    ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut app.screen, &input, target, &ww, &wh, &mut fps, &app.open_project, &app.new_project, &proj_name_owned, &mut app.current_project, &mut app.project_dir, &mut app.ecs_world, &*app.selected_entities, &*app.pending_delete, &*app.dirty, &*app.show_confirm, &*app.confirm_target, &*app.show_settings, &*app.renaming, &*app.rename_buffer, &*app.undo_history, &mut app.sprite_editor, &app.pending_mesh_load, &app.pending_texture_load, &app.pending_audio_load, &mut app.hot_reload_enabled, &mut app.audio_engine, &mut app.audio_instance, &mut app.waveform_viewer, &mut app.player_manager, project_type, &mut app.animation_editor, &mut app.terrain_editor, &mut app.prefab_editor, &mut app.scene_manager);
                                 }
                                 AppScreen::PlayTest => {
                                     let proj_name = app.current_project.as_ref().map(|p| p.name.as_str()).unwrap_or("Untitled");
                                     let proj_name_owned = proj_name.to_string();
                                     let project_type = app.current_project.as_ref().map(|p| p.settings.project_type).unwrap_or(crate::project::ProjectType::Dim3);
-                                    ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut app.screen, &input, target, &ww, &wh, &mut fps, &app.open_project, &app.new_project, &proj_name_owned, &mut app.current_project, &mut app.project_dir, &mut app.ecs_world, &*app.selected_entities, &*app.pending_delete, &*app.dirty, &*app.show_confirm, &*app.confirm_target, &*app.show_settings, &*app.renaming, &*app.rename_buffer, &*app.undo_history, &mut app.sprite_editor, &app.pending_mesh_load, &mut app.audio_engine, &mut app.audio_instance, &mut app.waveform_viewer, &mut app.player_manager, project_type, &mut app.animation_editor);
+                                    ui::editor_screen(ctx, &mut viewport_manager, &mut window, &mut app.screen, &input, target, &ww, &wh, &mut fps, &app.open_project, &app.new_project, &proj_name_owned, &mut app.current_project, &mut app.project_dir, &mut app.ecs_world, &*app.selected_entities, &*app.pending_delete, &*app.dirty, &*app.show_confirm, &*app.confirm_target, &*app.show_settings, &*app.renaming, &*app.rename_buffer, &*app.undo_history, &mut app.sprite_editor, &app.pending_mesh_load, &app.pending_texture_load, &app.pending_audio_load, &mut app.hot_reload_enabled, &mut app.audio_engine, &mut app.audio_instance, &mut app.waveform_viewer, &mut app.player_manager, project_type, &mut app.animation_editor, &mut app.terrain_editor, &mut app.prefab_editor, &mut app.scene_manager);
                                 }
                             }
                             // Render Tetris UI when in a Tetris project
@@ -1272,6 +1345,46 @@ fn main() {
                             }
                         });
 
+                        // Handle editor <-> playtest transitions with snapshot/restore
+                        if app.last_screen != app.screen {
+                            match (app.last_screen, app.screen) {
+                                (AppScreen::Editor, AppScreen::PlayTest) => {
+                                    app.play_mode_snapshot = Some(crate::play_mode::PlayModeSnapshot::capture(
+                                        &app.ecs_world,
+                                        viewport_manager.primary_camera(),
+                                        &app.player_manager,
+                                        &app.scene_manager,
+                                    ));
+                                    app.undo_history.borrow_mut().clear();
+                                    app.selected_entities.borrow_mut().clear();
+                                    app.tetris_game.reset();
+                                    app.endless_runner_game.reset();
+                                    app.breakout_game.reset();
+                                    app.platformer_game.reset();
+                                    tracing::info!("Entered play-mode (snapshot captured)");
+                                }
+                                (AppScreen::PlayTest, AppScreen::Editor) => {
+                                    if let Some(ref snapshot) = app.play_mode_snapshot {
+                                        snapshot.restore(
+                                            &mut app.ecs_world,
+                                            viewport_manager.primary_camera_mut(),
+                                            &mut app.player_manager,
+                                            &mut app.scene_manager,
+                                        );
+                                    }
+                                    app.undo_history.borrow_mut().clear();
+                                    app.selected_entities.borrow_mut().clear();
+                                    app.tetris_game.reset();
+                                    app.endless_runner_game.reset();
+                                    app.breakout_game.reset();
+                                    app.platformer_game.reset();
+                                    tracing::info!("Exited play-mode (snapshot restored)");
+                                }
+                                _ => {}
+                            }
+                            app.last_screen = app.screen;
+                        }
+
                         let open_path = app.open_project.borrow_mut().take();
                         if let Some(path) = open_path {
                             let dir = Path::new(&path);
@@ -1336,13 +1449,31 @@ fn main() {
 
                                 app.current_project = info;
                                 app.project_dir = Some(path.clone());
+                                app.asset_watcher = crate::asset_watcher::AssetWatcher::new(dir);
+                                let pak_path = dir.join("assets.pak");
+                                app.pak_archive = if pak_path.exists() {
+                                    match crate::asset_cook::PakArchive::load(&pak_path) {
+                                        Ok(pak) => {
+                                            tracing::info!("loaded assets.pak ({} entries)", pak.paths().count());
+                                            Some(pak)
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("failed to load assets.pak: {e}");
+                                            None
+                                        }
+                                    }
+                                } else {
+                                    None
+                                };
                                 add_recent_project(&mut app.recent_projects, path, &app.current_project);
                                 if app.cli_playtest {
                                     app.screen = AppScreen::PlayTest;
+                                    app.last_screen = AppScreen::PlayTest;
                                     app.cli_playtest = false;
                                     app.cli_project_path = None;
                                 } else {
                                     app.screen = AppScreen::Editor;
+                                    app.last_screen = AppScreen::Editor;
                                 }
                                 next_frame_time = Instant::now();
                                 window.request_redraw();
@@ -1381,10 +1512,27 @@ fn main() {
                                 let _ = write_project_file(dir, proj);
                                 app.current_project = info;
                                 app.project_dir = Some(path.clone());
+                                app.asset_watcher = crate::asset_watcher::AssetWatcher::new(dir);
+                                let pak_path = dir.join("assets.pak");
+                                app.pak_archive = if pak_path.exists() {
+                                    match crate::asset_cook::PakArchive::load(&pak_path) {
+                                        Ok(pak) => {
+                                            tracing::info!("loaded assets.pak ({} entries)", pak.paths().count());
+                                            Some(pak)
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("failed to load assets.pak: {e}");
+                                            None
+                                        }
+                                    }
+                                } else {
+                                    None
+                                };
                                 add_recent_project(&mut app.recent_projects, path, &app.current_project);
                                 let gen = egui_ctx.data(|d| d.get_temp::<u64>(egui::Id::new("layout_generation")).unwrap_or(0)).wrapping_add(1);
                                 egui_ctx.data_mut(|d| d.insert_temp(egui::Id::new("layout_generation"), gen));
                                 app.screen = AppScreen::Editor;
+                                app.last_screen = AppScreen::Editor;
                                 next_frame_time = Instant::now();
                                 window.request_redraw();
                             }

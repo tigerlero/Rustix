@@ -1,24 +1,8 @@
-use glam::{Vec3, Vec4, Vec4Swizzles};
-
-/// Replicates the fragment shader's `blinn_phong` + `ambient + shadow * lit` logic.
-fn blinn_phong(
-    n: Vec3, l: Vec3, v: Vec3, light_color: Vec3, base: Vec3, roughness: f32, metallic: f32,
-) -> Vec3 {
-    let h = (l + v).normalize();
-    let ndotl = n.dot(l).max(0.0);
-    let ndoth = n.dot(h).max(0.0);
-    let spec_pow = 32.0 / (roughness * roughness + 0.001);
-    let spec = ndoth.powf(spec_pow);
-
-    let f0 = Vec3::splat(0.04).lerp(base, metallic);
-    let specular = spec * light_color * f0 * (1.0 - roughness) * 0.5;
-    let diffuse = ndotl * light_color * base * (1.0 - metallic);
-
-    diffuse + specular
-}
+use glam::{Vec2, Vec3, Vec4, Vec4Swizzles};
+use crate::pbr::pbr_direct;
 
 fn shade(base: Vec3, shadow: f32, n: Vec3, l: Vec3, v: Vec3, light_color: Vec3, roughness: f32, metallic: f32) -> Vec4 {
-    let lit = blinn_phong(n, l, v, light_color, base, roughness, metallic);
+    let lit = pbr_direct(n, l, v, light_color, base, roughness, metallic);
     let ambient = base * 0.1;
     let color = ambient + shadow * lit;
     Vec4::new(color.x, color.y, color.z, 1.0)
@@ -43,7 +27,7 @@ fn fragment_ambient_lit_blending() {
 
     // When shadow = 1.0, result is ambient + lit.
     let lit = shade(base, 1.0, n, l, v, light_color, roughness, metallic);
-    let expected_lit = blinn_phong(n, l, v, light_color, base, roughness, metallic);
+    let expected_lit = pbr_direct(n, l, v, light_color, base, roughness, metallic);
     let expected = ambient + expected_lit;
     assert!((lit.x - expected.x).abs() < 0.001, "lit R should be ambient + lit");
     assert!((lit.y - expected.y).abs() < 0.001, "lit G should be ambient + lit");
@@ -64,7 +48,7 @@ fn pcf_partial_shadow_values() {
     let metallic = 0.0;
 
     let ambient = base * 0.1;
-    let full_lit = blinn_phong(n, l, v, light_color, base, roughness, metallic);
+    let full_lit = pbr_direct(n, l, v, light_color, base, roughness, metallic);
 
     // With PCF, shadow values can be partial (e.g. 4/9, 6/9).
     for shadow in [0.0f32, 0.25, 0.5, 0.75, 1.0] {
@@ -116,8 +100,43 @@ fn bias_does_not_bleed_light_into_shadow() {
         "a point well behind an occluder should remain shadowed despite bias");
 }
 
-/// Replicates the full `shadowFactor` GLSL function CPU-side.
+/// Replicates the PCSS `shadowFactor` GLSL function CPU-side.
 /// `sampler` is a mock that takes (x, y) UV coords and returns depth.
+fn pcf_filter(uv: Vec2, current_depth: f32, bias: f32, texel_size: f32, radius: i32, sampler: &mut impl FnMut(f32, f32) -> f32) -> f32 {
+    let mut shadow = 0.0f32;
+    let mut count = 0;
+    for x in -radius..=radius {
+        for y in -radius..=radius {
+            let ux = uv.x + (x as f32) * texel_size;
+            let vy = uv.y + (y as f32) * texel_size;
+            let pcf_depth = sampler(ux, vy);
+            shadow += if current_depth - bias > pcf_depth { 0.0 } else { 1.0 };
+            count += 1;
+        }
+    }
+    shadow / count as f32
+}
+
+fn find_blocker_distance(uv: Vec2, current_depth: f32, bias: f32, texel_size: f32, search_radius: i32, sampler: &mut impl FnMut(f32, f32) -> f32) -> f32 {
+    let mut blocker_sum = 0.0f32;
+    let mut blocker_count = 0;
+    for x in -search_radius..=search_radius {
+        for y in -search_radius..=search_radius {
+            let ux = uv.x + (x as f32) * texel_size;
+            let vy = uv.y + (y as f32) * texel_size;
+            let sample_depth = sampler(ux, vy);
+            if current_depth - bias > sample_depth {
+                blocker_sum += sample_depth;
+                blocker_count += 1;
+            }
+        }
+    }
+    if blocker_count == 0 {
+        return -1.0;
+    }
+    blocker_sum / blocker_count as f32
+}
+
 fn shadow_factor(frag_light_space: Vec4, mut sampler: impl FnMut(f32, f32) -> f32) -> f32 {
     let mut proj_coords = frag_light_space.xyz() / frag_light_space.w;
     proj_coords = proj_coords * 0.5 + Vec3::splat(0.5);
@@ -127,16 +146,16 @@ fn shadow_factor(frag_light_space: Vec4, mut sampler: impl FnMut(f32, f32) -> f3
     let current_depth = proj_coords.z;
     let bias = 0.005;
     let texel_size = 1.0 / 1024.0;
-    let mut shadow = 0.0f32;
-    for x in -1..=1 {
-        for y in -1..=1 {
-            let ux = proj_coords.x + (x as f32) * texel_size;
-            let vy = proj_coords.y + (y as f32) * texel_size;
-            let pcf_depth = sampler(ux, vy);
-            shadow += if current_depth - bias > pcf_depth { 0.0 } else { 1.0 };
-        }
+
+    let uv = Vec2::new(proj_coords.x, proj_coords.y);
+    let blocker_dist = find_blocker_distance(uv, current_depth, bias, texel_size, 2, &mut sampler);
+    if blocker_dist < 0.0 {
+        return 1.0;
     }
-    shadow / 9.0
+
+    let penumbra = (current_depth - blocker_dist) / blocker_dist;
+    let pcf_radius = (penumbra * 4.0).clamp(1.0, 4.0) as i32;
+    pcf_filter(uv, current_depth, bias, texel_size, pcf_radius, &mut sampler)
 }
 
 #[test]
@@ -167,28 +186,33 @@ fn shadow_factor_partial_pcf_value() {
     // Use fragLightSpace with z=0 so currentDepth=0.5 after NDC→UV mapping.
     // Mock: every other sample returns depth 0.4 (shadowed) vs 0.6 (lit).
     // currentDepth=0.5, bias=0.005 → threshold = 0.495.
-    // pcfDepth 0.4 → 0.495 > 0.4 → shadowed (0.0)
-    // pcfDepth 0.6 → 0.495 > 0.6 → lit (1.0)
+    // 0.4 → blocker, 0.6 → not blocker.
     let mut counter = 0u32;
     let result = shadow_factor(Vec4::new(0.0, 0.0, 0.0, 1.0), |_, _| {
         counter += 1;
         if counter % 2 == 0 { 0.4 } else { 0.6 }
     });
-    // With 9 samples and alternating, result should be 5/9 (5 lit, 4 shadowed).
-    assert!((result - 5.0/9.0).abs() < 0.001,
-        "partial shadow should be 5/9, got {}", result);
+    // Blocker search (25 samples): ~12 blockers at 0.4 → blockerDist ≈ 0.4.
+    // penumbra = (0.5 - 0.4) / 0.4 = 0.25 → pcfRadius = 1.
+    // PCF filter (9 samples): counter continues, starting at 26 (even → 0.4).
+    // Sequence: 0.4, 0.6, 0.4, 0.6, 0.4, 0.6, 0.4, 0.6, 0.4 → 4 lit, 5 shadowed → 4/9.
+    assert!((result - 4.0/9.0).abs() < 0.001,
+        "partial shadow with PCSS should be 4/9, got {}", result);
 }
 
 #[test]
 fn shadow_factor_ndc_uv_mapping() {
     // NDC (-1, -1, 0) → UV (0, 0, 0.5)
     let frag_ls = Vec4::new(-1.0, -1.0, 0.0, 1.0);
-    let mut sampled_uv = None;
+    let mut samples = Vec::new();
     shadow_factor(frag_ls, |x, y| {
-        sampled_uv = Some((x, y));
+        samples.push((x, y));
         1.0 // fully lit so result doesn't matter
     });
-    let (ux, vy) = sampled_uv.unwrap();
+    // With PCSS, the first 25 calls are blocker search around the center.
+    // The center UV should be (0, 0), so check the middle sample of the blocker search.
+    let center_idx = 12; // middle of 5x5 grid
+    let (ux, vy) = samples[center_idx];
     assert!((ux - 0.0).abs() < 0.001, "NDC x=-1 should map to UV u≈0, got {}", ux);
     assert!((vy - 0.0).abs() < 0.001, "NDC y=-1 should map to UV v≈0, got {}", vy);
 }

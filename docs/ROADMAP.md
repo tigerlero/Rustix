@@ -79,23 +79,25 @@
 - [x] Point/spot lights with shadow maps (cubemap array + 2D array)
 - [x] HDR rendering + ACES filmic tone mapping
 - [x] Mesh rendering: vertex buffers, index buffers, procedural presets
-- [~] glTF 2.0 mesh loading (GLB positions/normals + material import working; tangents/UVs/animations pending)
+- [x] Model import: GLB/OBJ loading with positions/normals, PBR material extraction, skeleton import, and mesh validation
 
 ### Weeks 9–10: Asset Pipeline
 - [ ] Asset registry with handle system (8-byte `Handle<T>`)
 - [ ] Asset importer framework (per-type plugin)
-- [~] glTF 2.0 full import (meshes, materials partial; textures, animations, skeletons pending)
-- [ ] Texture loading (PNG, HDR) with BC7 compression
+- [x] Model import pipeline: unified `ImportedModel` with `MaterialInfo`, `ValidationReport`, and format dispatch (GLB + OBJ)
+- [x] Texture loading (PNG, HDR) with BC7 compression, mipmaps, normal map swizzle, and GPU upload
 - [ ] Async asset loading (tokio runtime)
 - [ ] GPU upload via transfer queue
 - [ ] Asset dependency tracking (material → textures)
 - [x] Hot-reload watcher (notify crate) for debug mode
+- [x] Asset hot-reload (mesh/texture/audio change detection → re-import → update in-game references without restart)
+- [x] Asset cooking (strip editor metadata → pack into `.pak` archive → runtime `game.json` loading)
 - [x] Shader compilation pipeline (GLSL → SPIR-V via naga)
 - [x] Shader hot-reload (file watch → recompile → pipeline rebuild)
 
 ### Weeks 11–12: Physics + Audio + Input
 - [~] Physics integration (RigidBody + Collider ECS components exist; Rapier3D solver not wired)
-- [~] Audio integration (symphonia decode + rodio playback done; 3D spatial + effects pending)
+- [x] Audio integration (symphonia decode + rodio playback done; audio import pipeline with streaming support done; 3D spatial + effects pending)
 - [x] Input system: keyboard, mouse (absolute + raw delta), gamepad via gilrs
 
 ---
@@ -104,7 +106,9 @@
 
 **Goal:** Open world terrain, animation system, UI framework, world streaming.
 
-- [ ] Terrain system (heightmap + LOD + collision)
+- [x] Terrain system (heightmap mesh generation + brush sculpting + splat painting + foliage scatter + editor UI panel)
+- [x] Prefab system (save entity hierarchies as reusable prefabs with override tracking + editor UI panel)
+- [x] Gizmos & snapping (translate/rotate/scale handles + grid snapping + local/world space toggle + multi-selection support)
 - [ ] Animation system (skeleton + skinning + blend trees + state machine)
 - [ ] World streaming (chunks + persistence + LOD transitions)
 - [ ] UI framework (immediate mode + widget library)
@@ -162,7 +166,7 @@
 | Forward+ / Deferred | 1 | ✅ **DONE** | Tiled light culling + GBuffer + lighting |
 | PBR + Shadows | 1 | ✅ **DONE** | Cook-Torrance BRDF, CSM, point/spot shadows |
 | HDR + Tonemap | 1 | ✅ **DONE** | ACES filmic tone mapping |
-| glTF Model Viewer | 1 | ~ **PARTIAL** | Import and render GLB meshes with materials |
+| Model Import Pipeline | 1 | ✅ **DONE** | GLB + OBJ import, PBR materials, skeletons, mesh validation |
 | Physics + Audio | 1 | ~ **PARTIAL** | ECS components exist; solver/spatial audio pending |
 | Open World Terrain | 2 | — | Walkable terrain that streams in/out |
 | Animating Character | 2 | — | Character with animation state machine |

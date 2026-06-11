@@ -28,6 +28,7 @@ pub struct AppState {
     pub project_dir: Option<String>,
     pub ecs_world: EcsWorld,
     pub meshes: HashMap<String, Mesh>,
+    pub textures: HashMap<String, rustix_render::GpuTexture>,
     pub animation_clips: HashMap<String, AnimationClip>,
     pub physics_world: PhysicsWorld,
     pub player_manager: PlayerManager,
@@ -135,6 +136,14 @@ pub struct AppState {
     pub mesh_shader_pipeline: Option<rustix_render::pipeline::MeshShaderPipeline>,
     pub mesh_shader_enabled: bool,
 
+    pub wireframe_scene_pipeline: Option<rustix_render::pipeline::GraphicsPipeline>,
+    pub overdraw_pipeline: Option<rustix_render::pipeline::GraphicsPipeline>,
+    pub light_complexity_pipeline: Option<rustix_render::pipeline::GraphicsPipeline>,
+    pub debug_render_mode: rustix_render::DebugRenderMode,
+    pub debug_render_resources: Option<crate::render::DebugRenderResources>,
+
+    pub particle_system: crate::render::ParticleSystem,
+
     pub viewport_framebuffers: Vec<[Option<rustix_render::Framebuffer>; 3]>,
     pub viewport_fb_sizes: Vec<(u32, u32)>,
 
@@ -164,17 +173,31 @@ pub struct AppState {
     pub open_project: std::rc::Rc<std::cell::RefCell<Option<String>>>,
     pub new_project: std::rc::Rc<std::cell::RefCell<Option<String>>>,
     pub pending_mesh_load: std::rc::Rc<std::cell::RefCell<Option<String>>>,
+    pub pending_texture_load: std::rc::Rc<std::cell::RefCell<Option<String>>>,
+    pub pending_audio_load: std::rc::Rc<std::cell::RefCell<Option<String>>>,
+    pub pending_terrain_regen: std::rc::Rc<std::cell::Cell<bool>>,
+
+    pub sounds: std::collections::HashMap<String, crate::audio_import::ImportedAudio>,
+
+    pub asset_watcher: Option<crate::asset_watcher::AssetWatcher>,
+    pub hot_reload_enabled: bool,
+    pub pak_archive: Option<crate::asset_cook::PakArchive>,
 
     pub input_recorder: rustix_platform::recorder::InputRecorder,
     pub recording_dir: std::path::PathBuf,
     pub start_time: Instant,
     pub animation_editor: AnimationEditor,
+    pub terrain_editor: crate::terrain::TerrainEditor,
+    pub prefab_editor: crate::prefab::PrefabEditor,
 
     pub cli_project_path: Option<String>,
     pub cli_playtest: bool,
     pub endless_runner_game: crate::endless_runner::EndlessRunnerGame,
     pub breakout_game: crate::breakout::BreakoutGame,
     pub platformer_game: crate::platformer::PlatformerGame,
+    pub scene_manager: crate::scene::SceneManager,
+    pub last_screen: crate::project::AppScreen,
+    pub play_mode_snapshot: Option<crate::play_mode::PlayModeSnapshot>,
 }
 
 #[allow(dead_code)]
@@ -252,6 +275,7 @@ impl AppState {
             project_dir: None,
             ecs_world,
             meshes: HashMap::new(),
+            textures: HashMap::new(),
             animation_clips: HashMap::new(),
             physics_world: PhysicsWorld::default(),
             player_manager,
@@ -359,6 +383,13 @@ impl AppState {
             mesh_shader_pipeline: None,
             mesh_shader_enabled: false,
 
+            wireframe_scene_pipeline: None,
+            overdraw_pipeline: None,
+            light_complexity_pipeline: None,
+            debug_render_mode: rustix_render::DebugRenderMode::default(),
+            debug_render_resources: None,
+            particle_system: crate::render::ParticleSystem::new(),
+
             viewport_framebuffers: (0..crate::ui::viewport::MAX_VIEWPORTS)
                 .map(|_| [None, None, None])
                 .collect(),
@@ -390,6 +421,15 @@ impl AppState {
             open_project: std::rc::Rc::new(std::cell::RefCell::new(None)),
             new_project: std::rc::Rc::new(std::cell::RefCell::new(None)),
             pending_mesh_load: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            pending_texture_load: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            pending_audio_load: std::rc::Rc::new(std::cell::RefCell::new(None)),
+            pending_terrain_regen: std::rc::Rc::new(std::cell::Cell::new(false)),
+
+            sounds: std::collections::HashMap::new(),
+
+            asset_watcher: None,
+            hot_reload_enabled: true,
+            pak_archive: None,
 
             input_recorder: rustix_platform::recorder::InputRecorder::new(),
             recording_dir: dirs::config_dir()
@@ -397,18 +437,23 @@ impl AppState {
                 .unwrap_or_else(|| std::path::PathBuf::from("recordings")),
             start_time: Instant::now(),
             animation_editor: AnimationEditor::default(),
+            terrain_editor: crate::terrain::TerrainEditor::default(),
+            prefab_editor: crate::prefab::PrefabEditor::default(),
             cli_project_path: None,
             cli_playtest: false,
             endless_runner_game: crate::endless_runner::EndlessRunnerGame::new(),
             breakout_game: crate::breakout::BreakoutGame::new(),
             platformer_game: crate::platformer::PlatformerGame::new(),
+            scene_manager: crate::scene::SceneManager::new(),
+            last_screen: crate::project::AppScreen::Startup,
+            play_mode_snapshot: None,
         }
     }
 
     pub fn init_scene_resources(&mut self, renderer: &Renderer) {
         crate::init::init_scene_resources(
             renderer, &mut self.meshes,
-            &mut self.scene_pipeline, &mut self.scene_descriptor_pool, &mut self.scene_descriptor_set,
+            &mut self.scene_pipeline, &mut self.wireframe_scene_pipeline, &mut self.scene_descriptor_pool, &mut self.scene_descriptor_set,
             &mut self.scene_uniform_buffer, &mut self.scene_depth_buffer,
             &mut self.shadow_pipeline, &mut self.shadow_descriptor_pool, &mut self.shadow_descriptor_set,
             &mut self.csm_resources,
@@ -582,6 +627,102 @@ impl AppState {
                 }
             } else {
                 tracing::error!("failed to read file {path}");
+            }
+        }
+    }
+
+    pub fn handle_pending_texture_load(&mut self, renderer: &Renderer) {
+        if let Some(path) = self.pending_texture_load.borrow_mut().take() {
+            if let Ok(data) = MappedFile::open(Path::new(&path)) {
+                let tex_name = Path::new(&path)
+                    .file_stem().and_then(|s| s.to_str()).unwrap_or("Imported")
+                    .to_string();
+                let ext = Path::new(&path)
+                    .extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+                let is_normal = tex_name.to_lowercase().contains("normal") || tex_name.to_lowercase().contains("nrm");
+                let options = crate::texture_import::TextureImportOptions {
+                    compress: Some(rustix_asset::texture_compress::CompressedBlockFormat::Bc7Unorm),
+                    generate_mips: true,
+                    normal_map: is_normal,
+                    srgb: !is_normal,
+                };
+                match crate::texture_import::import_texture(renderer, &data, &tex_name, &ext, &options) {
+                    Ok(result) => {
+                        tracing::info!("loaded texture {tex_name} from {path}: {}x{} mips={} compressed={} normal={}",
+                            result.width, result.height, result.mip_levels, result.compressed, result.normal_map);
+                        self.textures.insert(tex_name, result.texture);
+                    }
+                    Err(e) => tracing::error!("failed to load texture from {path}: {e}"),
+                }
+            } else {
+                tracing::error!("failed to read file {path}");
+            }
+        }
+    }
+
+    pub fn handle_pending_audio_load(&mut self) {
+        if let Some(path) = self.pending_audio_load.borrow_mut().take() {
+            let audio_name = Path::new(&path)
+                .file_stem().and_then(|s| s.to_str()).unwrap_or("Imported")
+                .to_string();
+            let ext = Path::new(&path)
+                .extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+            let is_music = audio_name.to_lowercase().contains("music")
+                || audio_name.to_lowercase().contains("bgm")
+                || audio_name.to_lowercase().contains("theme");
+            let options = crate::audio_import::AudioImportOptions {
+                streaming: is_music,
+                volume: 1.0,
+                looping: is_music,
+                spatial_blend: 0.0,
+            };
+            match crate::audio_import::import_audio(Path::new(&path), &audio_name, &options) {
+                Ok(result) => {
+                    tracing::info!("loaded audio {audio_name} from {path}: {}Hz {}ch {:.2}s streaming={}",
+                        result.sample_rate, result.channels, result.duration_seconds, result.streaming);
+                    self.sounds.insert(audio_name, result);
+                }
+                Err(e) => tracing::error!("failed to load audio from {path}: {e}"),
+            }
+        }
+    }
+
+    pub fn handle_terrain_regen(&mut self, renderer: &Renderer) {
+        let mut needs_regen = self.pending_terrain_regen.get() || self.terrain_editor.regen_needed;
+
+        // Auto-detect terrain entities whose meshes are missing
+        let terrain_entries: Vec<(hecs::Entity, String)> = {
+            let mut q = self.ecs_world.query::<(hecs::Entity, &crate::terrain::Terrain)>()
+;
+            q.iter()
+                .map(|(e, t)| (e, t.mesh_name.clone()))
+                .collect()
+        };
+
+        for (_, mesh_name) in &terrain_entries {
+            if !self.meshes.contains_key(mesh_name) {
+                needs_regen = true;
+            }
+        }
+
+        if !needs_regen {
+            return;
+        }
+        self.pending_terrain_regen.set(false);
+        self.terrain_editor.regen_needed = false;
+
+        for (entity, mesh_name) in terrain_entries {
+            if let Ok(terrain) = self.ecs_world.get::<&crate::terrain::Terrain>(entity) {
+                let terrain = (*terrain).clone();
+                match terrain.regenerate_mesh(renderer) {
+                    Ok(mesh) => {
+                        self.meshes.insert(mesh_name.clone(), mesh);
+                        tracing::info!("regenerated terrain mesh '{}' ({}x{})", mesh_name, terrain.resolution, terrain.resolution);
+                    }
+                    Err(e) => {
+                        tracing::error!("failed to regenerate terrain mesh: {e}");
+                    }
+                }
             }
         }
     }

@@ -33,8 +33,16 @@ pub fn show_menu_bar(
     show_settings: &std::cell::Cell<bool>,
     sprite_editor: &mut sprite_editor::SpriteEditor,
     pending_mesh_load: &std::cell::RefCell<Option<String>>,
+    pending_texture_load: &std::cell::RefCell<Option<String>>,
+    pending_audio_load: &std::cell::RefCell<Option<String>>,
+    hot_reload_enabled: &mut bool,
     window: &mut WindowHandle,
     animation_editor: &mut crate::ui::animation_editor::AnimationEditor,
+    terrain_editor: &mut crate::terrain::TerrainEditor,
+    prefab_editor: &mut crate::prefab::PrefabEditor,
+    selected_entities: &std::cell::RefCell<Vec<hecs::Entity>>,
+    undo_history: &std::cell::RefCell<crate::undo::UndoHistory>,
+    scene_manager: &mut crate::scene::SceneManager,
 ) {
     egui::Panel::top("menu_bar").show(ctx, |ui| {
         egui::MenuBar::new().ui(ui, |ui| {
@@ -117,6 +125,33 @@ pub fn show_menu_bar(
                     }
                 }
                 ui.separator();
+                if ui.button("Save Scene\u{2026}").clicked() {
+                    ui.close();
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Save Scene")
+                        .add_filter("Rustix Scene", &["rustixscene"])
+                        .save_file()
+                    {
+                        let scene = world_to_scene(world);
+                        let _ = crate::scene::save_scene(&path, &scene);
+                    }
+                }
+                if ui.button("Load Scene\u{2026}").clicked() {
+                    ui.close();
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Load Scene")
+                        .add_filter("Rustix Scene", &["rustixscene"])
+                        .pick_file()
+                    {
+                        if let Some(scene) = crate::scene::load_scene(&path) {
+                            crate::scene::scene_to_world(world, &scene);
+                            selected_entities.borrow_mut().clear();
+                            undo_history.borrow_mut().clear();
+                            dirty.set(true);
+                        }
+                    }
+                }
+                ui.separator();
                 if ui.button("Load Mesh\u{2026}").clicked() {
                     ui.close();
                     if let Some(path) = rfd::FileDialog::new()
@@ -126,6 +161,33 @@ pub fn show_menu_bar(
                         .pick_file()
                     {
                         pending_mesh_load.replace(Some(path.to_string_lossy().to_string()));
+                    }
+                }
+                if ui.button("Import Texture\u{2026}").clicked() {
+                    ui.close();
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Import Texture")
+                        .add_filter("PNG", &["png"])
+                        .add_filter("JPEG", &["jpg", "jpeg"])
+                        .add_filter("HDR", &["hdr"])
+                        .add_filter("KTX2", &["ktx2"])
+                        .pick_file()
+                    {
+                        pending_texture_load.replace(Some(path.to_string_lossy().to_string()));
+                    }
+                }
+                if ui.button("Import Audio\u{2026}").clicked() {
+                    ui.close();
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Import Audio")
+                        .add_filter("WAV", &["wav"])
+                        .add_filter("OGG", &["ogg"])
+                        .add_filter("MP3", &["mp3"])
+                        .add_filter("FLAC", &["flac"])
+                        .add_filter("AAC", &["aac", "m4a"])
+                        .pick_file()
+                    {
+                        pending_audio_load.replace(Some(path.to_string_lossy().to_string()));
                     }
                 }
                 if ui.button("Project Settings\u{2026}").clicked() {
@@ -237,8 +299,28 @@ pub fn show_menu_bar(
                             }
                         }
                     });
+                    ui.menu_button("Scene Manager Position", |ui| {
+                        let positions = [
+                            crate::project::DockPosition::Left,
+                            crate::project::DockPosition::Right,
+                            crate::project::DockPosition::Bottom,
+                            crate::project::DockPosition::Floating,
+                            crate::project::DockPosition::Hidden,
+                        ];
+                        for pos in positions {
+                            if ui.selectable_label(layout.scene_manager_dock == pos, format!("{:?}", pos)).clicked() {
+                                layout.scene_manager_dock = pos;
+                                ui.close();
+                            }
+                        }
+                    });
                 }
 
+                ui.separator();
+                let mut show_mgr = scene_manager.show_manager;
+                if ui.checkbox(&mut show_mgr, "Scene Manager").changed() {
+                    scene_manager.show_manager = show_mgr;
+                }
                 ui.separator();
                 let current = window.cursor_mode();
                 if ui.selectable_label(current == CursorMode::Normal, "Cursor: Normal").clicked() {
@@ -258,6 +340,32 @@ pub fn show_menu_bar(
                     ui.close();
                 }
             });
+            // Keyboard shortcuts for scene save/load
+            if ctx.input(|i| i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::S)) {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("Save Scene")
+                    .add_filter("Rustix Scene", &["rustixscene"])
+                    .save_file()
+                {
+                    let scene = world_to_scene(world);
+                    let _ = crate::scene::save_scene(&path, &scene);
+                }
+            }
+            if ctx.input(|i| i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::O)) {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title("Load Scene")
+                    .add_filter("Rustix Scene", &["rustixscene"])
+                    .pick_file()
+                {
+                    if let Some(scene) = crate::scene::load_scene(&path) {
+                        crate::scene::scene_to_world(world, &scene);
+                        selected_entities.borrow_mut().clear();
+                        undo_history.borrow_mut().clear();
+                        dirty.set(true);
+                    }
+                }
+            }
+
             ui.menu_button("Edit", |ui| {
                 if ui.button("Preferences").clicked() {
                     show_prefs = true;
@@ -302,6 +410,12 @@ pub fn show_menu_bar(
                     sprite_editor.set_visible(true);
                     ui.close();
                 }
+                ui.separator();
+                let mut enabled = *hot_reload_enabled;
+                if ui.checkbox(&mut enabled, "Asset Hot-Reload").changed() {
+                    *hot_reload_enabled = enabled;
+                    ui.close();
+                }
                 if ui.button("Animation Editor").clicked() {
                     animation_editor.show = !animation_editor.show;
                     // Set active entity to first selected entity that has a skeleton
@@ -313,6 +427,14 @@ pub fn show_menu_bar(
                             }
                         }
                     }
+                    ui.close();
+                }
+                if ui.button("Terrain Editor").clicked() {
+                    terrain_editor.show = !terrain_editor.show;
+                    ui.close();
+                }
+                if ui.button("Prefab Editor").clicked() {
+                    prefab_editor.show = !prefab_editor.show;
                     ui.close();
                 }
             });

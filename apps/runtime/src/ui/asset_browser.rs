@@ -36,6 +36,9 @@ pub fn show_asset_browser(
     project_dir: &Option<String>,
     dock: DockPosition,
     world: &mut EcsWorld,
+    pending_texture_load: &std::cell::RefCell<Option<String>>,
+    pending_mesh_load: &std::cell::RefCell<Option<String>>,
+    pending_audio_load: &std::cell::RefCell<Option<String>>,
 ) {
     let gen = ctx.data(|d| d.get_temp::<u64>(egui::Id::new("layout_generation")).unwrap_or(0));
     let panel_id = egui::Id::new(("asset_browser", gen));
@@ -132,9 +135,9 @@ pub fn show_asset_browser(
 
             egui::CentralPanel::default().show_inside(ui, |ui| {
                 if state.view_mode == ViewMode::Grid {
-                    show_file_grid(ui, &entries, &state.search_query, &mut state.selected_file, world);
+                    show_file_grid(ui, &entries, &state.search_query, &mut state.selected_file, world, pending_texture_load, pending_mesh_load, pending_audio_load);
                 } else {
-                    show_file_list(ui, &entries, &state.search_query, &mut state.selected_file, world);
+                    show_file_list(ui, &entries, &state.search_query, &mut state.selected_file, world, pending_texture_load, pending_mesh_load, pending_audio_load);
                 }
             });
         } else {
@@ -214,6 +217,9 @@ fn show_file_list(
     search: &str,
     selected_file: &mut Option<PathBuf>,
     _world: &mut EcsWorld,
+    pending_texture_load: &std::cell::RefCell<Option<String>>,
+    pending_mesh_load: &std::cell::RefCell<Option<String>>,
+    pending_audio_load: &std::cell::RefCell<Option<String>>,
 ) {
     egui::ScrollArea::vertical().show(ui, |ui| {
         egui::Grid::new("asset_browser_grid")
@@ -260,6 +266,21 @@ fn show_file_list(
                             *selected_file = Some(full_path.clone());
                         }
                     }
+                    if resp.double_clicked() && !is_dir {
+                        let path_str = full_path.to_string_lossy().to_string();
+                        match ext.as_str() {
+                            "png" | "jpg" | "jpeg" | "hdr" | "exr" | "tga" | "bmp" | "webp" | "ktx2" => {
+                                pending_texture_load.replace(Some(path_str));
+                            }
+                            "glb" | "gltf" | "obj" | "fbx" => {
+                                pending_mesh_load.replace(Some(path_str));
+                            }
+                            "wav" | "ogg" | "mp3" | "flac" | "aac" | "m4a" => {
+                                pending_audio_load.replace(Some(path_str));
+                            }
+                            _ => {}
+                        }
+                    }
 
                     ui.label(egui::RichText::new(size_str).weak().size(11.0));
                     ui.end_row();
@@ -274,6 +295,9 @@ fn show_file_grid(
     search: &str,
     selected_file: &mut Option<PathBuf>,
     _world: &mut EcsWorld,
+    pending_texture_load: &std::cell::RefCell<Option<String>>,
+    pending_mesh_load: &std::cell::RefCell<Option<String>>,
+    pending_audio_load: &std::cell::RefCell<Option<String>>,
 ) {
     let item_width = 80.0;
     let item_height = 90.0;
@@ -355,6 +379,21 @@ fn show_file_grid(
                     if resp.clicked() {
                         if !is_dir {
                             *selected_file = Some(full_path.clone());
+                        }
+                    }
+                    if resp.double_clicked() && !is_dir {
+                        let path_str = full_path.to_string_lossy().to_string();
+                        match ext.as_str() {
+                            "png" | "jpg" | "jpeg" | "hdr" | "exr" | "tga" | "bmp" | "webp" | "ktx2" => {
+                                pending_texture_load.replace(Some(path_str));
+                            }
+                            "glb" | "gltf" | "obj" | "fbx" => {
+                                pending_mesh_load.replace(Some(path_str));
+                            }
+                            "wav" | "ogg" | "mp3" | "flac" | "aac" | "m4a" => {
+                                pending_audio_load.replace(Some(path_str));
+                            }
+                            _ => {}
                         }
                     }
                 }

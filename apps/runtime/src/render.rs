@@ -15,8 +15,12 @@ pub mod instanced;
 pub mod gpu_culling;
 pub mod oit;
 pub mod overlay;
+pub mod particle_system;
+pub mod post_process;
+pub mod debug_render;
 
 pub use lighting::*;
+pub use debug_render::*;
 pub use forward_plus::*;
 pub use gbuffer::*;
 pub use shadow::*;
@@ -32,7 +36,13 @@ pub use skybox::*;
 pub use instanced::*;
 pub use gpu_culling::*;
 pub use oit::*;
+pub use particle_system::*;
+pub use post_process::*;
 
 #[cfg(test)]
 #[path = "render_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "shadow_tests.rs"]
+mod shadow_tests;

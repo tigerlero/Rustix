@@ -5,7 +5,7 @@ use super::try_override;
 
 pub const OIT_ACCUMULATE_VERT_GLSL: &str = r#"#version 460
 struct PointLight { vec4 position; vec4 color; };
-layout(binding = 0) uniform SceneUBO { mat4 view_proj; vec4 cam_pos; uint light_count; PointLight lights[8]; vec4 fog; mat4 light_view_proj; } ubo;
+layout(binding = 0) uniform SceneUBO { mat4 view_proj; vec4 cam_pos; uint light_count; PointLight lights[8]; vec4 fog; mat4 light_view_proj; vec4 sh_r; vec4 sh_g; vec4 sh_b; } ubo;
 layout(push_constant) uniform PC { mat4 model; vec4 dir_light; vec4 dir_color; vec4 base_color; vec4 material; } pc;
 layout(location = 0) in vec3 inPosition;
 layout(location = 1) in vec3 inNormal;
@@ -21,7 +21,7 @@ void main() {
 
 pub const OIT_ACCUMULATE_FRAG_GLSL: &str = r#"#version 460
 struct PointLight { vec4 position; vec4 color; };
-layout(binding = 0) uniform SceneUBO { mat4 view_proj; vec4 cam_pos; uint light_count; PointLight lights[8]; vec4 fog; mat4 light_view_proj; } ubo;
+layout(binding = 0) uniform SceneUBO { mat4 view_proj; vec4 cam_pos; uint light_count; PointLight lights[8]; vec4 fog; mat4 light_view_proj; vec4 sh_r; vec4 sh_g; vec4 sh_b; } ubo;
 layout(push_constant) uniform PC { mat4 model; vec4 dir_light; vec4 dir_color; vec4 base_color; vec4 material; } pc;
 layout(location = 0) in vec3 fragNormal;
 layout(location = 1) in vec3 fragWorldPos;
@@ -57,7 +57,8 @@ vec3 pbrDirect(vec3 N, vec3 L, vec3 V, vec3 light_color, vec3 base, float roughn
     float G = G_Smith(NdotV, NdotL, roughness);
     vec3 F = F_Schlick(HdotV, F0);
     vec3 spec = (D * G * F) / (4.0 * NdotV * NdotL + 0.0001);
-    vec3 diff = base * (1.0 - metallic) / PI;
+    vec3 kD = (1.0 - F) * (1.0 - metallic);
+    vec3 diff = base * kD / PI;
     return (diff + spec) * light_color * NdotL;
 }
 void main() {
@@ -70,7 +71,12 @@ void main() {
     float ao = pc.material.z;
     float alpha = pc.base_color.a;
     vec3 color = pbrDirect(N, L, V, pc.dir_color.rgb, base, roughness, metallic) * ao;
-    color += base * 0.03 * ao;
+    vec3 shAmbient = vec3(
+        ubo.sh_r.x + ubo.sh_r.y * N.y + ubo.sh_r.z * N.z + ubo.sh_r.w * N.x,
+        ubo.sh_g.x + ubo.sh_g.y * N.y + ubo.sh_g.z * N.z + ubo.sh_g.w * N.x,
+        ubo.sh_b.x + ubo.sh_b.y * N.y + ubo.sh_b.z * N.z + ubo.sh_b.w * N.x
+    );
+    color += shAmbient * base * (1.0 / PI) * ao;
     float w = clamp(alpha * 10.0, 0.01, 100.0);
     outAccum = vec4(color * alpha * w, alpha * w);
     outReveal = vec4(alpha);

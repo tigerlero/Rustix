@@ -12,8 +12,12 @@ mod undo_redo;
 pub mod frame_graph_overlay;
 mod post_process;
 pub mod animation_editor;
+pub mod terrain_editor;
+pub mod prefab_editor;
+pub mod scene_manager;
 
 pub use asset_browser::show_asset_browser;
+pub use scene_manager::show_scene_manager;
 
 pub use startup::startup_screen;
 pub use editor::editor_screen;

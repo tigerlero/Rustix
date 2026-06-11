@@ -565,6 +565,15 @@ pub fn render_hdr_with_graph(
     if ssao_enabled {
         tonemap_sampled.push(ssao_res.unwrap().1);
     }
+    let post_settings: rustix_render::PostProcessSettings = {
+        let mut settings = rustix_render::PostProcessSettings::default();
+        for s in ecs_world.query::<&rustix_render::PostProcessSettings>().iter() {
+            settings = *s;
+            break;
+        }
+        settings
+    };
+
     graph.add_pass(PassDesc {
         name: "tonemap",
         queue: rustix_render::graph::PassQueue::Graphics,
@@ -577,7 +586,7 @@ pub fn render_hdr_with_graph(
     }, move |_ctx| {
         post::execute_tonemap(
             cmd, renderer, tonemap_pipeline, tonemap_desc_set,
-            tonemap_hdr_view, bloom, ssao, sampler,
+            tonemap_hdr_view, bloom, ssao, sampler, &post_settings,
         );
     });
 

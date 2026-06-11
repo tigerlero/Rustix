@@ -3,7 +3,7 @@ use std::path::Path;
 use super::scene::{SceneData, SceneEntity, Material};
 use rustix_render::{Camera, DirectionalLight};
 
-const PROJECT_FILE: &str = "project.rustixproj";
+pub(crate) const PROJECT_FILE: &str = "project.rustixproj";
 const RECENT_FILE: &str = "recent_projects.json";
 
 #[derive(Clone, Copy, PartialEq)]
@@ -112,6 +112,12 @@ pub struct LayoutState {
     pub console_dock: DockPosition,
     #[serde(default = "default_asset_browser_dock")]
     pub asset_browser_dock: DockPosition,
+    #[serde(default = "default_terrain_editor_dock")]
+    pub terrain_editor_dock: DockPosition,
+    #[serde(default = "default_prefab_editor_dock")]
+    pub prefab_editor_dock: DockPosition,
+    #[serde(default = "default_scene_manager_dock")]
+    pub scene_manager_dock: DockPosition,
 }
 
 fn default_hierarchy_width() -> f32 { 220.0 }
@@ -120,6 +126,9 @@ fn default_console_height() -> f32 { 160.0 }
 fn default_inspector_dock() -> DockPosition { DockPosition::Right }
 fn default_console_dock() -> DockPosition { DockPosition::Bottom }
 fn default_asset_browser_dock() -> DockPosition { DockPosition::Left }
+fn default_terrain_editor_dock() -> DockPosition { DockPosition::Left }
+fn default_prefab_editor_dock() -> DockPosition { DockPosition::Left }
+fn default_scene_manager_dock() -> DockPosition { DockPosition::Right }
 
 impl Default for LayoutState {
     fn default() -> Self {
@@ -132,6 +141,9 @@ impl Default for LayoutState {
             inspector_dock: DockPosition::Right,
             console_dock: DockPosition::Bottom,
             asset_browser_dock: DockPosition::Left,
+            terrain_editor_dock: DockPosition::Left,
+            prefab_editor_dock: DockPosition::Left,
+            scene_manager_dock: DockPosition::Right,
         }
     }
 }
@@ -141,6 +153,7 @@ pub struct ProjectInfo {
     pub name: String,
     pub description: String,
     pub created: String,
+    #[serde(default)]
     pub last_opened: String,
     pub default_scene: String,
     pub scenes: Vec<String>,
@@ -213,6 +226,9 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         }),
                         camera: Some(Camera { fov_degrees: 60.0, near: 0.1, far: 1000.0 }),
                         skeleton: None,
+                        terrain: None,
+                        audio_source: None,
+                        scene_tag: None,
                         parent_idx: None,
                     },
                     SceneEntity {
@@ -234,6 +250,9 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         audiolistener: None,
                         camera: None,
                         skeleton: None,
+                        terrain: None,
+                        audio_source: None,
+                        scene_tag: None,
                         parent_idx: None,
                     },
                     SceneEntity {
@@ -252,6 +271,9 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         audiolistener: None,
                         camera: None,
                         skeleton: None,
+                        terrain: None,
+                        audio_source: None,
+                        scene_tag: None,
                         parent_idx: None,
                     },
                     SceneEntity {
@@ -277,6 +299,9 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         audiolistener: None,
                         camera: None,
                         skeleton: None,
+                        terrain: None,
+                        audio_source: None,
+                        scene_tag: None,
                         parent_idx: None,
                     },
                 ],
@@ -305,6 +330,9 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         }),
                         camera: Some(Camera { fov_degrees: 60.0, near: 0.1, far: 1000.0 }),
                         skeleton: None,
+                        terrain: None,
+                        audio_source: None,
+                        scene_tag: None,
                         parent_idx: None,
                     },
                     SceneEntity {
@@ -330,6 +358,9 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         audiolistener: None,
                         camera: None,
                         skeleton: None,
+                        terrain: None,
+                        audio_source: None,
+                        scene_tag: None,
                         parent_idx: None,
                     },
                 ],
@@ -358,6 +389,9 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         }),
                         camera: Some(Camera { fov_degrees: 75.0, near: 0.1, far: 1000.0 }),
                         skeleton: None,
+                        terrain: None,
+                        audio_source: None,
+                        scene_tag: None,
                         parent_idx: None,
                     },
                     SceneEntity {
@@ -379,6 +413,9 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         audiolistener: None,
                         camera: None,
                         skeleton: None,
+                        terrain: None,
+                        audio_source: None,
+                        scene_tag: None,
                         parent_idx: None,
                     },
                 ],
@@ -407,6 +444,9 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         }),
                         camera: Some(Camera { fov_degrees: 60.0, near: 0.1, far: 1000.0 }),
                         skeleton: None,
+                        terrain: None,
+                        audio_source: None,
+                        scene_tag: None,
                         parent_idx: None,
                     },
                 ],
@@ -435,6 +475,9 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         }),
                         camera: Some(Camera { fov_degrees: 60.0, near: 0.1, far: 1000.0 }),
                         skeleton: None,
+                        terrain: None,
+                        audio_source: None,
+                        scene_tag: None,
                         parent_idx: None,
                     },
                     SceneEntity {
@@ -456,6 +499,9 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         audiolistener: None,
                         camera: None,
                         skeleton: None,
+                        terrain: None,
+                        audio_source: None,
+                        scene_tag: None,
                         parent_idx: None,
                     },
                     SceneEntity {
@@ -481,6 +527,9 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         audiolistener: None,
                         camera: None,
                         skeleton: None,
+                        terrain: None,
+                        audio_source: None,
+                        scene_tag: None,
                         parent_idx: None,
                     },
                     SceneEntity {
@@ -506,6 +555,9 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         audiolistener: None,
                         camera: None,
                         skeleton: None,
+                        terrain: None,
+                        audio_source: None,
+                        scene_tag: None,
                         parent_idx: None,
                     },
                 ],
@@ -534,6 +586,9 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         }),
                         camera: Some(Camera { fov_degrees: 60.0, near: 0.1, far: 1000.0 }),
                         skeleton: None,
+                        terrain: None,
+                        audio_source: None,
+                        scene_tag: None,
                         parent_idx: None,
                     },
                 ],
@@ -562,6 +617,9 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         }),
                         camera: Some(Camera { fov_degrees: 60.0, near: 0.1, far: 1000.0 }),
                         skeleton: None,
+                        terrain: None,
+                        audio_source: None,
+                        scene_tag: None,
                         parent_idx: None,
                     },
                     SceneEntity {
@@ -583,6 +641,9 @@ fn create_starter_scene(project_type: ProjectType) -> SceneData {
                         audiolistener: None,
                         camera: None,
                         skeleton: None,
+                        terrain: None,
+                        audio_source: None,
+                        scene_tag: None,
                         parent_idx: None,
                     },
                 ],
@@ -648,14 +709,16 @@ pub fn write_project_file(dir: &Path, info: &ProjectInfo) -> Option<()> {
 }
 
 pub fn load_project_file(dir: &Path) -> Option<ProjectInfo> {
-    let path = dir.join(PROJECT_FILE);
-    let json = match fs::read_to_string(&path) {
-        Ok(j) => j,
-        Err(e) => {
-            tracing::warn!("failed to read project file {}: {}", path.display(), e);
-            return None;
-        }
+    // Try editor project file first, then fall back to cooked game.json
+    let (path, json, is_cooked) = if let Ok(j) = fs::read_to_string(dir.join(PROJECT_FILE)) {
+        (dir.join(PROJECT_FILE), j, false)
+    } else if let Ok(j) = fs::read_to_string(dir.join("game.json")) {
+        (dir.join("game.json"), j, true)
+    } else {
+        tracing::warn!("no project.rustixproj or game.json found in {}", dir.display());
+        return None;
     };
+
     let mut info: ProjectInfo = match serde_json::from_str(&json) {
         Ok(i) => i,
         Err(e) => {
@@ -664,9 +727,12 @@ pub fn load_project_file(dir: &Path) -> Option<ProjectInfo> {
         }
     };
     tracing::debug!("loaded project {} with {} scene entities", info.name, info.scene.entities.len());
-    info.last_opened = chrono_now();
-    write_project_file(dir, &info)?;
-    tracing::info!("loaded project: {} from {}", info.name, dir.display());
+
+    if !is_cooked {
+        info.last_opened = chrono_now();
+        write_project_file(dir, &info)?;
+    }
+    tracing::info!("loaded project: {} from {} (cooked={})", info.name, dir.display(), is_cooked);
     Some(info)
 }
 

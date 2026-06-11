@@ -22,6 +22,20 @@ layout(binding = 4) uniform texture2D uSsaoTex;
 layout(location = 0) in vec2 fragUv;
 layout(location = 0) out vec4 outColor;
 
+layout(push_constant) uniform PC {
+    float grainIntensity;
+    float chromaticAberration;
+    float vignetteIntensity;
+    float vignetteSmoothness;
+    float contrast;
+    float saturation;
+    float gamma;
+    float _pad;
+    vec4 tintShadows;
+    vec4 tintMidtones;
+    vec4 tintHighlights;
+} pc;
+
 const int TONEMAP_ALGORITHM = 0; // 0=ACES, 1=Reinhard
 
 vec3 reinhard(vec3 v) { return v / (v + vec3(1.0)); }
@@ -29,8 +43,47 @@ vec3 aces_fitted(vec3 v) {
     float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
     return clamp((v * (a * v + b)) / (v * (c * v + d) + e), 0.0, 1.0);
 }
+
+float rand(vec2 co) {
+    return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+vec3 applyVignette(vec3 color, vec2 uv) {
+    vec2 dist = uv - 0.5;
+    float vignette = 1.0 - dot(dist, dist) * pc.vignetteIntensity;
+    vignette = smoothstep(0.0, pc.vignetteSmoothness, vignette);
+    return color * vignette;
+}
+
+vec3 applyChromaticAberration(vec2 uv) {
+    vec2 dir = uv - 0.5;
+    float dist = length(dir);
+    vec2 offset = dir * pc.chromaticAberration * dist;
+    float r = texture(sampler2D(uHdrTex, uSamp), uv + offset).r;
+    float g = texture(sampler2D(uHdrTex, uSamp), uv).g;
+    float b = texture(sampler2D(uHdrTex, uSamp), uv - offset).b;
+    return vec3(r, g, b);
+}
+
+vec3 applyFilmGrain(vec3 color, vec2 uv) {
+    float noise = rand(uv + fract(vec2(1.0, 1.0) * 0.01)) * 2.0 - 1.0;
+    return color + noise * pc.grainIntensity;
+}
+
+vec3 applyColorGrading(vec3 color) {
+    color = (color - 0.5) * pc.contrast + 0.5;
+    float luma = dot(color, vec3(0.299, 0.587, 0.114));
+    color = mix(vec3(luma), color, pc.saturation);
+    float luminance = luma;
+    vec3 tint = mix(pc.tintShadows.rgb, pc.tintMidtones.rgb, smoothstep(0.0, 0.5, luminance));
+    tint = mix(tint, pc.tintHighlights.rgb, smoothstep(0.5, 1.0, luminance));
+    color *= tint;
+    color = pow(max(color, vec3(0.0)), vec3(1.0 / pc.gamma));
+    return color;
+}
+
 void main() {
-    vec3 hdr = texture(sampler2D(uHdrTex, uSamp), fragUv).rgb;
+    vec3 hdr = applyChromaticAberration(fragUv);
     vec3 bloom = texture(sampler2D(uBloomTex, uSamp), fragUv).rgb;
     float ssao = texture(sampler2D(uSsaoTex, uSamp), fragUv).r;
     hdr += bloom;
@@ -42,6 +95,9 @@ void main() {
         mapped = reinhard(hdr);
     }
     mapped = pow(mapped, vec3(1.0 / 2.2));
+    mapped = applyVignette(mapped, fragUv);
+    mapped = applyFilmGrain(mapped, fragUv);
+    mapped = applyColorGrading(mapped);
     outColor = vec4(mapped, 1.0);
 }
 "#;
@@ -75,6 +131,119 @@ pub fn tonemap_fragment_shader_override(device: &ash::Device) -> Result<ShaderMo
         ShaderModule::from_archive_name(device, "tonemap.frag", vk::ShaderStageFlags::FRAGMENT)
     } else {
         try_override(device, "tonemap.frag", TONEMAP_FRAGMENT_GLSL, vk::ShaderStageFlags::FRAGMENT)
+    }
+}
+
+pub const POSTPROCESS_VERTEX_GLSL: &str = r#"#version 460
+layout(location = 0) out vec2 fragUv;
+const vec2 positions[3] = vec2[](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+const vec2 uvs[3] = vec2[](vec2(0.0, 0.0), vec2(2.0, 0.0), vec2(0.0, 2.0));
+void main() {
+    gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+    fragUv = uvs[gl_VertexIndex];
+}
+"#;
+
+pub const POSTPROCESS_FRAGMENT_GLSL: &str = r#"#version 460
+layout(binding = 1) uniform texture2D uSceneTex;
+layout(binding = 2) uniform sampler uSamp;
+layout(location = 0) in vec2 fragUv;
+layout(location = 0) out vec4 outColor;
+
+layout(push_constant) uniform PC {
+    float grainIntensity;
+    float chromaticAberration;
+    float vignetteIntensity;
+    float vignetteSmoothness;
+    float contrast;
+    float saturation;
+    float gamma;
+    float _pad;
+    vec4 tintShadows;
+    vec4 tintMidtones;
+    vec4 tintHighlights;
+} pc;
+
+float rand(vec2 co) {
+    return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
+vec3 applyVignette(vec3 color, vec2 uv) {
+    vec2 dist = uv - 0.5;
+    float vignette = 1.0 - dot(dist, dist) * pc.vignetteIntensity;
+    vignette = smoothstep(0.0, pc.vignetteSmoothness, vignette);
+    return color * vignette;
+}
+
+vec3 applyChromaticAberration(vec2 uv) {
+    vec2 dir = uv - 0.5;
+    float dist = length(dir);
+    vec2 offset = dir * pc.chromaticAberration * dist;
+    float r = texture(sampler2D(uSceneTex, uSamp), uv + offset).r;
+    float g = texture(sampler2D(uSceneTex, uSamp), uv).g;
+    float b = texture(sampler2D(uSceneTex, uSamp), uv - offset).b;
+    return vec3(r, g, b);
+}
+
+vec3 applyFilmGrain(vec3 color, vec2 uv) {
+    float noise = rand(uv + fract(vec2(1.0, 1.0) * 0.01)) * 2.0 - 1.0;
+    return color + noise * pc.grainIntensity;
+}
+
+vec3 applyColorGrading(vec3 color) {
+    // Contrast
+    color = (color - 0.5) * pc.contrast + 0.5;
+    // Saturation
+    float luma = dot(color, vec3(0.299, 0.587, 0.114));
+    color = mix(vec3(luma), color, pc.saturation);
+    // Shadows / midtones / highlights tint
+    float luminance = luma;
+    vec3 tint = mix(pc.tintShadows.rgb, pc.tintMidtones.rgb, smoothstep(0.0, 0.5, luminance));
+    tint = mix(tint, pc.tintHighlights.rgb, smoothstep(0.5, 1.0, luminance));
+    color *= tint;
+    // Gamma
+    color = pow(max(color, vec3(0.0)), vec3(1.0 / pc.gamma));
+    return color;
+}
+
+void main() {
+    vec3 color = applyChromaticAberration(fragUv);
+    color = applyVignette(color, fragUv);
+    color = applyFilmGrain(color, fragUv);
+    color = applyColorGrading(color);
+    outColor = vec4(color, 1.0);
+}
+"#;
+
+pub fn postprocess_vertex_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "postprocess.vert", vk::ShaderStageFlags::VERTEX)
+    } else {
+        ShaderModule::from_glsl(device, POSTPROCESS_VERTEX_GLSL, vk::ShaderStageFlags::VERTEX)
+    }
+}
+
+pub fn postprocess_fragment_shader(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "postprocess.frag", vk::ShaderStageFlags::FRAGMENT)
+    } else {
+        ShaderModule::from_glsl(device, POSTPROCESS_FRAGMENT_GLSL, vk::ShaderStageFlags::FRAGMENT)
+    }
+}
+
+pub fn postprocess_vertex_shader_override(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "postprocess.vert", vk::ShaderStageFlags::VERTEX)
+    } else {
+        try_override(device, "postprocess.vert", POSTPROCESS_VERTEX_GLSL, vk::ShaderStageFlags::VERTEX)
+    }
+}
+
+pub fn postprocess_fragment_shader_override(device: &ash::Device) -> Result<ShaderModule, RenderError> {
+    if cfg!(not(debug_assertions)) {
+        ShaderModule::from_archive_name(device, "postprocess.frag", vk::ShaderStageFlags::FRAGMENT)
+    } else {
+        try_override(device, "postprocess.frag", POSTPROCESS_FRAGMENT_GLSL, vk::ShaderStageFlags::FRAGMENT)
     }
 }
 

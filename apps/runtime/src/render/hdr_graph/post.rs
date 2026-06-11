@@ -297,14 +297,29 @@ pub fn execute_tonemap(
     bloom: Option<&crate::render::BloomResources>,
     ssao: Option<&crate::render::SsaoResources>,
     sampler: vk::Sampler,
+    settings: &rustix_render::PostProcessSettings,
 ) {
     let bloom_view = if let Some(b) = bloom { b.mip0b_view } else { tonemap_hdr_view };
     let ssao_view = if let Some(s) = ssao { s.blurred_ao_view } else { tonemap_hdr_view };
     renderer.update_tonemap_descriptor_set(tonemap_desc_set, tonemap_hdr_view, bloom_view, ssao_view, sampler);
+    let pc_data: [f32; 20] = [
+        settings.grain_intensity,
+        settings.chromatic_aberration,
+        settings.vignette_intensity,
+        settings.vignette_smoothness,
+        settings.contrast,
+        settings.saturation,
+        settings.gamma,
+        0.0,
+        settings.tint_shadows[0], settings.tint_shadows[1], settings.tint_shadows[2], settings.tint_shadows[3],
+        settings.tint_midtones[0], settings.tint_midtones[1], settings.tint_midtones[2], settings.tint_midtones[3],
+        settings.tint_highlights[0], settings.tint_highlights[1], settings.tint_highlights[2], settings.tint_highlights[3],
+    ];
     unsafe {
         let device = renderer.device().logical();
         device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, tonemap_pipeline.pipeline);
         device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, tonemap_pipeline.layout, 0, &[tonemap_desc_set], &[]);
+        device.cmd_push_constants(cmd, tonemap_pipeline.layout, vk::ShaderStageFlags::FRAGMENT, 0, bytemuck::bytes_of(&pc_data));
         device.cmd_draw(cmd, 3, 1, 0, 0);
     }
 }

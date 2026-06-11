@@ -6,32 +6,32 @@ This document tracks the remaining work needed before the engine can ship a comm
 
 ## 1. Asset Pipeline & Import Workflow
 
-- [ ] **Asset Browser UI**: File-system backed browser with drag-and-drop import, thumbnails, and search.
-- [ ] **Model Import Pipeline**: FBX/OBJ/GLTF import with automatic material generation, mesh validation, and bone mapping.
-- [ ] **Texture Import**: Auto-compress to BCn/ASTC, generate mipmaps, support HDRi and normal map swizzle.
-- [ ] **Audio Import**: WAV/OGG/MP3 ingestion with streaming support for music.
-- [ ] **Asset Hot-Reload**: Detect changed source assets, re-cook, and update in-game references without restart.
-- [ ] **Asset Cooking**: Build-time pipeline that strips editor metadata and packs into platform-optimized archives.
+- [x] **Asset Browser UI**: File-system backed browser with drag-and-drop import, thumbnails, and search.
+- [x] **Model Import Pipeline**: FBX/OBJ/GLTF import with automatic material generation, mesh validation, and bone mapping.
+- [x] **Texture Import**: Auto-compress to BCn/ASTC, generate mipmaps, support HDRi and normal map swizzle.
+- [x] **Audio Import**: WAV/OGG/MP3 ingestion with streaming support for music.
+- [x] **Asset Hot-Reload**: Detect changed source assets, re-cook, and update in-game references without restart.
+- [x] **Asset Cooking**: Build-time pipeline that strips editor metadata and packs into platform-optimized archives.
 
 ---
 
 ## 2. Level Editor & Tools
 
-- [ ] **Terrain Editor**: Heightmap brush sculpting, texture splat painting, foliage scatter.
-- [ ] **Prefab System**: Save entity hierarchies as reusable prefabs with override tracking.
-- [ ] **Gizmos & Snapping**: Translate/Rotate/Scale gizmos with grid snapping, local/world space toggle, and multi-selection support.
-- [ ] **Undo/Redo Polish**: Full action history with compound actions and selective undo per subsystem.
-- [ ] **Scene Serialization**: Robust save/load of ECS world state including custom components and script variables.
-- [ ] **Multi-Scene Workflow**: Load/unload additive scenes for streaming open worlds.
-- [ ] **Editor Play-Mode**: Enter/exit play test without leaking state or spawning duplicate entities.
+- [x] **Terrain Editor**: Heightmap brush sculpting, texture splat painting, foliage scatter.
+- [x] **Prefab System**: Save entity hierarchies as reusable prefabs with override tracking.
+- [x] **Gizmos & Snapping**: Translate/Rotate/Scale gizmos with grid snapping, local/world space toggle, and multi-selection support.
+- [x] **Undo/Redo Polish**: Full action history with compound actions and selective undo per subsystem.
+- [x] **Scene Serialization**: Robust save/load of ECS world state including custom components and script variables.
+- [x] **Multi-Scene Workflow**: Load/unload additive scenes for streaming open worlds.
+- [x] **Editor Play-Mode**: Enter/exit play test without leaking state or spawning duplicate entities.
 
 ---
 
 ## 3. Rendering Polish
 
-- [ ] **PBR Validation**: Validate BRDF against reference images; fix energy conservation on metallic materials.
-- [ ] **Shadow Improvements**: PCF/PCSS soft shadows, cascaded shadow map stability for moving objects, point-light shadows.
-- [ ] **Global Illumination**: Light probes (irradiance volumes) or SDF-based GI fallback for static scenes.
+- [x] **PBR Validation**: Validate BRDF against reference images; fix energy conservation on metallic materials.
+- [x] **Shadow Improvements**: PCF/PCSS soft shadows, cascaded shadow map stability for moving objects, point-light shadows.
+- [x] **Global Illumination**: Light probes (irradiance volumes) or SDF-based GI fallback for static scenes.
 - [ ] **Particle System**: GPU-based particle rendering with emitters, collision, and sorting.
 - [ ] **Post-Process Stack**: Film grain, chromatic aberration, vignette, color grading LUTs.
 - [ ] **Render Scaling**: Dynamic resolution scaling based on frame time budget.

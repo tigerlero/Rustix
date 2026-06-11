@@ -241,13 +241,17 @@ impl Default for PipelineVariantKey {
 
 pub mod scene;
 pub mod postprocess;
+pub mod debug;
 pub mod oit;
 pub mod special;
+pub mod particle;
 
 pub use scene::*;
 pub use postprocess::*;
+pub use debug::*;
 pub use oit::*;
 pub use special::*;
+pub use particle::*;
 
 #[cfg(test)]
 #[path = "../pipeline_tests.rs"]

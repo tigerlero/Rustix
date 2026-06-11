@@ -60,8 +60,13 @@ impl ToneMapPipeline {
             .map_err(|e| RenderError::PipelineCreation(format!("tonemap desc_layout: {e}")))?;
 
         let set_layouts = [desc_layout];
+        let push_range = vk::PushConstantRange::default()
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+            .offset(0)
+            .size(80); // 8 floats + 3 vec4 = 32 + 48 = 80
+        let push_ranges = [push_range];
         let layout = device.pipeline_layout_cache()
-            .get_or_create(&set_layouts, &[])
+            .get_or_create(&set_layouts, &push_ranges)
             .map_err(|e| RenderError::PipelineCreation(format!("tonemap layout: {e}")))?;
 
         // No vertex input — positions generated from gl_VertexID
@@ -100,6 +105,88 @@ impl ToneMapPipeline {
         };
 
         tracing::info!("tone-mapping pipeline created");
+        Ok(Self { pipeline, layout, desc_layout })
+    }
+}
+
+/// Full-screen post-process stack pipeline.
+/// Applies film grain, chromatic aberration, vignette, and color grading.
+pub struct PostProcessPipeline {
+    pub pipeline: vk::Pipeline,
+    pub layout: vk::PipelineLayout,
+    pub desc_layout: vk::DescriptorSetLayout,
+}
+
+impl PostProcessPipeline {
+    pub fn create(
+        device: &GpuDevice,
+        swapchain: &Swapchain,
+        vs: &ShaderModule,
+        fs: &ShaderModule,
+    ) -> Result<Self, RenderError> {
+        let stages = [
+            unsafe { std::mem::transmute::<_, vk::PipelineShaderStageCreateInfo<'static>>(vs.stage_create_info()) },
+            unsafe { std::mem::transmute::<_, vk::PipelineShaderStageCreateInfo<'static>>(fs.stage_create_info()) },
+        ];
+
+        let bindings = [
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(1).descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .descriptor_count(1).stage_flags(vk::ShaderStageFlags::FRAGMENT),
+            vk::DescriptorSetLayoutBinding::default()
+                .binding(2).descriptor_type(vk::DescriptorType::SAMPLER)
+                .descriptor_count(1).stage_flags(vk::ShaderStageFlags::FRAGMENT),
+        ];
+        let desc_layout = device
+            .descriptor_layout_cache()
+            .get_or_create_simple(&bindings)
+            .map_err(|e| RenderError::PipelineCreation(format!("postprocess desc_layout: {e}")))?;
+
+        let set_layouts = [desc_layout];
+        let push_range = vk::PushConstantRange::default()
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+            .offset(0)
+            .size(64); // 8 floats + 3 vec4 = 32 + 48 = 80, but padded to 64 for simplicity (we'll pass less)
+        let push_ranges = [push_range];
+        let layout = device.pipeline_layout_cache()
+            .get_or_create(&set_layouts, &push_ranges)
+            .map_err(|e| RenderError::PipelineCreation(format!("postprocess layout: {e}")))?;
+
+        let vi = vk::PipelineVertexInputStateCreateInfo::default();
+        let ia = vk::PipelineInputAssemblyStateCreateInfo::default().topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+        let vps = [vk::Viewport::default()]; let scs = [vk::Rect2D::default()];
+        let vp = vk::PipelineViewportStateCreateInfo::default().viewports(&vps).scissors(&scs);
+        let rs = vk::PipelineRasterizationStateCreateInfo::default()
+            .polygon_mode(vk::PolygonMode::FILL)
+            .cull_mode(vk::CullModeFlags::NONE)
+            .front_face(vk::FrontFace::CLOCKWISE)
+            .line_width(1.0);
+        let ms = vk::PipelineMultisampleStateCreateInfo::default().rasterization_samples(vk::SampleCountFlags::TYPE_1);
+        let ds = vk::PipelineDepthStencilStateCreateInfo::default();
+        let ba = [vk::PipelineColorBlendAttachmentState::default()
+            .color_write_mask(vk::ColorComponentFlags::RGBA)
+            .blend_enable(false)];
+        let cb = vk::PipelineColorBlendStateCreateInfo::default().attachments(&ba);
+        let dyns = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+        let dy = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dyns);
+
+        let cfs = [swapchain.format()];
+        let mut dr = vk::PipelineRenderingCreateInfoKHR::default().color_attachment_formats(&cfs);
+
+        let ci = vk::GraphicsPipelineCreateInfo::default()
+            .stages(&stages).vertex_input_state(&vi).input_assembly_state(&ia)
+            .viewport_state(&vp).rasterization_state(&rs).multisample_state(&ms)
+            .depth_stencil_state(&ds).color_blend_state(&cb).dynamic_state(&dy)
+            .layout(layout).base_pipeline_handle(vk::Pipeline::null()).base_pipeline_index(-1)
+            .push_next(&mut dr);
+
+        let pipeline = unsafe {
+            device.logical().create_graphics_pipelines(device.pipeline_cache(), &[ci], None)
+                .map_err(|(_, e)| RenderError::PipelineCreation(format!("postprocess pipeline: {e}")))?
+                .into_iter().next().ok_or_else(|| RenderError::PipelineCreation("no postprocess pipeline created".into()))?
+        };
+
+        tracing::info!("post-process pipeline created");
         Ok(Self { pipeline, layout, desc_layout })
     }
 }

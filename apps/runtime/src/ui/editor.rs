@@ -47,28 +47,37 @@ pub fn editor_screen(
     undo_history: &std::cell::RefCell<UndoHistory>,
     sprite_editor: &mut sprite_editor::SpriteEditor,
     pending_mesh_load: &std::cell::RefCell<Option<String>>,
+    pending_texture_load: &std::cell::RefCell<Option<String>>,
+    pending_audio_load: &std::cell::RefCell<Option<String>>,
+    hot_reload_enabled: &mut bool,
     audio_engine: &mut Option<AudioEngine>,
     audio_instance: &mut Option<SoundInstance>,
     waveform_viewer: &mut waveform::WaveformViewer,
     player_manager: &mut PlayerManager,
     project_type: ProjectType,
     animation_editor: &mut AnimationEditor,
+    terrain_editor: &mut crate::terrain::TerrainEditor,
+    prefab_editor: &mut crate::prefab::PrefabEditor,
+    scene_manager: &mut crate::scene::SceneManager,
 ) {
-    let (hierarchy_dock, inspector_dock, console_dock, asset_browser_dock) = current_project
+    let (hierarchy_dock, inspector_dock, console_dock, asset_browser_dock, terrain_editor_dock, prefab_editor_dock, scene_manager_dock) = current_project
         .as_ref()
         .and_then(|p| p.layout.as_ref())
-        .map(|l| (l.hierarchy_dock, l.inspector_dock, l.console_dock, l.asset_browser_dock))
-        .unwrap_or((DockPosition::Left, DockPosition::Right, DockPosition::Bottom, DockPosition::Left));
+        .map(|l| (l.hierarchy_dock, l.inspector_dock, l.console_dock, l.asset_browser_dock, l.terrain_editor_dock, l.prefab_editor_dock, l.scene_manager_dock))
+        .unwrap_or((DockPosition::Left, DockPosition::Right, DockPosition::Bottom, DockPosition::Left, DockPosition::Left, DockPosition::Left, DockPosition::Right));
 
-    menu_bar::show_menu_bar(ctx, viewport_manager, _input, target, screen, ww, wh, fps, open_project, new_project, project_name, current_project, project_dir, world, dirty, show_confirm, confirm_target, show_settings, sprite_editor, pending_mesh_load, _window, animation_editor);
+    menu_bar::show_menu_bar(ctx, viewport_manager, _input, target, screen, ww, wh, fps, open_project, new_project, project_name, current_project, project_dir, world, dirty, show_confirm, confirm_target, show_settings, sprite_editor, pending_mesh_load, pending_texture_load, pending_audio_load, hot_reload_enabled, _window, animation_editor, terrain_editor, prefab_editor, selected_entities, undo_history, scene_manager);
     let is_playing = *screen == crate::project::AppScreen::PlayTest;
     if !is_playing {
         hierarchy::show_hierarchy(ctx, world, selected_entities, pending_delete, dirty, renaming, rename_buffer, undo_history, hierarchy_dock, player_manager, project_type);
         let cam = viewport_manager.primary_camera_mut();
         inspector::show_inspector(ctx, cam, world, selected_entities, dirty, undo_history, inspector_dock);
         console::show_console(ctx, project_dir, audio_engine, audio_instance, waveform_viewer, console_dock);
-        super::asset_browser::show_asset_browser(ctx, project_dir, asset_browser_dock, world);
+        super::asset_browser::show_asset_browser(ctx, project_dir, asset_browser_dock, world, pending_texture_load, pending_mesh_load, pending_audio_load);
         anim_ed::show_animation_editor(ctx, animation_editor, world, dirty);
+        super::terrain_editor::show_terrain_editor(ctx, terrain_editor, world, selected_entities, dirty, terrain_editor_dock);
+        super::prefab_editor::show_prefab_editor(ctx, prefab_editor, world, selected_entities, dirty, project_dir, prefab_editor_dock);
+        super::show_scene_manager(ctx, world, scene_manager, selected_entities, undo_history, dirty, scene_manager_dock, project_dir);
     }
     {
         let bookmarks = current_project.as_mut().map(|p| &mut p.bookmarks);
@@ -128,9 +137,9 @@ pub fn editor_screen(
                     size,
                 });
             }
-            let (h_dock, i_dock, c_dock, a_dock) = proj.layout.as_ref()
-                .map(|l| (l.hierarchy_dock, l.inspector_dock, l.console_dock, l.asset_browser_dock))
-                .unwrap_or((DockPosition::Left, DockPosition::Right, DockPosition::Bottom, DockPosition::Left));
+            let (h_dock, i_dock, c_dock, a_dock, t_dock, p_dock, s_dock) = proj.layout.as_ref()
+                .map(|l| (l.hierarchy_dock, l.inspector_dock, l.console_dock, l.asset_browser_dock, l.terrain_editor_dock, l.prefab_editor_dock, l.scene_manager_dock))
+                .unwrap_or((DockPosition::Left, DockPosition::Right, DockPosition::Bottom, DockPosition::Left, DockPosition::Left, DockPosition::Left, DockPosition::Right));
             proj.layout = Some(LayoutState {
                 hierarchy_width,
                 inspector_width,
@@ -140,6 +149,9 @@ pub fn editor_screen(
                 inspector_dock: i_dock,
                 console_dock: c_dock,
                 asset_browser_dock: a_dock,
+                terrain_editor_dock: t_dock,
+                prefab_editor_dock: p_dock,
+                scene_manager_dock: s_dock,
             });
 
             if let Some(ref dir) = project_dir {

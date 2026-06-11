@@ -20,9 +20,15 @@ pub mod instanced;
 pub mod oit;
 pub mod sprite;
 pub mod postprocess;
+pub mod particle;
+pub mod particle_compute;
+pub mod debug;
 
 pub use forward::*;
 pub use instanced::*;
 pub use oit::*;
 pub use sprite::*;
 pub use postprocess::*;
+pub use particle::*;
+pub use particle_compute::*;
+pub use debug::*;

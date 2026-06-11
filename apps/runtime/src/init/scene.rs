@@ -8,6 +8,7 @@ pub fn init_scene_resources(
     renderer: &Renderer,
     meshes: &mut HashMap<String, Mesh>,
     scene_pipeline: &mut Option<rustix_render::pipeline::GraphicsPipeline>,
+    wireframe_scene_pipeline: &mut Option<rustix_render::pipeline::GraphicsPipeline>,
     _scene_descriptor_pool: &mut Option<vk::DescriptorPool>,
     _scene_descriptor_set: &mut Option<vk::DescriptorSet>,
     scene_uniform_buffer: &mut Option<rustix_render::memory::GpuBuffer>,
@@ -136,6 +137,24 @@ pub fn init_scene_resources(
                     }
                 }
                 Err(e) => tracing::error!("scene pipeline creation failed: {e}"),
+            }
+            // Wireframe variant of scene pipeline
+            let mut wf_key = rustix_render::pipeline::PipelineVariantKey::default();
+            wf_key.polygon_mode = vk::PolygonMode::LINE;
+            wf_key.spec_constants.set(0, 1);
+            match renderer.pipeline_variant_cache().get_or_create(
+                &wf_key,
+                renderer.device(),
+                &sw,
+                &vs,
+                &fs,
+            ) {
+                Ok(_) => {
+                    if let Some(gp) = renderer.pipeline_variant_cache().get_pipeline(&wf_key) {
+                        *wireframe_scene_pipeline = Some(gp);
+                    }
+                }
+                Err(e) => tracing::error!("wireframe pipeline creation failed: {e}"),
             }
             drop(sw);
         }

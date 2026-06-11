@@ -54,7 +54,7 @@ pub fn prepare_scene_data(
     let screen_dims = Vec2::new(screen_w as f32, screen_h as f32);
     let light_view_proj = csm.as_ref().map(|c| c.ubo_data.light_view_proj[0]).unwrap_or(Mat4::IDENTITY);
 
-    let mut ubo_data = [0u8; 432];
+    let mut ubo_data = [0u8; 480];
     ubo_data[0..64].copy_from_slice(bytemuck::bytes_of(&view_proj));
     ubo_data[64..80].copy_from_slice(bytemuck::bytes_of(&Vec4::new(eye.x, eye.y, eye.z, 0.0)));
     ubo_data[80..84].copy_from_slice(&light_count.to_ne_bytes());
@@ -66,6 +66,17 @@ pub fn prepare_scene_data(
     let fog_color = Vec4::new(0.15, 0.18, screen_dims.x, screen_dims.y);
     ubo_data[352..368].copy_from_slice(bytemuck::bytes_of(&fog_color));
     ubo_data[368..432].copy_from_slice(bytemuck::bytes_of(&light_view_proj));
+
+    // Compute L1 SH from directional light + ambient for GI ambient term.
+    let sh = rustix_render::sh::ShIrradianceL1::from_directional_and_ambient(
+        Vec3::new(light_dir.x, light_dir.y, light_dir.z),
+        Vec3::new(light_color.x, light_color.y, light_color.z),
+        Vec3::new(0.03, 0.03, 0.03),
+    );
+    ubo_data[432..448].copy_from_slice(bytemuck::bytes_of(&Vec4::new(sh.r.c[0], sh.r.c[1], sh.r.c[2], sh.r.c[3])));
+    ubo_data[448..464].copy_from_slice(bytemuck::bytes_of(&Vec4::new(sh.g.c[0], sh.g.c[1], sh.g.c[2], sh.g.c[3])));
+    ubo_data[464..480].copy_from_slice(bytemuck::bytes_of(&Vec4::new(sh.b.c[0], sh.b.c[1], sh.b.c[2], sh.b.c[3])));
+
     ubo.write(&ubo_data);
 
     if let Some(fwd) = fwd_plus {

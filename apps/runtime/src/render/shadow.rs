@@ -158,6 +158,16 @@ impl CsmResources {
             min_z -= z_padding;
             max_z += z_padding;
 
+            // Snap to texel grid to prevent shadow shimmering when camera moves.
+            // The world-space size of one texel in light space is the frustum
+            // range divided by the shadow map resolution.
+            let texel_size_x = (max_x - min_x) / self.shadow_map_size as f32;
+            let texel_size_y = (max_y - min_y) / self.shadow_map_size as f32;
+            min_x = (min_x / texel_size_x).floor() * texel_size_x;
+            max_x = (max_x / texel_size_x).ceil() * texel_size_x;
+            min_y = (min_y / texel_size_y).floor() * texel_size_y;
+            max_y = (max_y / texel_size_y).ceil() * texel_size_y;
+
             let light_proj = Mat4::orthographic_rh_gl(min_x, max_x, min_y, max_y, min_z, max_z);
             self.ubo_data.light_view_proj[i] = light_proj * light_view;
         }

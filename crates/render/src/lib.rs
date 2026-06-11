@@ -28,10 +28,17 @@ pub mod msaa;
 pub mod renderdoc;
 pub mod debug_label;
 pub mod tracy_gpu;
+pub mod pbr;
+pub mod sh;
 pub mod wireframe;
+pub mod particle;
+pub mod particle_gpu;
 
 // Re-export commonly used component types
-pub use components::{Sprite, SpriteRenderer, DirectionalLight, PointLight, SpotLight, Camera};
+pub use components::{Sprite, SpriteRenderer, DirectionalLight, PointLight, SpotLight, Camera, ParticleEmitter, PostProcessSettings};
+pub use particle::{ParticleInstance, ParticleSimulation, GpuParticle};
+pub use particle_gpu::{GpuParticleSimulation, ParticleSimParams, ParticleSortParams};
+pub use wireframe::{WireframeMode, DebugOverlay, DebugRenderMode};
 
 // Re-export gizmo types
 pub use gizmo::{GizmoVertex, GizmoLine, AudioGizmo, wireframe_sphere, wireframe_cone, wireframe_box, generate_audio_gizmo, flatten_gizmo_lines};
@@ -70,3 +77,5 @@ pub mod gizmo_tests;
 pub mod shader_include_tests;
 #[cfg(test)]
 pub mod sampler_cache_tests;
+#[cfg(test)]
+pub mod gi_tests;

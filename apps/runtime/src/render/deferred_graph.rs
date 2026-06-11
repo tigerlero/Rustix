@@ -431,9 +431,18 @@ pub fn render_deferred_with_graph(
     // Tonemap pass
     let _sw_w = sw_extent.width;
     let _sw_h = sw_extent.height;
+    let post_settings: rustix_render::PostProcessSettings = {
+        let mut settings = rustix_render::PostProcessSettings::default();
+        for s in ecs_world.query::<&rustix_render::PostProcessSettings>().iter() {
+            settings = *s;
+            break;
+        }
+        settings
+    };
+
     graph.add_pass(PassDesc {
         name: "tonemap",
-        queue: PassQueue::Graphics,
+        queue: rustix_render::graph::PassQueue::Graphics,
         color_attachments: vec![swapchain],
         depth_attachment: None,
         sampled_textures: vec![hdr],
@@ -442,10 +451,24 @@ pub fn render_deferred_with_graph(
         clear_value: [0.0; 4],
     }, move |_ctx| {
         renderer.update_tonemap_descriptor_set(tonemap_desc_set, hdr_fb.color_view, hdr_fb.color_view, hdr_fb.color_view, sampler);
+        let pc_data: [f32; 20] = [
+            post_settings.grain_intensity,
+            post_settings.chromatic_aberration,
+            post_settings.vignette_intensity,
+            post_settings.vignette_smoothness,
+            post_settings.contrast,
+            post_settings.saturation,
+            post_settings.gamma,
+            0.0,
+            post_settings.tint_shadows[0], post_settings.tint_shadows[1], post_settings.tint_shadows[2], post_settings.tint_shadows[3],
+            post_settings.tint_midtones[0], post_settings.tint_midtones[1], post_settings.tint_midtones[2], post_settings.tint_midtones[3],
+            post_settings.tint_highlights[0], post_settings.tint_highlights[1], post_settings.tint_highlights[2], post_settings.tint_highlights[3],
+        ];
         unsafe {
             let device = renderer.device().logical();
             device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, tonemap_pipeline.pipeline);
             device.cmd_bind_descriptor_sets(cmd, vk::PipelineBindPoint::GRAPHICS, tonemap_pipeline.layout, 0, &[tonemap_desc_set], &[]);
+            device.cmd_push_constants(cmd, tonemap_pipeline.layout, vk::ShaderStageFlags::FRAGMENT, 0, bytemuck::bytes_of(&pc_data));
             device.cmd_draw(cmd, 3, 1, 0, 0);
         }
     });

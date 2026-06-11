@@ -189,6 +189,194 @@ impl super::Renderer {
         self.create_texture_with_format(asset.width, asset.height, &asset.pixels, vk_format)
     }
 
+    /// Create a texture with explicit per-mip pixel data.
+    /// `mips` is ordered from full-size (level 0) down to 1x1.
+    pub fn create_texture_with_mips(
+        &self,
+        width: u32,
+        height: u32,
+        format: vk::Format,
+        mips: &[&[u8]],
+    ) -> Result<GpuTexture, RenderError> {
+        let mip_levels = mips.len() as u32;
+        let total_size: u64 = mips.iter().map(|m| m.len() as u64).sum();
+        let staging = self.create_buffer("tex_mip_staging", total_size, vk::BufferUsageFlags::TRANSFER_SRC, gpu_allocator::MemoryLocation::CpuToGpu)?;
+
+        // Write all mip levels into staging buffer
+        let mut offset = 0usize;
+        for mip in mips {
+            staging.write_at(mip, offset as u64);
+            offset += mip.len();
+        }
+        staging.flush(0, total_size);
+
+        let img = unsafe {
+            self.device.logical().create_image(
+                &vk::ImageCreateInfo::default()
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .format(format)
+                    .extent(vk::Extent3D { width, height, depth: 1 })
+                    .mip_levels(mip_levels)
+                    .array_layers(1)
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE),
+                None,
+            ).map_err(|e| RenderError::DeviceCreation(format!("mip tex image: {e}")))?
+        };
+        let req = unsafe { self.device.logical().get_image_memory_requirements(img) };
+        let alloc = self.allocator.lock().allocate("texture_mips", req, gpu_allocator::MemoryLocation::GpuOnly, false)?;
+        unsafe { self.device.logical().bind_image_memory(img, alloc.memory(), alloc.offset())?; }
+
+        let one_time_cmd = {
+            let info = vk::CommandBufferAllocateInfo::default()
+                .command_pool(self.transfer_command_pool)
+                .level(vk::CommandBufferLevel::PRIMARY)
+                .command_buffer_count(1);
+            unsafe { self.device.logical().allocate_command_buffers(&info)?.remove(0) }
+        };
+        unsafe {
+            self.device.logical().begin_command_buffer(
+                one_time_cmd,
+                &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+            )?;
+        }
+
+        let barrier1 = vk::ImageMemoryBarrier2::default()
+            .image(img)
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .src_stage_mask(vk::PipelineStageFlags2::TOP_OF_PIPE)
+            .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+            .src_access_mask(vk::AccessFlags2::empty())
+            .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+            .subresource_range(vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: mip_levels,
+                base_array_layer: 0,
+                layer_count: 1,
+            });
+        unsafe {
+            self.device.logical().cmd_pipeline_barrier2(
+                one_time_cmd,
+                &vk::DependencyInfo::default().image_memory_barriers(&[barrier1]),
+            );
+        }
+
+        let mut buf_offset = 0u64;
+        let mut mip_w = width;
+        let mut mip_h = height;
+        let mut copy_regions = Vec::with_capacity(mips.len());
+        for level in 0..mip_levels {
+            copy_regions.push(vk::BufferImageCopy::default()
+                .buffer_offset(buf_offset)
+                .image_subresource(vk::ImageSubresourceLayers {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_level: level,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .image_extent(vk::Extent3D { width: mip_w, height: mip_h, depth: 1 }));
+            buf_offset += mips[level as usize].len() as u64;
+            mip_w = (mip_w / 2).max(1);
+            mip_h = (mip_h / 2).max(1);
+        }
+        unsafe {
+            self.device.logical().cmd_copy_buffer_to_image(
+                one_time_cmd,
+                staging.buffer,
+                img,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &copy_regions,
+            );
+        }
+
+        let barrier2 = vk::ImageMemoryBarrier2::default()
+            .image(img)
+            .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+            .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+            .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags2::SHADER_READ)
+            .subresource_range(vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: mip_levels,
+                base_array_layer: 0,
+                layer_count: 1,
+            });
+        unsafe {
+            self.device.logical().cmd_pipeline_barrier2(
+                one_time_cmd,
+                &vk::DependencyInfo::default().image_memory_barriers(&[barrier2]),
+            );
+        }
+
+        unsafe { self.device.logical().end_command_buffer(one_time_cmd)?; }
+        let cmds = [one_time_cmd];
+        let si = vk::SubmitInfo::default().command_buffers(&cmds);
+        let upload_fence = unsafe { self.device.logical().create_fence(&vk::FenceCreateInfo::default(), None)? };
+        unsafe { self.device.logical().queue_submit(self.device.transfer_queue(), &[si], upload_fence)?; }
+        unsafe { self.device.logical().wait_for_fences(&[upload_fence], true, u64::MAX)?; }
+        unsafe { self.device.logical().destroy_fence(upload_fence, None); }
+
+        let view = unsafe {
+            self.device.logical().create_image_view(
+                &vk::ImageViewCreateInfo::default()
+                    .image(img)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(format)
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: mip_levels,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    }),
+                None,
+            ).map_err(|e| RenderError::DeviceCreation(format!("mip tex view: {e}")))?
+        };
+
+        let max_lod = (mip_levels.saturating_sub(1)) as f32;
+        let sampler_info = vk::SamplerCreateInfo::default()
+            .mag_filter(vk::Filter::LINEAR)
+            .min_filter(vk::Filter::LINEAR)
+            .address_mode_u(vk::SamplerAddressMode::REPEAT)
+            .address_mode_v(vk::SamplerAddressMode::REPEAT)
+            .address_mode_w(vk::SamplerAddressMode::REPEAT)
+            .anisotropy_enable(false)
+            .max_anisotropy(1.0)
+            .border_color(vk::BorderColor::INT_OPAQUE_BLACK)
+            .unnormalized_coordinates(false)
+            .compare_enable(false)
+            .compare_op(vk::CompareOp::ALWAYS)
+            .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+            .mip_lod_bias(0.0)
+            .min_lod(0.0)
+            .max_lod(max_lod);
+        let sampler = self.device.sampler_cache()
+            .get_or_create(&sampler_info)
+            .map_err(|e| RenderError::DeviceCreation(format!("sampler: {e}")))?;
+
+        unsafe { self.device.logical().free_command_buffers(self.transfer_command_pool, &[one_time_cmd]); }
+        Ok(GpuTexture { image: img, view, sampler, _allocation: alloc })
+    }
+
+    /// Create a texture from block-compressed data (BC7, ASTC, etc.) with optional mip levels.
+    /// Each entry in `mips` contains the raw compressed blocks for that level.
+    pub fn create_texture_compressed(
+        &self,
+        width: u32,
+        height: u32,
+        format: vk::Format,
+        mips: &[&[u8]],
+    ) -> Result<GpuTexture, RenderError> {
+        self.create_texture_with_mips(width, height, format, mips)
+    }
+
     pub fn update_texture_pixels(&self, tex: &GpuTexture, width: u32, height: u32, pixels: &[u8]) -> Result<(), RenderError> {
         let extent = vk::Extent3D { width, height, depth: 1 };
         let staging = self.create_buffer("tex_update", pixels.len() as u64, vk::BufferUsageFlags::TRANSFER_SRC, gpu_allocator::MemoryLocation::CpuToGpu)?;

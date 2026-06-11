@@ -441,3 +441,71 @@ impl Sprite {
         }
     }
 }
+
+/// Post-process settings component.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PostProcessSettings {
+    pub grain_intensity: f32,
+    pub chromatic_aberration: f32,
+    pub vignette_intensity: f32,
+    pub vignette_smoothness: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+    pub gamma: f32,
+    pub tint_shadows: [f32; 4],
+    pub tint_midtones: [f32; 4],
+    pub tint_highlights: [f32; 4],
+}
+
+impl Default for PostProcessSettings {
+    fn default() -> Self {
+        Self {
+            grain_intensity: 0.03,
+            chromatic_aberration: 0.005,
+            vignette_intensity: 1.5,
+            vignette_smoothness: 0.8,
+            contrast: 1.0,
+            saturation: 1.0,
+            gamma: 2.2,
+            tint_shadows: [1.0, 1.0, 1.0, 1.0],
+            tint_midtones: [1.0, 1.0, 1.0, 1.0],
+            tint_highlights: [1.0, 1.0, 1.0, 1.0],
+        }
+    }
+}
+
+/// Particle emitter component.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ParticleEmitter {
+    pub spawn_rate: f32,
+    pub max_particles: u32,
+    pub velocity: Vec3,
+    pub velocity_spread: f32,
+    pub lifetime: f32,
+    pub lifetime_spread: f32,
+    pub start_size: f32,
+    pub end_size: f32,
+    pub start_color: [f32; 4],
+    pub end_color: [f32; 4],
+    pub gravity: Vec3,
+    pub enabled: bool,
+}
+
+impl Default for ParticleEmitter {
+    fn default() -> Self {
+        Self {
+            spawn_rate: 100.0,
+            max_particles: 1000,
+            velocity: Vec3::Y,
+            velocity_spread: 0.5,
+            lifetime: 2.0,
+            lifetime_spread: 0.5,
+            start_size: 0.1,
+            end_size: 0.02,
+            start_color: [1.0, 1.0, 1.0, 1.0],
+            end_color: [1.0, 1.0, 1.0, 0.0],
+            gravity: Vec3::new(0.0, -9.81, 0.0),
+            enabled: true,
+        }
+    }
+}

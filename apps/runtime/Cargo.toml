@@ -31,6 +31,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 dirs = "6"
 image = { workspace = true }
+half = { workspace = true }
+symphonia = { workspace = true, features = ["mp3", "wav", "flac", "vorbis", "aac"] }
+notify = { workspace = true }
 open = "5"
 rand = "0.8"
 
